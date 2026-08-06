@@ -1,0 +1,8 @@
+name: Somfy Blinds 3-Shade (composed)
+packageKey: somfy-blinds-3-shade
+permissions:
+  matter: {}
+description: >
+  composed Matter 기기(root + WindowCovering 3개 endpoint)를 SmartThings 카드 1개 안에
+  블라인드 3개 컨트롤(component main / blind2 / blind3)로 노출하는 커스텀 Edge driver.
+  스톡 matter-window-covering driver 가 composed 다중 endpoint 를 1개만 매핑하는 한계를 우회.

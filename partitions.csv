@@ -1,0 +1,13 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# Note: Firmware partition offset needs to be 64K aligned, initial 36K (9 sectors) are reserved for bootloader and partition table
+esp_secure_cert,  0x3F, ,0xd000,    0x2000, encrypted
+nvs,      data, nvs,     0x10000,   0xC000,
+nvs_keys, data, nvs_keys,,          0x1000, encrypted
+otadata,  data, ota,     ,          0x2000
+phy_init, data, phy,     ,          0x1000,
+ota_0,    app,  ota_0,   0x20000,   0x1E0000,
+ota_1,    app,  ota_1,   0x200000,  0x1E0000,
+fctry,    data, nvs,     0x3E0000,  0x6000
+# rollcode: Somfy 롤링코드 전용 NVS — Matter factory reset(기본 nvs 삭제) 후에도
+#  보존돼 모터가 "롤링코드 역행"으로 거부하는 것을 막는다. (전체 erase-flash 는 지움)
+rollcode, data, nvs,     0x3E6000,  0x4000

@@ -1,0 +1,9 @@
+menu "Somfy Blinds Configuration"
+
+    config ENABLE_MEMORY_PROFILING
+        bool "Enable Memory Profiling"
+        default n
+        help
+            이 옵션을 켜면 런타임 메모리 사용량 프로파일링 기능을 포함한다.
+
+endmenu

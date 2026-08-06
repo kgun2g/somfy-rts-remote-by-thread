@@ -1,0 +1,36 @@
+
+# Zaemit AI tool config (auto-generated)
+.mcp.json
+
+# 빌드/플래시/시리얼 로그 — build.ps1 가 logs/ 아래에 보드+액션별로 남김.
+logs/
+# 과거 루트에 흩어졌던 로그 패턴(재발 방지)
+*.log
+build_log.txt
+flash_log.txt
+onair_build_log.txt
+
+.claude/
+.cache/
+.venv/
+.vscode/
+build/
+build-xiao-c6/
+build-esp32-h2/
+dist/
+build_test/
+kicad_backup/
+_backup_v3.5/
+# 작업용 복원지점 스냅샷(_backup_<날짜>_<사유>/) — 로컬 전용, 저장소에는 넣지 않는다.
+_backup_*/
+# KiCad 설계 소스/산출물 — 용량이 커(백업 포함 4GB) 저장소에서 제외(로컬 보관).
+kicad/
+_archive_fromscratch/
+managed_components/
+.history/
+
+# KiCad 잠금·캐시·자동저장 임시 파일 (hostname/username 등 머신 정보 포함 가능)
+*.lck
+fp-info-cache
+_autosave-*
+*-backups/

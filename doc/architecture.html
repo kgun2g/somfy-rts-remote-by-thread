@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Somfy RTS Blind Controller — Architecture (현행)</title>
+<style>
+  body { font-family:'Segoe UI',sans-serif; background:#0f1117; color:#e0e0e0; margin:0; padding:20px; line-height:1.5; }
+  h1 { color:#61dafb; border-bottom:2px solid #61dafb; padding-bottom:8px; }
+  h2 { color:#ffd700; margin-top:40px; border-left:4px solid #ffd700; padding-left:10px; }
+  h3 { color:#98d8aa; margin-top:24px; }
+  .box { border:1px solid #444; border-radius:8px; padding:16px; margin:12px 0; background:#1a1d27; }
+  .layer { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
+  .card { border-radius:8px; padding:14px 18px; min-width:150px; flex:1; }
+  .hw{background:#1e3a5f;border:1px solid #2d6fa8;} .fw{background:#2d1e3a;border:1px solid #6a2d8a;}
+  .app{background:#1e3a1e;border:1px solid #2d8a2d;} .cloud{background:#3a2d1e;border:1px solid #8a6a2d;}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px;}
+  th{background:#2a2d3a;color:#ffd700;padding:8px 10px;text-align:left;}
+  td{padding:7px 10px;border-bottom:1px solid #2a2d3a;vertical-align:top;}
+  tr:hover td{background:#1e2130;}
+  code{background:#2a2d3a;border-radius:4px;padding:2px 6px;font-family:Consolas,monospace;color:#98d8aa;font-size:12.5px;}
+  .arrow{color:#ffd700;font-size:20px;margin:0 6px;}
+  .flow{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin:10px 0;}
+  .flow-box{background:#2a2d3a;border-radius:6px;padding:6px 12px;font-size:13px;}
+  .pill{display:inline-block;border-radius:10px;padding:1px 9px;font-size:12px;font-weight:bold;}
+  .p-ok{background:#1e3a1e;color:#7ad17a;border:1px solid #2d8a2d;}
+  .p-wip{background:#3a3a1e;color:#e6c44a;border:1px solid #8a8a2d;}
+  .p-na{background:#2a2a2a;color:#aaa;border:1px solid #555;}
+  .warn{color:#ff9944;}
+  footer{margin-top:48px;color:#666;font-size:12px;border-top:1px solid #333;padding-top:14px;}
+  .note{background:#16202c;border-left:3px solid #2d6fa8;padding:10px 14px;margin:10px 0;font-size:13px;border-radius:0 6px 6px 0;}
+  .note.w{background:#2a1f14;border-left-color:#c87a2d;}
+</style>
+</head>
+<body>
+
+<div style="background:#15240f;border:1px solid #3a7a2d;border-radius:8px;padding:12px 18px;margin:0 0 22px;color:#cce8bb;font-size:13.5px;line-height:1.6">
+  ✅ <b>현행 아키텍처 (v3.x · Matter over Thread)</b> — 3보드(GNPE C6 / XIAO C6 / ESP32-H2) · 빌드타임 변형(PCF·로터리·OLED) ·
+  블록 ALL 주소 · Bridge/composed Matter.
+  <br>단일 진실원천 → <code>main/boards/&lt;board&gt;.h</code> + <code>board_select.h</code> · 핀맵 → <a href="wiring/" style="color:#88cc88">doc/wiring/</a> ·
+  설치 → <a href="SETUP_GUIDE.md" style="color:#88cc88">SETUP_GUIDE.md</a> · OTA → <a href="OTA.md" style="color:#88cc88">OTA.md</a> · 개요 → <a href="../README.md" style="color:#88cc88">README.md</a>.
+</div>
+
+<h1>🪟 Somfy RTS Wood Blind Controller — System Architecture</h1>
+<p style="color:#888">ESP32-C6 / ESP32-H2 (RISC-V, 802.15.4) + CC1101 (447 MHz 2-FSK) + PCF8574/75 + SSD1306 OLED &nbsp;|&nbsp; SmartThings Matter-over-Thread &nbsp;|&nbsp; ESP-IDF v5.4.1 + esp-matter</p>
+
+<h2>📐 시스템 레이어</h2>
+<div class="layer">
+  <div class="card hw"><b>하드웨어</b><p style="font-size:12.5px;color:#bcd">ESP32-C6/H2 SoC<br>CC1101 RF (447 MHz)<br>PCF8574/75 I2C 확장<br>SSD1306 OLED · 로터리 · 진동</p></div>
+  <div class="card fw"><b>드라이버</b><p style="font-size:12.5px;color:#dbc">cc1101.c (SPI + RMT TX)<br>somfy_rts.c (80비트 프레임)<br>button_handler.c (PCF 폴링)<br>oled_ui.c (렌더러 자동선택)</p></div>
+  <div class="card app"><b>애플리케이션</b><p style="font-size:12.5px;color:#cdc">somfy_app.c (메인 루프·메뉴·RF 큐)<br>blind_manager.c (주소·롤링·NVS)<br>thread_provision.c</p></div>
+  <div class="card cloud"><b>Matter / Cloud</b><p style="font-size:12.5px;color:#dcb">app_main.cpp (엔드포인트)<br>matter_blinds_shim.cpp<br>OpenThread + CHIP<br>→ SmartThings</p></div>
+</div>
+
+<h2>🧩 보드 매트릭스</h2>
+<table>
+<tr><th>속성</th><th>GNPE ESP32-C6-0.42</th><th>Seeed XIAO ESP32-C6</th><th>ESP32-H2 SuperMini</th></tr>
+<tr><td>SoC</td><td>ESP32-C6</td><td>ESP32-C6</td><td>ESP32-H2</td></tr>
+<tr><td>OLED (기본)</td><td>내장 0.42″ 72×40 (180° 회전)</td><td>외부 0.96″ 128×64 (정방향)</td><td>외부 모듈 (128×64 등)</td></tr>
+<tr><td>I2C 구성</td><td>분리 (OLED HW + PCF 비트뱅)</td><td>LP_I2C → 공유 HW <b>자동폴백</b></td><td>공유 (OLED+PCF 한 HW I2C)</td></tr>
+<tr><td>로터리 (기본)</td><td>EC11 (full-step)</td><td>EC05 (half-step)</td><td>EC11</td></tr>
+<tr><td>충전</td><td>MCP73831 외부 600 mAh / 300 mA</td><td>온보드 SGM40567 500 mAh / 120 mA</td><td>온보드 TP4054 400 mAh / 100 mA</td></tr>
+<tr><td>Matter PID</td><td><code>0x8000</code></td><td><code>0x8003</code></td><td><code>0x8001</code></td></tr>
+<tr><td>블라인드 채널</td><td>8 (2블록)</td><td>8 (2블록)</td><td><b>3</b> (1블록)</td></tr>
+<tr><td>Matter 구조</td><td>Bridge</td><td>Bridge</td><td><b>composed</b></td></tr>
+<tr><td>빌드</td><td><code>-Board gnpe-c6</code></td><td><code>-Board xiao-c6</code></td><td><code>-Board esp32-h2</code></td></tr>
+<tr><td>상태</td><td><span class="pill p-ok">✅ 검증</span></td><td><span class="pill p-ok">✅ 검증</span></td><td><span class="pill p-ok">✅ 검증</span></td></tr>
+</table>
+<div class="note">단일 진실원천은 각 <code>boards/&lt;board&gt;.h</code>. 같은 SoC(C6)라도 브랜드마다 핀이 달라 보드 파일을 분리하고, OTA 구분은 칩 ID 가 같아(esp32c6) <b>브랜드별 PID</b> 로만 한다. 상세 핀맵은 <a href="wiring/" style="color:#88cc88">doc/wiring/</a>.</div>
+
+<h2>🔀 빌드타임 변형 조합 (board_select.h ← build.ps1)</h2>
+<p>보드 헤더를 <b>안 고치고</b> 한 보드에서 PCF·로터리·OLED 변형을 빌드 시 고른다. 안 주면 보드 기본값(바이너리 동일).
+<code>build.ps1</code> 가 <code>-D BOARD_OVR_*</code> 로 주입 → <code>board_select.h</code> 가 보드 기본을 덮는다.</p>
+<table>
+<tr><th>옵션</th><th>값</th><th>덮는 매크로</th><th>효과</th></tr>
+<tr><td><code>-Pcf</code></td><td>8574 / 8575</td><td><code>BOARD_HAS_LR_BUTTONS</code></td><td>8575 = 좌/우 버튼(P10/P11) 추가 · read/write 2바이트</td></tr>
+<tr><td><code>-Rotary</code></td><td>ec11 / ec05</td><td><code>BOARD_ROT_HALF_STEP</code></td><td>ec05 = half-step 그레이코드 LUT 누산 디코더</td></tr>
+<tr><td><code>-Oled</code></td><td>72x40 / 128x64 / 64x128</td><td><code>BOARD_OLED_WIDTH/HEIGHT</code></td><td>해상도 → 렌더러 자동 선택(아래). ※ <code>CONFIG_OFFSETX</code> 동반 조정(72x40=28 / 그외=0)</td></tr>
+<tr><td><code>-Rotate</code></td><td>0 / 180 / m0 / m180</td><td><code>OLED_ROTATE_180</code> + <code>OLED_FLIP_X</code></td><td>회전 · 좌우반전(<code>m</code>=mirror). sdkconfig 무관, 완전 자동</td></tr>
+</table>
+<div class="note">변형 태그 <code>BOARD_HW_VARIANT_STR</code> = <code>&lt;pcf&gt;.&lt;enc&gt;.&lt;oled&gt;</code> (예 <code>8574.ec05.128x64r0</code>). Matter OTA 는 VID/PID + 버전만 매칭하므로, 변형을 <code>SoftwareVersionString</code> · <code>.ota</code> 파일명에 실어 <b>교차 설치를 막는다</b>(EC11/EC05 · 8574/8575 · OLED 는 전기적 자동감지 불가 → 이미지 식별자로 구분).</div>
+
+<h3>OLED 렌더러 자동 선택 (해상도 기준, 보드 무관)</h3>
+<table>
+<tr><th>해상도</th><th>렌더러</th><th>비고</th></tr>
+<tr><td>128×64 (가로)</td><td>풀스크린 네이티브</td><td>고딕 6×9 폰트 + 7세그 시계, 가로 배치</td></tr>
+<tr><td>64×128 (세로)</td><td>풀스크린 네이티브</td><td>세로 적층 (SH1107 등)</td></tr>
+<tr><td>그 외 (72×40 등)</td><td>72×40 논리 캔버스</td><td>어떤 패널에도 중앙 배치 / 블록 스케일</td></tr>
+</table>
+<p style="font-size:13px;color:#aaa"><code>oled_ui.c</code> 가 <code>BOARD_OLED_WIDTH×HEIGHT</code> 만 보고 렌더러를 고른다 → 보드는 패널 규격 6개 매크로(<code>BOARD_OLED_*</code>)만 선언하면 디스플레이 교체 가능(코드 수정 불필요).</p>
+
+<h2>⚙️ 보드별 펌웨어 기능 차이 (ESP32-H2 메모리 제약)</h2>
+<div class="note w">⚠ <b>ESP32-H2 는 가용 RAM ~145 KB</b> — OpenThread FTD + Matter 가 free heap 을 거의 소진한다(BLE 커미셔닝 중 free ~2.5 KB). 그래서 H2 는 <b>기능을 빼서가 아니라 메모리에 맞춰</b> 아래처럼 축소·단순화한다(C6 두 보드는 RAM 여유로 제약 없음).</div>
+<table>
+<tr><th>항목</th><th>GNPE / XIAO (C6)</th><th>ESP32-H2</th><th>매크로</th></tr>
+<tr><td>블라인드 채널</td><td>8 (2블록 · ALL2)</td><td><b>3</b> (1블록 · ALL1)</td><td><code>BLIND_MAX_COUNT</code></td></tr>
+<tr><td>Matter 구조</td><td>Bridge (Aggregator + bridged)</td><td><b>composed</b> (root 직속 WC)</td><td><code>BOARD_MATTER_COMPOSED</code></td></tr>
+<tr><td>설정 메뉴</td><td>6항목 (Time Set · FW Update 포함)</td><td><b>4항목</b> (Time/FW 제외)</td><td><code>BOARD_DISABLE_TIME/OTA</code></td></tr>
+<tr><td>시각 동기 · 시계</td><td>SetUTCTime + SNTP + 시계 화면</td><td><b>없음</b></td><td><code>BOARD_DISABLE_TIME</code></td></tr>
+<tr><td>펌웨어 OTA</td><td>Matter OTA over Thread</td><td><b>없음</b></td><td><code>BOARD_DISABLE_OTA</code></td></tr>
+<tr><td>페어링 화면</td><td>PIN (72×40) / PIN+QR (128×64)</td><td>PIN + QR (외부 패널)</td><td>해상도 자동</td></tr>
+<tr><td>SmartThings 노출</td><td>블라인드별 독립 타일(스톡 드라이버)</td><td><b>1카드 3블라인드</b> (custom Edge driver)</td><td><code>smartthings-driver/</code></td></tr>
+<tr><td>안정 상한</td><td>8 블라인드 (페어링 시 free ~20 KB 빡빡)</td><td><b>2 블라인드</b> (커미셔닝 peak)</td><td>RAM</td></tr>
+</table>
+<p style="font-size:13px;color:#aaa">Vendor / Product 이름은 전 보드 공통 <code>NLB</code> / <code>Somfy RTS Thread</code> (<code>CHIPProjectConfig.h</code>).</p>
+
+<h2>🔑 블록 ALL 주소 체계 &amp; 롤링코드</h2>
+<div class="box">
+<p><b>주소 = <code>F0</code> · [중간: 채널 등차] · [하위: 보드 ID]</b> &nbsp;(24비트, eFuse 팩토리 MAC → FNV-1a 결정적 산출 · <code>blind_manager.c _derive_addresses</code>):</p>
+<table>
+<tr><th>요소</th><th>규칙</th></tr>
+<tr><td>상위 바이트</td><td><code>0xF0</code> 고정 (전 보드 공통)</td></tr>
+<tr><td>중간 바이트 (블록 base)</td><td><code>(eFuse_hash &gt;&gt; 8) % 0x27</code> → 등차 최소항 0~0x26 (carry 없음)</td></tr>
+<tr><td>하위 바이트</td><td><code>eFuse_hash &amp; 0xFF</code> (보드 고유 ID · 블록별 salt <code>(g+1)×0x9E3779B1</code>)</td></tr>
+<tr><td>채널 i</td><td><code>base + i × 0x2700</code> (중간바이트 +0x27 등차)</td></tr>
+<tr><td>ALL</td><td><code>base + 4 × 0x2700</code> (채널 등차의 다음 항)</td></tr>
+</table>
+<p><b>4채널 = 1블록</b>(채널 4 + 전용 ALL 1). <code>BLIND_BLOCK_COUNT = ceil(채널/4)</code> → H2 1블록(ALL1), C6 2블록(ALL1·ALL2), 9채널 3블록. ALL 명령 시 <b>모든 블록의 ALL 을 차례로 송신</b>, 채널 endpoint 들을 한꺼번에 position 갱신.</p>
+<div class="note">롤링코드는 전용 <code>rollcode</code> NVS 파티션에 <b>채널(<code>rolling[]</code>) + 블록 ALL(<code>all_rolling[]</code>)</b> 을 모두 보존 → Matter factory reset 후에도 복원(역행 방지). <b>ALL 은 PROG 등록 절차가 없어</b>(모터 내부 인식) 롤링코드 영속이 특히 중요하다.</div>
+<div class="note">🔑 <b>페어링 코드(discriminator/passcode)도 같은 eFuse MAC 에서 산출</b>(<code>efuse_commissionable.cpp</code>, custom CommissionableDataProvider) → <b>기기마다 다른 QR/PIN</b>, fctry 플래시 불필요. 여러 대 동시 페어링도 BLE discriminator 충돌 없음(실측 disc gnpe 3327 · xiao 4032 · h2 2687). <code>CONFIG_CUSTOM_COMMISSIONABLE_DATA_PROVIDER=y</code>, DAC provider 는 별개 유지.</div>
+</div>
+
+<h2>🌐 Matter 엔드포인트 구조</h2>
+<div class="layer">
+  <div class="card" style="background:#1e2a3a;border:1px solid #2d6fa8;flex:1">
+    <b>Bridge (C6 — 독립 타일)</b>
+    <p style="font-size:12.5px;color:#cde">EP0 Root (Basic Info: NLB / Somfy RTS Thread · Time Sync)<br>└ Aggregator<br>&nbsp;&nbsp;├ Bridged WindowCovering #1 (Blind 1)<br>&nbsp;&nbsp;├ … #8<br>→ SmartThings / Apple / Google <b>기기 8개</b></p>
+  </div>
+  <div class="card" style="background:#2a1e2a;border:1px solid #8a2d6a;flex:1">
+    <b>composed (H2 — 1기기 다중 EP)</b>
+    <p style="font-size:12.5px;color:#edc">EP0 Root (Basic Info)<br>├ EP1 WindowCovering (Blind 1)<br>├ EP2 · EP3<br>→ Apple / Google 3개 · SmartThings 는 <b>custom driver 로 1카드 3블라인드</b></p>
+  </div>
+</div>
+<p style="font-size:13px;color:#aaa">WindowCovering features: <b>Lift + Tilt + PositionAware</b>. Lift % ↔ Somfy UP/DOWN, Tilt 슬라이더 → 7단계 step burst, STOP → MY. ALL 에서는 PROG 차단(단일 블라인드 절차).</p>
+
+<h2>🔌 I2C 버스 구성 (보드별)</h2>
+<table>
+<tr><th>보드</th><th>OLED</th><th>PCF8574/75</th><th>방식</th></tr>
+<tr><td>GNPE C6</td><td>HW I2C (IO0 / IO1)</td><td>비트뱅 (IO18 / IO19)</td><td><b>분리</b> — 서로 다른 핀, 충돌 없음</td></tr>
+<tr><td>XIAO C6</td><td>HW I2C (D4/D5 = 22/23)</td><td>LP(6/7) → 공유(22/23)</td><td><b>자동폴백</b> — 부팅 프로브로 LP/공유 택1</td></tr>
+<tr><td>ESP32-H2</td><td colspan="2">한 HW I2C 버스 공유 (GP13 / GP14)</td><td><b>공유</b> — OLED + PCF device</td></tr>
+</table>
+<div class="note">공유 버스(XIAO 폴백 · H2)에서 OLED(400k) / PCF(100k) <b>SCL 불일치</b> 시 <code>i2c_master_receive</code> 가 <code>INVALID_STATE</code> 격번 → PCF scl 을 <b>400k 로 통일 + 즉시 재시도</b>(최대 4회)로 흡수. OLED flush ↔ PCF read 는 뮤텍스로 직렬화.</div>
+
+<h2>💾 파티션 테이블 (4 MB Flash · partitions.csv)</h2>
+<table>
+<tr><th>Name</th><th>Type</th><th>Offset</th><th>Size</th><th>용도</th></tr>
+<tr><td>esp_secure_cert</td><td>0x3F</td><td>0x0D000</td><td>0x2000</td><td>DAC 인증서 (암호화)</td></tr>
+<tr><td>nvs</td><td>nvs</td><td>0x10000</td><td>0xC000</td><td>설정 · 블라인드 · Thread/Matter</td></tr>
+<tr><td>nvs_keys</td><td>nvs_keys</td><td>—</td><td>0x1000</td><td>NVS 암호화 키</td></tr>
+<tr><td>otadata</td><td>ota</td><td>—</td><td>0x2000</td><td>OTA 부팅 슬롯 선택</td></tr>
+<tr><td>phy_init</td><td>phy</td><td>—</td><td>0x1000</td><td>RF 캘리브레이션</td></tr>
+<tr><td>ota_0</td><td>app</td><td>0x20000</td><td>0x1E0000</td><td>앱 슬롯 A (1.875 MB)</td></tr>
+<tr><td>ota_1</td><td>app</td><td>0x200000</td><td>0x1E0000</td><td>앱 슬롯 B (듀얼 OTA)</td></tr>
+<tr><td>fctry</td><td>nvs</td><td>0x3E0000</td><td>0x6000</td><td>공장 데이터 (페어링 PIN 등)</td></tr>
+<tr><td><b>rollcode</b></td><td>nvs</td><td>0x3E6000</td><td>0x4000</td><td><b>롤링코드 전용</b> — factory reset 내성</td></tr>
+</table>
+<p style="font-size:13px;color:#aaa">⚠ 전체 <code>erase-flash</code> 는 rollcode 까지 지움 → 재-PROG 필요. Matter factory reset(기본 nvs 만 삭제) · OTA 는 rollcode 보존.</p>
+
+<h2>🧵 FreeRTOS 태스크</h2>
+<table>
+<tr><th>태스크</th><th>소스</th><th>역할</th></tr>
+<tr><td><code>somfy_app</code></td><td>somfy_app.c</td><td>메인 루프(100 ms) · 버튼 이벤트 · 설정 메뉴 · RF 큐 push · 화면보호기/절전 · Task WDT</td></tr>
+<tr><td><code>btn_handler</code></td><td>button_handler.c</td><td>PCF8574/75 폴링(10 ms) · 로터리 디코더 · 진동/충전 GPIO · ~INT wake</td></tr>
+<tr><td>OLED 렌더</td><td>oled_ui.c</td><td>20 fps 애니메이션 · 해상도별 렌더러 · 화면보호기</td></tr>
+<tr><td><code>rf_worker</code></td><td>somfy_app.c</td><td>RF 큐에서 job 꺼내 직렬 송신(틸트 코얼레스)</td></tr>
+<tr><td>CHIP / OpenThread</td><td>esp-matter</td><td>Matter 스택 · 802.15.4 SED · 커미셔닝 · OTA</td></tr>
+</table>
+<p style="font-size:13px;color:#aaa">★ 커미셔닝 중에는 OLED/버튼 연속 태스크를 지연 시작(<code>_deferred_task_starter</code>) — 802.15.4 / SRP / CASE 타이밍 보호.</p>
+
+<h2>🔄 데이터 흐름</h2>
+<h3>SmartThings → 블라인드</h3>
+<div class="flow">
+  <div class="flow-box">SmartThings 앱</div><span class="arrow">→</span>
+  <div class="flow-box">Thread Border Router</div><span class="arrow">→</span>
+  <div class="flow-box">Matter WC delegate<br>(app_main.cpp)</div><span class="arrow">→</span>
+  <div class="flow-box">RF 큐 (somfy_app)</div><span class="arrow">→</span>
+  <div class="flow-box">CC1101 80비트 송신</div>
+</div>
+<h3>물리 버튼 → 블라인드 + Matter 상태 동기화</h3>
+<div class="flow">
+  <div class="flow-box">PCF 버튼 / 로터리</div><span class="arrow">→</span>
+  <div class="flow-box">btn_handler 이벤트</div><span class="arrow">→</span>
+  <div class="flow-box">get_targets<br>(채널 / 블록 ALL)</div><span class="arrow">→</span>
+  <div class="flow-box">CC1101 송신 + 롤링 ↑</div><span class="arrow">→</span>
+  <div class="flow-box">matter position 갱신<br>(ALL = 채널 팬아웃)</div>
+</div>
+
+<h2>🔨 빌드 &amp; 배포 (build.ps1)</h2>
+<table>
+<tr><th>액션</th><th>설명</th></tr>
+<tr><td><code>-Action set-target</code></td><td>보드별 IDF target + 검증 sdkconfig (<code>.verified.bak</code> 백업)</td></tr>
+<tr><td><code>build</code></td><td><code>&lt;builddir&gt;/somfy_blinds.bin</code> — 보드별 분리(<code>build</code> / <code>build-xiao-c6</code> / <code>build-esp32-h2</code>)</td></tr>
+<tr><td><code>flash</code> / <code>monitor</code></td><td>플래시 / 시리얼 모니터 (네이티브 USB 리셋·재열거 처리)</td></tr>
+<tr><td><code>ota-image</code></td><td>보드별 Matter OTA <code>.ota</code> 생성 (PID + 변형 태그)</td></tr>
+<tr><td><code>erase</code></td><td>⚠ 전체 flash 삭제 (rollcode 포함 → 재-PROG)</td></tr>
+</table>
+<p style="font-size:13px;color:#aaa">테스트: <code>test/build_test.ps1 -Mode virtual</code> (프레임 정합성 + ALL 라우팅 가상 검증, CC1101 불필요) / <code>-Mode onair</code> (실제 RF 송신).</p>
+
+<footer>
+  Somfy RTS Wood Blind Controller · ESP-IDF v5.4.1 · esp-matter <code>7706cfbd</code> · esp-idf-ssd1306 <code>554df45</code> · esp_qrcode 0.2.0 · 현행 v3.x (Matter over Thread)<br>
+  단일 진실원천: <code>main/boards/&lt;board&gt;.h</code> · <code>board_select.h</code> · <code>partitions.csv</code> · <code>build.ps1</code>. 상세는 README / doc/wiring / doc/OTA.
+  &nbsp;|&nbsp; 구 v1.1 (WiFi · LP_I2C 분리) 스냅샷은 git 히스토리 참조.
+</footer>
+
+</body>
+</html>

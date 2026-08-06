@@ -1,0 +1,18 @@
+# ──────────────────────────────────────────────────────────
+# sdkconfig.defaults.xiao_c6
+#   Seeed XIAO ESP32-C6 보드 오버레이 — c6_thread 위에 마지막으로 적용.
+#   브랜드별 고유 Product ID 만 지정(나머지는 c6_thread 공통).
+#   GNPE(0x8000) 와 구분돼야 Matter OTA 가 보드별 이미지를 매칭한다.
+#   (같은 SoC esp32c6 라 chip-ID 로는 구분 불가 → PID 가 유일 식별자.)
+# ──────────────────────────────────────────────────────────
+CONFIG_DEVICE_PRODUCT_ID=0x8003
+
+# ── OLED: 외부 0.96" SSD1306 128×64 (정방향) ──
+#   GNPE 0.42" 72×40(SEG28~99, OFFSETX=28)과 달리 표준 128×64 → 컬럼 오프셋 0.
+#   (c6_thread 가 CONFIG_OFFSETX=28 로 두므로 여기서 0 으로 덮어쓴다.)
+#   해상도·회전·72×40 보정은 boards/xiao-c6.h 의 BOARD_OLED_* 가 결정.
+CONFIG_SSD1306_128x64=y
+CONFIG_OFFSETX=0
+# CONFIG_FLIP is not set
+CONFIG_BLE_DEVICE_NAME_PREFIX="MATTER-"
+CONFIG_CHIP_PROJECT_CONFIG="main/CHIPProjectConfig.h"

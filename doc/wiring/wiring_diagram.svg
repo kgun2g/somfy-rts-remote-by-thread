@@ -1,0 +1,1379 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  Somfy RTS Blind Controller — 배선도 v2.0 (2026-05-13)
+  ════════════════════════════════════════════════════════════════
+  v2.0: ESP32 핀 전면 재배치 + 모든 버튼 PCF8574 이관 + bit-bang I2C
+  ════════════════════════════════════════════════════════════════
+  단독 SVG 파일 — Inkscape / Adobe Illustrator / Figma 편집 가능.
+  CSS 클래스 정의 내부 <defs><style>에 포함.
+  ════════════════════════════════════════════════════════════════
+-->
+
+<svg
+   width="1240"
+   height="820"
+   viewBox="0 0 1240 820"
+   style="font-family:'Segoe UI', 'Noto Sans CJK KR', sans-serif"
+   version="1.1"
+   id="svg142"
+   sodipodi:docname="wiring_diagram.svg"
+   inkscape:version="1.4.3 (0d15f75, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview142"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="0.98414634"
+     inkscape:cx="302.8005"
+     inkscape:cy="598.99628"
+     inkscape:window-width="1920"
+     inkscape:window-height="1009"
+     inkscape:window-x="3832"
+     inkscape:window-y="775"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg142">
+    <inkscape:grid
+       id="grid142"
+       units="px"
+       originx="0"
+       originy="0"
+       spacingx="1"
+       spacingy="1"
+       empcolor="#0099e5"
+       empopacity="0.30196078"
+       color="#0099e5"
+       opacity="0.14902"
+       empspacing="5"
+       enabled="true"
+       visible="false" />
+  </sodipodi:namedview>
+  <defs
+     id="defs1">
+    <style
+       type="text/css"
+       id="style1"><![CDATA[
+      /* 박스 색상 (모듈별 톤) */
+      .chip-box   { fill:#1e3a5f; stroke:#2d6fa8; stroke-width:2; }
+      .cc1101-box { fill:#2d1e1e; stroke:#8a2d2d; stroke-width:2; }
+      .pcf-box    { fill:#2d1e3a; stroke:#6a2d8a; stroke-width:2; }
+      .btn-box    { fill:#1e3a1e; stroke:#2d8a2d; stroke-width:2; }
+      .enc-box    { fill:#3a2d1e; stroke:#8a6a2d; stroke-width:2; }
+      .sens-box   { fill:#3a1e1e; stroke:#8a4d2d; stroke-width:1.5; }
+      .oled-box   { fill:#1a2a1a; stroke:#336633; stroke-width:1.5; }
+
+      /* 와이어 색상 — 신호 종류별 */
+      .wire-spi  { stroke:#61dafb; stroke-width:2; fill:none; }
+      .wire-i2c  { stroke:#ffd700; stroke-width:2; fill:none; }
+      .wire-btn  { stroke:#66cc66; stroke-width:1.5; fill:none; }
+      .wire-pwr  { stroke:#ff6666; stroke-width:2; fill:none; }
+      .wire-gnd  { stroke:#888;    stroke-width:2; fill:none; }
+      .wire-rmt  { stroke:#ff9944; stroke-width:2; fill:none;
+                   stroke-dasharray:6,3; }
+      .wire-int  { stroke:#ff66cc; stroke-width:2; fill:none; }
+      .wire-vibe { stroke:#cc8866; stroke-width:2; fill:none; }
+      .wire-chg  { stroke:#aa6644; stroke-width:1.8; fill:none; }
+
+      /* 텍스트 라벨 */
+      .label    { font-size:11px; fill:#e0e0e0; }
+      .label-y  { font-size:10px; fill:#ffd700; }
+      .label-g  { font-size:10px; fill:#66cc66; }
+      .label-b  { font-size:10px; fill:#61dafb; }
+      .label-o  { font-size:10px; fill:#ff9944; }
+      .label-r  { font-size:10px; fill:#ff6666; }
+      .label-p  { font-size:10px; fill:#ff66cc; }
+      .label-n  { font-size:10px; fill:#cc88ff; }
+
+      .v2-tag   { font-size:10px; fill:#ff66cc; font-weight:bold; }
+
+      /* 배경 */
+      .bg       { fill:#12151f; }
+    ]]></style>
+  </defs>
+  <rect
+     class="bg"
+     x="0"
+     y="0"
+     width="1240"
+     height="820"
+     id="rect1"
+     sodipodi:insensitive="true" />
+  <!-- ════════ 헤더 / 범례 ════════ -->
+  <!-- Legend row 2 -->
+  <g
+     id="g147"
+     sodipodi:insensitive="true">
+    <rect
+       x="20"
+       y="14"
+       width="1200"
+       height="62"
+       rx="6"
+       fill="#1a1d27"
+       stroke="#333333"
+       id="rect2" />
+    <text
+       x="34"
+       y="36"
+       font-size="14px"
+       fill="#ff66cc"
+       font-weight="bold"
+       id="text2">v2.0 — ESP32 핀 재배치 + 모든 버튼 PCF8574 이관 + bit-bang I2C</text>
+    <text
+       x="34"
+       y="56"
+       font-size="10px"
+       fill="#aaaaaa"
+       id="text3">PCF8574 SDA/SCL → IO19/IO18 (software bit-bang) · ~INT → IO17 (wake) · 진동 → IO16 · 충전 → IO3</text>
+    <line
+       x1="34"
+       y1="68"
+       x2="74"
+       y2="68"
+       class="wire-spi"
+       id="line3" />
+    <text
+       x="80"
+       y="72"
+       class="label-b"
+       id="text4">SPI</text>
+    <line
+       x1="120"
+       y1="68"
+       x2="160"
+       y2="68"
+       class="wire-i2c"
+       id="line4" />
+    <text
+       x="166"
+       y="72"
+       class="label-y"
+       id="text5">I2C bit-bang</text>
+    <line
+       x1="260"
+       y1="68"
+       x2="300"
+       y2="68"
+       class="wire-int"
+       id="line5" />
+    <text
+       x="306"
+       y="72"
+       class="label-p"
+       id="text6">~INT</text>
+    <line
+       x1="354"
+       y1="68"
+       x2="394"
+       y2="68"
+       class="wire-rmt"
+       id="line6" />
+    <text
+       x="400"
+       y="72"
+       class="label-o"
+       id="text7">RMT TX</text>
+    <line
+       x1="464"
+       y1="68"
+       x2="504"
+       y2="68"
+       class="wire-vibe"
+       id="line7" />
+    <text
+       x="510"
+       y="72"
+       font-size="10px"
+       fill="#cc8866"
+       id="text8">VIBRATION</text>
+    <line
+       x1="592"
+       y1="68"
+       x2="632"
+       y2="68"
+       class="wire-chg"
+       id="line8" />
+    <text
+       x="638"
+       y="72"
+       font-size="10px"
+       fill="#aa6644"
+       id="text9">CHG_STAT</text>
+    <line
+       x1="724"
+       y1="68"
+       x2="764"
+       y2="68"
+       class="wire-pwr"
+       id="line9" />
+    <text
+       x="770"
+       y="72"
+       class="label-r"
+       id="text10">3V3</text>
+    <line
+       x1="810"
+       y1="68"
+       x2="850"
+       y2="68"
+       class="wire-gnd"
+       id="line10" />
+    <text
+       x="856"
+       y="72"
+       class="label"
+       fill="#888"
+       id="text11">GND</text>
+    <text
+       x="920"
+       y="72"
+       font-size="10px"
+       fill="#88aa88"
+       id="text12">━━ HP I2C (보드 내장 OLED)</text>
+  </g>
+  <!-- ════════ ESP32-C6-0.42 (중앙) ════════ -->
+  <rect
+     x="449.89539"
+     y="120.07228"
+     width="230.03233"
+     height="449.85544"
+     rx="11.501616"
+     class="chip-box"
+     id="rect12" />
+  <text
+     x="580"
+     y="111"
+     text-anchor="middle"
+     font-size="14"
+     fill="#61dafb"
+     font-weight="bold"
+     id="text13">ESP32-C6-0.42</text>
+  <text
+     x="566.28253"
+     y="140.96779"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#88aa88"
+     id="text14">━━ OLED 내장 (IO0/IO1 = HP I2C0) ━━</text>
+  <line
+     x1="474.75836"
+     y1="295.17471"
+     x2="654.75836"
+     y2="295.17471"
+     stroke="#3a4a5a"
+     stroke-width="1"
+     id="line14" />
+  <!-- 좌측 핀 (signals to CC1101 + sensors) — text right-aligned at x=474 -->
+  <text
+     x="443.82309"
+     y="183.28151"
+     text-anchor="end"
+     class="label"
+     fill="#666"
+     id="text15">IO2 (NC)</text>
+  <text
+     x="443.82309"
+     y="226.68094"
+     text-anchor="end"
+     class="label"
+     fill="#aa6644"
+     id="text16">IO3 CHG_STAT</text>
+  <text
+     x="443.82309"
+     y="419.05072"
+     text-anchor="end"
+     class="label"
+     fill="#61dafb"
+     id="text17">IO4 (CSN)</text>
+  <text
+     x="443.82309"
+     y="501.20071"
+     text-anchor="end"
+     class="label"
+     fill="#61dafb"
+     id="text18">IO5 (MISO)</text>
+  <text
+     x="443.82309"
+     y="475.21689"
+     text-anchor="end"
+     class="label"
+     fill="#61dafb"
+     id="text19">IO6 (MOSI)</text>
+  <text
+     x="443.82309"
+     y="446.35904"
+     text-anchor="end"
+     class="label"
+     fill="#61dafb"
+     id="text20">IO7 (SCK)</text>
+  <text
+     x="443.82309"
+     y="368.21445"
+     text-anchor="end"
+     class="label"
+     fill="#ff9944"
+     id="text21">IO8 (GD0)</text>
+  <text
+     x="443.82309"
+     y="273.61954"
+     text-anchor="end"
+     class="label"
+     fill="#888"
+     id="text22">GND</text>
+  <text
+     x="443.82309"
+     y="308.18253"
+     text-anchor="end"
+     class="label"
+     fill="#ff6666"
+     id="text23">3V3</text>
+  <!-- 우측 핀 (signals to PCF8574 + VS1) — text left-aligned at x=686 -->
+  <text
+     x="364.10944"
+     y="145.94955"
+     class="label"
+     fill="#cc8866"
+     id="text24">IO16 VIBRATION</text>
+  <text
+     x="686"
+     y="208"
+     class="label"
+     fill="#ff66cc"
+     id="text25">IO17 PCF8574_INT</text>
+  <text
+     x="686"
+     y="292"
+     class="label"
+     fill="#ffd700"
+     id="text26">IO18 (SCL bit-bang)</text>
+  <text
+     x="686"
+     y="312"
+     class="label"
+     fill="#ffd700"
+     id="text27">IO19 (SDA bit-bang)</text>
+  <!-- pin dots — left -->
+  <circle
+     cx="449.82309"
+     cy="179.28151"
+     r="4"
+     fill="#444444"
+     id="circle27" />
+  <!-- IO2 NC -->
+  <circle
+     cx="449.82309"
+     cy="222.68094"
+     r="4"
+     fill="#aa6644"
+     id="circle28" />
+  <!-- IO3 CHG_STAT -->
+  <circle
+     cx="449.82309"
+     cy="415.05072"
+     r="4"
+     fill="#61dafb"
+     id="circle29" />
+  <!-- IO4 CSN -->
+  <circle
+     cx="449.82309"
+     cy="497.20071"
+     r="4"
+     fill="#61dafb"
+     id="circle30" />
+  <!-- IO5 MISO -->
+  <circle
+     cx="449.82309"
+     cy="471.21689"
+     r="4"
+     fill="#61dafb"
+     id="circle31" />
+  <!-- IO6 MOSI -->
+  <circle
+     cx="449.82309"
+     cy="442.35904"
+     r="4"
+     fill="#61dafb"
+     id="circle32" />
+  <!-- IO7 SCK -->
+  <circle
+     cx="449.82309"
+     cy="364.21445"
+     r="4"
+     fill="#ff9944"
+     id="circle33" />
+  <!-- IO8 GD0 -->
+  <circle
+     cx="449.82309"
+     cy="269.61954"
+     r="4"
+     fill="#888888"
+     id="circle34" />
+  <!-- GND -->
+  <circle
+     cx="449.82309"
+     cy="304.18253"
+     r="4"
+     fill="#ff6666"
+     id="circle35" />
+  <!-- 3V3 -->
+  <!-- pin dots — right -->
+  <circle
+     cx="450.03354"
+     cy="142.15999"
+     r="4"
+     fill="#cc8866"
+     id="circle36" />
+  <!-- IO16 VIBRATION -->
+  <circle
+     cx="680"
+     cy="204"
+     r="4"
+     fill="#ff66cc"
+     id="circle37" />
+  <!-- IO17 PCF_INT -->
+  <circle
+     cx="680"
+     cy="288"
+     r="4"
+     fill="#ffd700"
+     id="circle38" />
+  <!-- IO18 SCL -->
+  <circle
+     cx="680"
+     cy="308"
+     r="4"
+     fill="#ffd700"
+     id="circle39" />
+  <!-- IO19 SDA -->
+  <!-- 그룹 라벨 (chip 내부) -->
+  <text
+     x="564.46075"
+     y="437.69937"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#666666"
+     id="text39">─ sensors (wake) ─</text>
+  <text
+     x="566.79059"
+     y="475.6109"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#666666"
+     id="text41">─ RMT TX ─</text>
+  <text
+     x="566.79059"
+     y="513.54645"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#666666"
+     id="text42">─ power ─</text>
+  <text
+     x="564.25031"
+     y="545.58862"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#ff66cc"
+     font-weight="bold"
+     id="text43">v2.0: IO2 unused</text>
+  <text
+     x="564.25031"
+     y="560.58862"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#888888"
+     id="text44">(구 BTN_PROG)</text>
+  <!-- ════════ OLED (top-right, 보드 내장 표시) ════════ -->
+  <g
+     id="g146"
+     transform="translate(-938.86591,32.425754)">
+    <rect
+       x="1415.4518"
+       y="120.92953"
+       width="177.07484"
+       height="100.20811"
+       rx="4.4268713"
+       class="oled-box"
+       id="rect44" />
+    <text
+       x="1430.4392"
+       y="139.9171"
+       font-size="11px"
+       fill="#88aa88"
+       font-weight="bold"
+       id="text45"><tspan
+         sodipodi:role="line"
+         id="tspan145"
+         x="1430.4392"
+         y="139.9171">OLED SSD1315</tspan><tspan
+         sodipodi:role="line"
+         id="tspan146"
+         x="1430.4392"
+         y="153.93166">(보드 내장 — HP I2C0)</tspan></text>
+    <text
+       x="1437.0439"
+       y="168.07819"
+       font-size="10px"
+       fill="#e0e0e0"
+       id="text46"><tspan
+         sodipodi:role="line"
+         id="tspan142"
+         x="1437.0439"
+         y="168.07819">72×40 @ 0x3C</tspan><tspan
+         sodipodi:role="line"
+         id="tspan143"
+         x="1437.0439"
+         y="180.57819">· SDA=IO1 (silk &quot;SDA-1&quot;)</tspan><tspan
+         sodipodi:role="line"
+         x="1437.0439"
+         y="193.07819"
+         id="tspan144">· SCL=IO0 (silk &quot;SCL-0&quot;)</tspan></text>
+    <text
+       x="1429.1691"
+       y="210.02119"
+       font-size="9px"
+       fill="#88aa88"
+       id="text47">⚠ 내부 트레이스 — 외부 배선 불필요</text>
+  </g>
+  <!-- ════════ CC1101 (좌하) ════════ -->
+  <rect
+     x="49.80098"
+     y="599.2594"
+     width="363.27844"
+     height="170.04425"
+     rx="7.6479673"
+     class="cc1101-box"
+     id="rect47" />
+  <!-- CC1101 핀 (상단 edge, y=600) — 모든 SPI 핀 LEFT side ESP32 로 이동 -->
+  <circle
+     cx="89.823097"
+     cy="599.28149"
+     r="4"
+     fill="#888888"
+     id="circle48" />
+  <!-- GND Pin1 -->
+  <text
+     x="89.823097"
+     y="621.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#888888"
+     id="text49">GND</text>
+  <text
+     x="89.823097"
+     y="635.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text50">Pin1</text>
+  <circle
+     cx="129.8231"
+     cy="599.28149"
+     r="4"
+     fill="#ff6666"
+     id="circle50" />
+  <!-- VCC Pin2 -->
+  <text
+     x="129.8231"
+     y="621.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#ff6666"
+     id="text51">VCC</text>
+  <text
+     x="129.8231"
+     y="635.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text52">Pin2 3.3V!</text>
+  <circle
+     cx="169.8231"
+     cy="599.28149"
+     r="4"
+     fill="#ff9944"
+     id="circle52" />
+  <!-- GD0 Pin3 -->
+  <text
+     x="169.8231"
+     y="621.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#ff9944"
+     id="text53">GD0</text>
+  <text
+     x="169.8231"
+     y="635.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text54">Pin3</text>
+  <circle
+     cx="209.8231"
+     cy="599.28149"
+     r="4"
+     fill="#61dafb"
+     id="circle54" />
+  <!-- CSN Pin4 -->
+  <text
+     x="209.8231"
+     y="621.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#61dafb"
+     id="text55">CSN</text>
+  <text
+     x="209.8231"
+     y="635.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text56">Pin4</text>
+  <text
+     x="209.8231"
+     y="647.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#ff66cc"
+     id="text57">★IO4</text>
+  <circle
+     cx="249.8231"
+     cy="599.28149"
+     r="4"
+     fill="#61dafb"
+     id="circle57" />
+  <!-- SCK Pin5 -->
+  <text
+     x="249.8231"
+     y="621.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#61dafb"
+     id="text58">SCK</text>
+  <text
+     x="249.8231"
+     y="635.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text59">Pin5</text>
+  <text
+     x="249.8231"
+     y="647.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#ff66cc"
+     id="text60">★IO7</text>
+  <circle
+     cx="289.82309"
+     cy="599.28149"
+     r="4"
+     fill="#61dafb"
+     id="circle60" />
+  <!-- MOSI Pin6 -->
+  <text
+     x="289.82309"
+     y="621.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#61dafb"
+     id="text61">MOSI</text>
+  <text
+     x="289.82309"
+     y="635.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text62">Pin6</text>
+  <text
+     x="289.82309"
+     y="647.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#ff66cc"
+     id="text63">★IO6</text>
+  <circle
+     cx="329.82309"
+     cy="599.28149"
+     r="4"
+     fill="#61dafb"
+     id="circle63" />
+  <!-- MISO Pin7 -->
+  <text
+     x="329.82309"
+     y="621.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#61dafb"
+     id="text64">MISO</text>
+  <text
+     x="329.82309"
+     y="635.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text65">Pin7</text>
+  <text
+     x="329.82309"
+     y="647.28149"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text66">IO5</text>
+  <!-- 미사용 Pin8 GD02 -->
+  <text
+     x="375.59756"
+     y="622.29761"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#666666"
+     id="text67">NC</text>
+  <text
+     x="375.59756"
+     y="636.29761"
+     text-anchor="middle"
+     font-size="9px"
+     fill="#666666"
+     id="text68">Pin8 GD02</text>
+  <text
+     x="239.8231"
+     y="689.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#ff8888"
+     font-weight="bold"
+     id="text69">⚠ VCC = 3.3V 전용 (5V 절대 금지)</text>
+  <text
+     x="239.8231"
+     y="709.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#aaaaaa"
+     id="text70">★ v2.0: SPI 핀 4개 모두 ESP32 LEFT side (IO4-IO7) 로 재배치</text>
+  <text
+     x="239.8231"
+     y="729.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#aaaaaa"
+     id="text71">RMT TX → CC1101 GD0 (Manchester 변조)</text>
+  <text
+     x="239.8231"
+     y="749.28149"
+     text-anchor="middle"
+     font-size="10px"
+     fill="#aaaaaa"
+     id="text72">안테나: PCB 미앤더 또는 외부 SMA</text>
+  <!-- CC1101 ↔ ESP32 wires (orthogonal, 깔끔) — 모든 ESP32 LEFT side -->
+  <!-- GND Pin1 → ESP32 GND -->
+  <path
+     d="M 90.111039,599.68851 V 269.88625 H 449.53284"
+     class="wire-gnd"
+     id="path72" />
+  <!-- VCC Pin2 → ESP32 3V3 -->
+  <path
+     d="M 130.2047,599.84336 V 304.7929 h 319.233"
+     class="wire-pwr"
+     id="path73" />
+  <!-- GD0 Pin3 → IO8 (RMT) -->
+  <path
+     d="M 169.80925,599.26888 V 364.89252 h 280.0278"
+     class="wire-rmt"
+     id="path74" />
+  <!-- CSN Pin4 → IO4 -->
+  <path
+     d="M 209.71824,599.20325 V 415.12132 h 240.21037"
+     class="wire-spi"
+     id="path75" />
+  <!-- SCK Pin5 → IO7 -->
+  <path
+     d="M 249.68919,599.18278 V 443.42817 h 200.26916"
+     class="wire-spi"
+     id="path76" />
+  <!-- MOSI Pin6 → IO6 -->
+  <path
+     d="M 289.71483,599.21179 V 471.64831 h 160.21736"
+     class="wire-spi"
+     id="path77" />
+  <!-- MISO Pin7 → IO5 -->
+  <path
+     d="M 329.71116,599.21912 V 497.63202 H 449.93599"
+     class="wire-spi"
+     id="path78" />
+  <!-- ════════ PCF8574 (우중) — bit-bang I2C + 모든 버튼 ════════ -->
+  <rect
+     x="800"
+     y="180"
+     width="380"
+     height="380"
+     rx="8"
+     class="pcf-box"
+     id="rect78" />
+  <text
+     x="990"
+     y="171"
+     text-anchor="middle"
+     font-size="13"
+     fill="#cc88ff"
+     font-weight="bold"
+     id="text78">PCF8574 (I2C 0x20) — 모든 버튼 호스트 <tspan
+   class="v2-tag"
+   id="tspan78">★v2.0</tspan></text>
+  <!-- PCF8574 좌측 edge — I2C/INT/Power 핀 (ESP32 향함) -->
+  <text
+     x="792"
+     y="208"
+     text-anchor="end"
+     class="label"
+     fill="#ff66cc"
+     id="text79">~INT</text>
+  <text
+     x="792"
+     y="221.34697"
+     text-anchor="end"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text80">Pin13</text>
+  <text
+     x="792"
+     y="292"
+     text-anchor="end"
+     class="label"
+     fill="#ffd700"
+     id="text81">SCL</text>
+  <text
+     x="790.47583"
+     y="278.42007"
+     text-anchor="end"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text82">Pin14</text>
+  <text
+     x="792"
+     y="312"
+     text-anchor="end"
+     class="label"
+     fill="#ffd700"
+     id="text83">SDA</text>
+  <text
+     x="790.98389"
+     y="324.8389"
+     text-anchor="end"
+     font-size="9px"
+     fill="#aaaaaa"
+     id="text84">Pin15</text>
+  <text
+     x="792"
+     y="368"
+     text-anchor="end"
+     class="label"
+     fill="#ff6666"
+     id="text85">VCC 3V3</text>
+  <text
+     x="792"
+     y="385"
+     text-anchor="end"
+     font-size="9"
+     fill="#aaa"
+     id="text86">Pin16</text>
+  <text
+     x="792"
+     y="500"
+     text-anchor="end"
+     class="label"
+     fill="#888"
+     id="text87">GND</text>
+  <text
+     x="792"
+     y="517"
+     text-anchor="end"
+     font-size="9"
+     fill="#aaa"
+     id="text88">Pin8</text>
+  <circle
+     cx="800"
+     cy="204"
+     r="4"
+     fill="#ff66cc"
+     id="circle88" />
+  <!-- ~INT -->
+  <circle
+     cx="800"
+     cy="288"
+     r="4"
+     fill="#ffd700"
+     id="circle89" />
+  <!-- SCL -->
+  <circle
+     cx="800"
+     cy="308"
+     r="4"
+     fill="#ffd700"
+     id="circle90" />
+  <!-- SDA -->
+  <circle
+     cx="800"
+     cy="364"
+     r="4"
+     fill="#ff6666"
+     id="circle91" />
+  <!-- VCC -->
+  <circle
+     cx="800"
+     cy="496"
+     r="4"
+     fill="#888"
+     id="circle92" />
+  <!-- GND -->
+  <!-- PCF8574 내부: P0..P7 + ~INT 매핑 표 (right side of box) -->
+  <text
+     x="820"
+     y="208"
+     font-size="11"
+     fill="#e0e0e0"
+     font-weight="bold"
+     id="text92">P0  ROT_A</text>
+  <text
+     x="1000"
+     y="208"
+     font-size="9"
+     fill="#aaa"
+     id="text93">Pin4</text>
+  <text
+     x="820"
+     y="228"
+     font-size="11"
+     fill="#e0e0e0"
+     font-weight="bold"
+     id="text94">P1  ROT_B</text>
+  <text
+     x="1000"
+     y="228"
+     font-size="9"
+     fill="#aaa"
+     id="text95">Pin5</text>
+  <text
+     x="820"
+     y="248"
+     font-size="11"
+     fill="#e0e0e0"
+     font-weight="bold"
+     id="text96">P2  ROT_BTN <tspan
+   font-size="9"
+   fill="#aaa"
+   id="tspan95">(STOP/MY)</tspan></text>
+  <text
+     x="1000"
+     y="248"
+     font-size="9"
+     fill="#aaa"
+     id="text97">Pin6</text>
+  <text
+     x="820"
+     y="280"
+     font-size="11"
+     fill="#66cc66"
+     font-weight="bold"
+     id="text98">P3  SW6 SETUP</text>
+  <text
+     x="1000"
+     y="280"
+     font-size="9"
+     fill="#aaa"
+     id="text99">Pin7</text>
+  <text
+     x="1030"
+     y="280"
+     font-size="9"
+     fill="#ff66cc"
+     id="text100">★v2.0</text>
+  <text
+     x="820"
+     y="324"
+     font-size="11"
+     fill="#66cc66"
+     font-weight="bold"
+     id="text101">P4  SW1 BTN_UP</text>
+  <text
+     x="1000"
+     y="324"
+     font-size="9"
+     fill="#aaa"
+     id="text102">Pin9</text>
+  <text
+     x="1030"
+     y="324"
+     font-size="9"
+     fill="#ff66cc"
+     id="text103">★v2.0</text>
+  <text
+     x="820"
+     y="344"
+     font-size="11"
+     fill="#66cc66"
+     font-weight="bold"
+     id="text104">P5  SW2 BTN_DOWN</text>
+  <text
+     x="1000"
+     y="344"
+     font-size="9"
+     fill="#aaa"
+     id="text105">Pin10</text>
+  <text
+     x="1030"
+     y="344"
+     font-size="9"
+     fill="#ff66cc"
+     id="text106">★v2.0</text>
+  <text
+     x="820"
+     y="364"
+     font-size="11"
+     fill="#66cc66"
+     font-weight="bold"
+     id="text107">P6  SW3 BTN_SELECT</text>
+  <text
+     x="1000"
+     y="364"
+     font-size="9"
+     fill="#aaa"
+     id="text108">Pin11</text>
+  <text
+     x="1030"
+     y="364"
+     font-size="9"
+     fill="#ff66cc"
+     id="text109">★v2.0</text>
+  <text
+     x="820"
+     y="384"
+     font-size="11"
+     fill="#66cc66"
+     font-weight="bold"
+     id="text110">P7  SW4 BTN_PROG</text>
+  <text
+     x="1000"
+     y="384"
+     font-size="9"
+     fill="#aaa"
+     id="text111">Pin12</text>
+  <text
+     x="1030"
+     y="384"
+     font-size="9"
+     fill="#ff66cc"
+     id="text112">★v2.0</text>
+  <!-- I2C / INT 정보 -->
+  <line
+     x1="820"
+     y1="416"
+     x2="1170"
+     y2="416"
+     stroke="#444"
+     id="line112" />
+  <text
+     x="820"
+     y="436"
+     font-size="10"
+     fill="#aaa"
+     id="text113">A0/A1/A2 → GND (addr <tspan
+   fill="#ffd700"
+   id="tspan112">0x20</tspan>)</text>
+  <text
+     x="820"
+     y="456"
+     font-size="10"
+     fill="#aaa"
+     id="text114">SCL Pin14 → IO18 / SDA Pin15 → IO19  (<tspan
+   fill="#ffd700"
+   id="tspan113">bit-bang 50kHz</tspan>)</text>
+  <text
+     x="820"
+     y="476"
+     font-size="10"
+     fill="#ff66cc"
+     id="text115">~INT Pin13 → IO17 (모든 P 변화 wake, 외부 10kΩ pull-up)</text>
+  <text
+     x="820"
+     y="496"
+     font-size="10"
+     fill="#aaa"
+     id="text116">SDA/SCL 외부 4.7kΩ pull-up to +3V3 필수</text>
+  <text
+     x="820"
+     y="540"
+     font-size="10"
+     fill="#aaa"
+     id="text117">EC11 로터리: A상→P0, B상→P1, BTN→P2 (클릭=STOP/MY, 2초=주파수 편집)</text>
+  <!-- PCF8574 ↔ ESP32 wires -->
+  <!-- ~INT → IO17 -->
+  <path
+     d="M800,204 L680,204"
+     class="wire-int"
+     id="path117" />
+  <text
+     x="740"
+     y="198"
+     text-anchor="middle"
+     class="label-p"
+     id="text118">wake</text>
+  <!-- SCL → IO18 -->
+  <path
+     d="M800,288 L680,288"
+     class="wire-i2c"
+     id="path118" />
+  <!-- SDA → IO19 (slight Y wraparound to match IO19 at y=308) -->
+  <path
+     d="M800,308 L680,308"
+     class="wire-i2c"
+     id="path119" />
+  <!-- VCC → ESP32 3V3 -->
+  <path
+     d="M 800,363.40351 H 760 V 405.3687 H 680"
+     class="wire-pwr"
+     id="path120" />
+  <!-- GND → ESP32 GND -->
+  <path
+     d="M 800,496.46811 H 760 V 462.42728 H 680"
+     class="wire-gnd"
+     id="path121" />
+  <!-- ════════ VS1 진동센서 (좌하단 ESP32 IO16) ════════ -->
+  <g
+     id="g150"
+     transform="translate(-0.7184976,3.592488)">
+    <rect
+       x="137.23949"
+       y="112.81503"
+       width="150"
+       height="50"
+       rx="6"
+       class="sens-box"
+       id="rect121" />
+    <text
+       x="212.23949"
+       y="130.81503"
+       text-anchor="middle"
+       font-size="11px"
+       fill="#cc8866"
+       font-weight="bold"
+       id="text121">VS1 진동센서</text>
+    <text
+       x="212.23949"
+       y="147.81503"
+       text-anchor="middle"
+       font-size="9px"
+       fill="#aaaaaa"
+       id="text122">_v2 / _h2 only · active-LOW · wake</text>
+  </g>
+  <!-- VS1 → IO16 -->
+  <path
+     d="m 449.34518,142.2234 -161.77199,0"
+     class="wire-vibe"
+     id="path122"
+     sodipodi:nodetypes="cc" />
+  <!-- ════════ MCP73831 (좌측 ESP32 IO3) ════════ -->
+  <g
+     id="g149"
+     transform="translate(-0.71849788,23.710421)">
+    <g
+       id="g148">
+      <rect
+         x="126.87391"
+         y="172.11919"
+         width="170"
+         height="50"
+         rx="6"
+         class="sens-box"
+         id="rect122" />
+      <text
+         x="211.87392"
+         y="190.11919"
+         text-anchor="middle"
+         font-size="11px"
+         fill="#aa6644"
+         font-weight="bold"
+         id="text123">MCP73831 충전 IC</text>
+      <text
+         x="211.87392"
+         y="207.11919"
+         text-anchor="middle"
+         font-size="9px"
+         fill="#aaaaaa"
+         id="text124">배터리 변형 · STAT active-LOW · wake</text>
+    </g>
+  </g>
+  <!-- MCP73831 STAT → IO3 -->
+  <path
+     d="M 296.49885,222.23127 H 450.81058"
+     class="wire-chg"
+     id="path124"
+     sodipodi:nodetypes="cc" />
+  <!-- ════════ EC11 + Sensors 종합 (하단) ════════ -->
+  <rect
+     x="482.56506"
+     y="610"
+     width="280"
+     height="160"
+     rx="8"
+     class="enc-box"
+     id="rect124" />
+  <text
+     x="622.56506"
+     y="602"
+     text-anchor="middle"
+     font-size="12px"
+     fill="#ffcc66"
+     font-weight="bold"
+     id="text125">EC11 로터리 (PCF8574 P0/P1/P2)</text>
+  <text
+     x="498.56506"
+     y="634"
+     font-size="10px"
+     fill="#e0e0e0"
+     id="text126">A상 → PCF8574 P0 (Pin4)</text>
+  <text
+     x="498.56506"
+     y="654"
+     font-size="10px"
+     fill="#e0e0e0"
+     id="text127">B상 → PCF8574 P1 (Pin5)</text>
+  <text
+     x="498.56506"
+     y="674"
+     font-size="10px"
+     fill="#e0e0e0"
+     id="text128">BTN → PCF8574 P2 (Pin6)</text>
+  <text
+     x="498.56506"
+     y="694"
+     font-size="10px"
+     fill="#e0e0e0"
+     id="text129">COM/GND → GND</text>
+  <text
+     x="498.56506"
+     y="724"
+     font-size="10px"
+     fill="#aaaaaa"
+     id="text130">짧은 클릭 = STOP/MY 커맨드</text>
+  <text
+     x="498.56506"
+     y="744"
+     font-size="10px"
+     fill="#aaaaaa"
+     id="text131">2초 롱프레스 = 주파수 편집 모드</text>
+  <!-- ════════ Light Sleep Wake 박스 (우하단) ════════ -->
+  <rect
+     x="819.98761"
+     y="609.98761"
+     width="357.83145"
+     height="160.02477"
+     rx="7.736896"
+     fill="#1e1e3a"
+     stroke="#3a3a8a"
+     stroke-width="1.47524"
+     id="rect131" />
+  <text
+     x="1005"
+     y="602"
+     text-anchor="middle"
+     font-size="12"
+     fill="#9999ff"
+     font-weight="bold"
+     id="text132">💤 Light Sleep Wake Sources (v2.0)</text>
+  <text
+     x="836"
+     y="634"
+     font-size="11"
+     fill="#ff66cc"
+     font-weight="bold"
+     id="text133">IO17</text>
+  <text
+     x="880"
+     y="634"
+     font-size="10"
+     fill="#e0e0e0"
+     id="text134"> PCF8574 ~INT (모든 P 비트 변화)</text>
+  <text
+     x="880"
+     y="650"
+     font-size="9"
+     fill="#aaa"
+     id="text135">→ 버튼/로터리/SETUP 모두 wake</text>
+  <text
+     x="836"
+     y="676"
+     font-size="11"
+     fill="#cc8866"
+     font-weight="bold"
+     id="text136">IO16</text>
+  <text
+     x="880"
+     y="676"
+     font-size="10"
+     fill="#e0e0e0"
+     id="text137"> VS1 진동 센서 (active-LOW)</text>
+  <text
+     x="880"
+     y="692"
+     font-size="9"
+     fill="#aaa"
+     id="text138">→ 흔들기 감지로도 wake</text>
+  <text
+     x="836"
+     y="718"
+     font-size="11"
+     fill="#aa6644"
+     font-weight="bold"
+     id="text139">IO3</text>
+  <text
+     x="880"
+     y="718"
+     font-size="10"
+     fill="#e0e0e0"
+     id="text140"> MCP73831 STAT (충전 시작)</text>
+  <text
+     x="880"
+     y="734"
+     font-size="9"
+     fill="#aaa"
+     id="text141">→ USB 연결 즉시 화면 ON</text>
+  <text
+     x="836"
+     y="760"
+     font-size="10"
+     fill="#66cc66"
+     id="text142">✓ light sleep ~750µA → 600mAh 33일 standby</text>
+  <circle
+     cx="296.86084"
+     cy="222.01071"
+     r="4"
+     fill="#aa6644"
+     id="circle28-4"
+     style="font-family:'Segoe UI', 'Noto Sans CJK KR', sans-serif;display:inline" />
+  <circle
+     cx="287.0238"
+     cy="142.03987"
+     r="4"
+     fill="#cc8866"
+     id="circle36-2"
+     style="font-family:'Segoe UI', 'Noto Sans CJK KR', sans-serif" />
+  <g
+     inkscape:groupmode="layer"
+     id="layer1"
+     inkscape:label="Layer 1" />
+  <text
+     x="239.8231"
+     y="591.28149"
+     text-anchor="middle"
+     font-size="13px"
+     fill="#ff8888"
+     font-weight="bold"
+     id="text48">CC1101 (447 MHz RF)</text>
+</svg>

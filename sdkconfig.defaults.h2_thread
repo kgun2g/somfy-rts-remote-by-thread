@@ -1,0 +1,87 @@
+# ──────────────────────────────────────────────────────────
+# sdkconfig.defaults.h2_thread
+#   ESP32-H2 보드용 sdkconfig defaults (Matter over Thread).
+#   H2 는 802.15.4(Thread)+BLE 지원, WiFi 없음 → C6 와 동일 Thread 트랜스포트.
+#   build.ps1 -Board esp32-h2 가 이 파일을 sdkconfig.defaults 와 함께 적용.
+#
+#   ★ 미검증 템플릿 — 실제 H2 보드로 첫 빌드 시 핀(boards/esp32-h2.h) 및
+#     파티션/BSP 설정 재조정 필요.
+# ──────────────────────────────────────────────────────────
+CONFIG_IDF_TARGET="esp32h2"
+
+# libsodium
+CONFIG_LIBSODIUM_USE_MBEDTLS_SHA=y
+
+# NIMBLE (BLE — 커미셔닝)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_EXT_ADV=n
+CONFIG_BT_NIMBLE_HCI_EVT_BUF_SIZE=70
+CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n
+
+# Enable OpenThread (H2 는 802.15.4 라디오 내장)
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_SRP_CLIENT=y
+CONFIG_OPENTHREAD_DNS_CLIENT=y
+CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
+CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
+CONFIG_OPENTHREAD_CLI=n
+
+# Disable lwip ipv6 autoconfig
+CONFIG_LWIP_IPV6_AUTOCONFIG=n
+
+# Custom partition table
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# LwIP config for OpenThread
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
+CONFIG_LWIP_MULTICAST_PING=y
+
+# MDNS platform
+CONFIG_USE_MINIMAL_MDNS=n
+CONFIG_ENABLE_EXTENDED_DISCOVERY=y
+
+# Enable OTA Requestor
+CONFIG_ENABLE_OTA_REQUESTOR=y
+
+# H2 는 WiFi 없음 → STA 비활성
+CONFIG_ENABLE_WIFI_STATION=n
+
+# Button
+CONFIG_BUTTON_PERIOD_TIME_MS=20
+CONFIG_BUTTON_LONG_PRESS_TIME_MS=5000
+
+# Enable chip shell
+CONFIG_ENABLE_CHIP_SHELL=y
+
+# ── 콘솔: USB Serial JTAG 를 primary 로 (COM8 stdin 활성 → tx/sel 명령 입력 가능).
+#    기본(UART0 primary)이면 USB JTAG 는 secondary=로그출력만·stdin 없음 → 명령 write 가
+#    아무도 안 읽어 hang. primary 를 JTAG 로 바꿔 자동 테스트 하네스가 COM 으로 명령을 넣는다. ──
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# ── SSD1306 OLED 컴포넌트 ──
+# oled_ui.c 가 명시 핀을 직접 넘기므로 component Kconfig SCL/SDA 는 미사용.
+CONFIG_I2C_INTERFACE=y
+# CONFIG_SPI_INTERFACE is not set
+# CONFIG_SSD1306_128x32 is not set
+CONFIG_SSD1306_128x64=y
+CONFIG_OFFSETX=28
+# CONFIG_FLIP is not set
+CONFIG_SCL_GPIO=13
+CONFIG_SDA_GPIO=12
+CONFIG_RESET_GPIO=-1
+CONFIG_I2C_PORT_0=y
+# CONFIG_LEGACY_DRIVER is not set
+
+# ── Matter Time Synchronization 클러스터 ──
+CONFIG_SUPPORT_TIME_SYNCHRONIZATION_CLUSTER=y
+
+# ── Matter OTA: 보드별 고유 Product ID (OTA 이미지 보드 매칭용) ──
+CONFIG_DEVICE_PRODUCT_ID=0x8001
+CONFIG_BLE_DEVICE_NAME_PREFIX="MATTER-"
+CONFIG_CHIP_PROJECT_CONFIG="main/CHIPProjectConfig.h"
+
+# ── 기기 고유 커미셔닝: eFuse 기반 discriminator/passcode ──
+CONFIG_CUSTOM_COMMISSIONABLE_DATA_PROVIDER=y

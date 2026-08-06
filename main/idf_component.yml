@@ -1,0 +1,9 @@
+dependencies:
+  espressif/cmake_utilities:
+    version: "^1"
+    rules: # will add "optional_component" only when all if clauses are True
+      - if: "idf_version >=5.0"
+      - if: "target in [esp32c2]"
+  # OLED 페어링 화면 QR 코드 인코더 (MT:... payload → 2D 모듈 비트맵)
+  espressif/qrcode:
+    version: "*"

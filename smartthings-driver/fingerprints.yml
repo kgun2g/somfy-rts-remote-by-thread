@@ -1,0 +1,10 @@
+# 페어링 시 아래 VID/PID 기기에 2-component profile 을 자동 할당한다.
+# 펌웨어 값: sdkconfig CONFIG_DEVICE_VENDOR_ID=0xFFF1 / CONFIG_DEVICE_PRODUCT_ID=0x8001
+#           (시리얼 로그의 vendorID=65521 productID=32769 와 동일).
+# ※ 0xFFF1 은 Matter 테스트 VID 라 다른 테스트 기기와 겹칠 수 있다. 그 경우 PID 로 구분되며,
+#   안 맞으면 fingerprint 를 지우고 SmartThings 앱에서 driver 를 수동 할당해도 된다.
+matterManufacturer:
+  - id: "Somfy/Blinds3Composed"
+    deviceProfileName: somfy-blinds-3
+    vendorId: 0xFFF1
+    productId: 0x8001

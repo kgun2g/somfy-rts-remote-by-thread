@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Somfy RTS Blind Controller — 배선도 (보드: GNPE ESP32-C6-0.42)</title>
+<style>
+  body { font-family: 'Segoe UI', sans-serif; background:#0f1117; color:#e0e0e0; margin:0; padding:20px; }
+  h1 { color:#61dafb; border-bottom:2px solid #61dafb; padding-bottom:8px; }
+  h2 { color:#ffd700; margin-top:32px; }
+  .box { border:1px solid #444; border-radius:8px; padding:16px 20px; margin:14px 0; background:#1a1d27; }
+  table { border-collapse:collapse; width:100%; margin:8px 0; }
+  th { background:#2a2d3a; color:#ffd700; padding:9px 14px; text-align:left; font-size:13px; }
+  td { padding:8px 14px; border-bottom:1px solid #2a2d3a; font-size:13px; }
+  tr:hover td { background:#1e2130; }
+  .gpio  { color:#ffd700; font-family:monospace; font-weight:bold; }
+  .sig   { color:#61dafb; }
+  .warn  { color:#ff9944; }
+  .ok    { color:#66cc66; }
+  .new   { color:#ff66cc; font-weight:bold; }
+  .note  { color:#aaa; font-size:12px; }
+  code   { background:#2a2d3a; border-radius:4px; padding:2px 6px; font-family:monospace; color:#98d8aa; }
+  .tag   { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; margin-left:6px; }
+  .t-hw  { background:#3a2d1e; color:#ffd700; }
+  .t-v2  { background:#3a1e3a; color:#ff66cc; }
+
+  /* SVG 배선도 */
+  .diagram { background:#12151f; border-radius:10px; padding:20px; overflow-x:auto; margin:16px 0; }
+  svg text { font-family: 'Segoe UI', monospace; }
+</style>
+</head>
+<body>
+
+<h1>🔌 Somfy RTS Blind Controller — 배선도 <span style="font-size:16px;color:#66ddaa">보드: GNPE ESP32-C6-0.42</span></h1>
+<p style="color:#888">GNPE ESP32-C6-0.42 + CC1101 + PCF8574 + EC11 &nbsp;|&nbsp; <strong style="color:#66ddaa">Matter over Thread (SED) + 설정 메뉴 + UX 개선</strong></p>
+
+<div class="box" style="background:#1e2a3a;border-color:#2d6a8a">
+  <strong style="color:#66ccff">📌 보드별 배선 문서</strong>
+  <p style="font-size:13px;line-height:1.7;margin:8px 0 0">
+    이 문서는 <strong>GNPE "ESP32-C6-0.42"</strong> 보드 전용 상세 배선도다(내장 OLED·내장
+    배선 IO0/IO1 등 이 보드 고정 사항 포함). 다른 보드는 핀 배열이 다르므로 별도 문서를 본다:
+  </p>
+  <ul style="font-size:13px;line-height:1.8;margin:8px 0 0">
+    <li><strong>GNPE ESP32-C6-0.42</strong> — 본 문서 (검증 보드 · 기준)</li>
+    <li><strong>Seeed XIAO ESP32-C6</strong> — <code><a href="wiring_xiao-c6.md" style="color:#98d8aa">wiring_xiao-c6.md</a></code></li>
+    <li><strong>ESP32-H2</strong> (Thread, 검증) —<code><a href="wiring_esp32-h2.md" style="color:#98d8aa">wiring_esp32-h2.md</a></code></li>
+  </ul>
+  <p class="note" style="margin:8px 0 0">
+    ⚠ 핀맵의 <strong>단일 진실원천은 <code>main/boards/&lt;board&gt;.h</code></strong> 다. 아래 일부
+    버전 이력 섹션은 과거 표기(예: 구 PCB 변형 _v/_h, 4-항목 설정 메뉴)를 보존하므로 현행과
+    다를 수 있다 — 현행 사실은 <code>main/boards/gnpe-c6.h</code> · 루트 <code>README.md</code> 우선.
+  </p>
+</div>
+
+<div class="box" style="background:#1e3a2a;border-color:#2d8a6a">
+  <strong style="color:#88ff88">✨ v3.6 — UX 개선 + 시간 영속화 + 핵심 버그 수정 (2026-05-15)</strong>
+  <ul style="line-height:1.8;font-size:13px;margin:10px 0 0">
+    <li><strong>버튼 모션 정리</strong>: 텍스트 라벨 (UP/DN/STOP/B1/ALL) 제거 — 깔끔한 풀스크린 모션</li>
+    <li><strong>틸트 모션 개선</strong>: 3장 블라인드 슬랫 회전 (좁고 과감, half_w=18px, tilt 0→8px, 1.2s 사이클)</li>
+    <li><strong>SELECT 중단 + 블라인드 순환</strong>: 모션 진행 중 SELECT 누르면 즉시 중단하고 다음 블라인드로 순환</li>
+    <li><strong>설정 메뉴 정리</strong>: 숫자 prefix 제거, Cancel 첫 항목 (메뉴: Cancel / Freq Edit / Matter Pair / Thread Rst)</li>
+    <li><strong>SmartThings 명령 wake + 모션</strong>: sleep/screensaver 중 명령 수신 시 즉시 wake + 해당 모션 표시</li>
+    <li><strong>시간 영속화</strong>: 5분마다 epoch 를 NVS 저장 → 리셋 후 시계 복원 (BUILD/NVS 출처 로그)</li>
+    <li><strong>SNTP 1시간 주기</strong>: <code>esp_sntp_set_sync_interval(3600000)</code> + 동기화 callback 으로 NVS 즉시 저장</li>
+    <li><strong>진동 wake 활성화</strong>: VIBE 감지 시 자동 활성 모드 복귀 (`_exit_screensaver/sleep`)</li>
+    <li><strong>★ 핵심 버그 수정</strong>: <code>matter_blinds.cpp</code> 의 attribute callback fall-through → 연속 버튼 입력 시 갑작스러운 STOP 모션 / 가짜 STOP RF 송신 제거 (handled flag 추가)</li>
+    <li>크기: <strong>0x1CEB20 bytes (53% 여유)</strong></li>
+  </ul>
+</div>
+
+<div class="box" style="background:#1e3a3a;border-color:#2d6a8a">
+  <strong style="color:#66ccff">⚡ v3.3 — Sleepy End Device + 자동 light sleep (2026-05-15)</strong>
+  <ul style="line-height:1.8;font-size:13px;margin:10px 0 0">
+    <li>Matter ICD (Intermittently Connected Device) Server 활성화 → esp-matter 가 Thread device type 자동 SED 설정</li>
+    <li>Thread SED — slow poll 5초로 부모 노드에서 큐된 Matter 명령 수신. <strong>절전 모드에서도 Matter 명령 수신 가능</strong></li>
+    <li>ESP-IDF PM (Power Management) auto light sleep — tickless idle + CPU DFS (80/160MHz)</li>
+    <li>Sleep 진입 단순화: <code>esp_light_sleep_start()</code> 호출 제거 → OLED off + PM 이 자동 sleep 진입</li>
+    <li>Matter 명령 응답 지연 최대 5초 (ICD slow poll period; 필요시 조정 가능)</li>
+  </ul>
+</div>
+
+<div class="box" style="background:#2a3a1e;border-color:#6a8a2d">
+  <strong style="color:#aaddaa">📋 v3.2 — 전원 상태별 idle 정책 (2026-05-14)</strong>
+  <ul style="line-height:1.8;font-size:13px;margin:10px 0 0">
+    <li>USB 연결: 3분 무입력 → <strong>화면 보호기</strong> (OLED off, CPU/Matter 정상)</li>
+    <li>배터리 전용: 1분 무입력 → <strong>절전 모드</strong> (OLED off + PM auto-sleep, SED 가 Matter 수신 유지)</li>
+    <li>버튼 / SmartThings 명령 / 진동 / 충전 시작 → 두 모드 모두 즉시 해제</li>
+  </ul>
+</div>
+
+<div class="box" style="background:#3a2a1e;border-color:#8a6a2d">
+  <strong style="color:#ffcc66">🔧 v3.1 — 설정 메뉴 (2026-05-14)</strong>
+  <ul style="line-height:1.8;font-size:13px;margin:10px 0 0">
+    <li>SW6 SETUP 짧게 → 4-item 메뉴: 1.주파수 편집  2.Matter 페어링  3.Thread 리셋  4.취소</li>
+    <li>UP/DOWN/tilt 로 커서 이동, SW6 짧게 = 선택, SW6 2초+ = 저장/실행, STOP = 취소</li>
+    <li>PROG 버튼의 Matter 페어링/Thread 리셋 기능 제거 (메뉴로 이관)</li>
+  </ul>
+</div>
+
+<div class="box" style="background:#2a1e3a;border-color:#6a2d8a">
+  <strong style="color:#ff66cc">🧵 v3.0 — WiFi → Thread 전환 (2026-05-13)</strong>
+  <ul style="line-height:1.8;font-size:13px;margin:10px 0 0">
+    <li>SmartThings 연결을 WiFi → Thread (802.15.4) 로 전환 — ESP32-C6 내장 라디오</li>
+    <li>WiFi 코드 전면 제거 (SoftAP / HTTP 서버 / 자격증명 저장 미사용)</li>
+    <li>OpenThread + esp-matter Thread 트랜스포트, BLE 커미셔닝 유지</li>
+    <li>Thread Border Router 필요 (SmartThings Hub v3+/HomePod mini/Nest Hub 등)</li>
+  </ul>
+</div>
+
+<div class="box" style="background:#2a1e3a;border-color:#6a2d8a">
+  <strong style="color:#ff66cc">🔄 v2.0 핀 재배치 (2026-05-13) — 유지</strong>
+  <ul style="line-height:1.8;font-size:13px;margin:10px 0 0">
+    <li>ESP32 GPIO 전면 재배치 — SPI/I2C swap, PCF8574_INT → IO17</li>
+    <li>모든 4 + 1 버튼 (SW1~4, SW6) PCF8574 이관 — ESP32 direct GPIO 사용 안 함</li>
+    <li>PCF8574 I2C → IO18/IO19 (software bit-bang)</li>
+    <li>PCF8574 ~INT (Pin13) → IO17 — 모든 P 변화 시 light sleep wake</li>
+    <li>PCB 두께 1.0mm, ANT_447M 트랙폭 1.712mm (Er=4.5 microstrip 50Ω)</li>
+  </ul>
+</div>
+
+<!-- ═══ SVG 배선도 ═══ -->
+<h2>📊 전체 배선 다이어그램</h2>
+<div class="diagram">
+  <object data="wiring_diagram.svg" type="image/svg+xml"
+          width="100%" style="max-width:1240px;display:block;margin:auto;background:#12151f;border-radius:8px"
+          aria-label="ESP32-C6 + CC1101 + PCF8574 배선도 v2.0">
+    <a href="wiring_diagram.svg">wiring_diagram.svg (SVG 미지원 브라우저)</a>
+  </object>
+</div>
+<p style="font-size:12px;color:#888;text-align:right;margin:-8px 0 16px">
+  📐 원본 파일: <code>wiring_diagram.svg</code> — Inkscape/Illustrator에서 편집 가능
+  &nbsp;| ⚠ SVG 는 v1.x 상태일 수 있음 — 본 HTML 표가 truth.
+</p>
+
+<!-- ═══ 핀 매핑 마스터 표 ═══ -->
+<h2>📋 ESP32-C6-0.42 핀 매핑 (v2.0) <span class="tag t-v2">전면 재배치</span></h2>
+<div class="box">
+  <table>
+    <tr><th>GPIO</th><th>현행 신호</th><th>v1.x 신호 (구)</th><th>비고</th></tr>
+    <tr><td class="gpio">IO0</td><td class="sig">OLED SCL</td><td>OLED SCL</td><td>HP I2C0, 보드 내장 (변경 불가)</td></tr>
+    <tr><td class="gpio">IO1</td><td class="sig">OLED SDA</td><td>OLED SDA</td><td>HP I2C0, 보드 내장 (변경 불가)</td></tr>
+    <tr><td class="gpio">IO2</td><td class="sig">CC1101 MISO</td><td>BTN_PROG</td><td>FSPIQ (네이티브)</td></tr>
+    <tr><td class="gpio">IO3</td><td class="new">CHG_STAT</td><td>BTN_UP</td><td>MCP73831 STAT, sleep wake source</td></tr>
+    <tr><td class="gpio">IO4</td><td class="new">CC1101 CSN</td><td>SPI_SCK</td><td>SPI CS (Active-LOW)</td></tr>
+    <tr><td class="gpio">IO5</td><td class="warn">— (NC)</td><td>SPI_MISO</td><td>현행 미사용 (MISO→IO2)</td></tr>
+    <tr><td class="gpio">IO6</td><td class="new">CC1101 SCK</td><td>LP_I2C_SDA</td><td>FSPICLK (네이티브)</td></tr>
+    <tr><td class="gpio">IO7</td><td class="new">CC1101 MOSI</td><td>LP_I2C_SCL</td><td>FSPID (네이티브)</td></tr>
+    <tr><td class="gpio">IO8</td><td class="sig">CC1101 GD0</td><td>CC1101 GD0</td><td>RMT 비동기 TX (유지)</td></tr>
+    <tr><td class="gpio">IO16</td><td class="new">VIBRATION</td><td>BTN_DOWN</td><td>VS1 진동 센서, sleep wake source</td></tr>
+    <tr><td class="gpio">IO17</td><td class="new">PCF8574 ~INT</td><td>BTN_SELECT</td><td>모든 P 변화 wake, 외부 10kΩ pull-up 필수</td></tr>
+    <tr><td class="gpio">IO18</td><td class="new">PCF8574 SCL (bit-bang)</td><td>CC1101 MOSI</td><td>software I2C 50kHz, 4.7kΩ pull-up</td></tr>
+    <tr><td class="gpio">IO19</td><td class="new">PCF8574 SDA (bit-bang)</td><td>CC1101 CSN</td><td>software I2C 50kHz, 4.7kΩ pull-up</td></tr>
+  </table>
+</div>
+
+<!-- ═══ CC1101 배선 ═══ -->
+<h2>📋 CC1101 ↔ ESP32 (현행)</h2>
+<div class="box">
+  <table>
+    <tr><th>CC1101 핀</th><th>신호</th><th>ESP32-C6 GPIO</th><th>와이어 색</th><th>비고</th></tr>
+    <tr><td>Pin1 GND</td><td>GND</td><td class="gpio">GND</td><td style="color:#888">검정</td><td>공통 GND</td></tr>
+    <tr><td>Pin2 VCC</td><td>+3.3V</td><td class="gpio">3V3</td><td style="color:#ff6666">빨강</td><td class="warn">⚠ 반드시 3.3V — 5V 연결 시 파손</td></tr>
+    <tr><td>Pin3 GD00</td><td>TX Data</td><td class="gpio">IO8</td><td style="color:#ff9944">주황</td><td>RMT 비동기 TX (유지)</td></tr>
+    <tr><td>Pin4 CSN</td><td>SPI CS</td><td class="gpio">IO4</td><td style="color:#61dafb">파랑</td><td class="new">v2.0 swap (구 IO19)</td></tr>
+    <tr><td>Pin5 SCK</td><td>SPI Clock</td><td class="gpio">IO6</td><td style="color:#61dafb">파랑</td><td class="new">FSPICLK 네이티브</td></tr>
+    <tr><td>Pin6 MOSI</td><td>SPI Data OUT</td><td class="gpio">IO7</td><td style="color:#61dafb">파랑</td><td class="new">FSPID 네이티브</td></tr>
+    <tr><td>Pin7 MISO</td><td>SPI Data IN</td><td class="gpio">IO2</td><td style="color:#61dafb">파랑</td><td class="new">FSPIQ 네이티브</td></tr>
+    <tr><td>Pin8 GD02</td><td>NC</td><td>-</td><td>-</td><td>연결 불필요</td></tr>
+  </table>
+</div>
+
+<!-- ═══ 버튼 / 센서 ═══ -->
+<h2>📋 버튼 / 센서 (v2.0 — 모두 PCF8574 또는 GPIO 직결)</h2>
+<div class="box">
+  <p style="color:#aaa;font-size:13px">★ v2.0: 모든 버튼은 PCF8574 로 이관됨 (ESP32 GPIO direct 사용 안 함).
+  센서 (VS1 진동 / MCP73831 충전) 은 GPIO 직결 + sleep wake source.</p>
+  <table>
+    <tr><th>컴포넌트</th><th>연결</th><th>기능</th><th>롱프레스 (2초/5초)</th></tr>
+    <tr><td>SW1 UP</td><td class="gpio">PCF8574 P4 (Pin9)</td><td>블라인드 올리기 ↑</td><td>-</td></tr>
+    <tr><td>SW2 DOWN</td><td class="gpio">PCF8574 P5 (Pin10)</td><td>블라인드 내리기 ↓</td><td>-</td></tr>
+    <tr><td>SW3 SELECT</td><td class="gpio">PCF8574 P6 (Pin11)</td><td>블라인드 선택 순환</td><td>-</td></tr>
+    <tr><td>SW4 PROG</td><td class="gpio">PCF8574 P7 (Pin12)</td><td>Somfy PROG 커맨드</td><td>2초 = Somfy 리모컨 등록(PROG)</td></tr>
+    <tr><td>SW6 SETUP</td><td class="gpio">PCF8574 P3 (Pin7)</td><td>짧게 = 설정 메뉴 / 항목 활성화 / 편집 저장</td><td>2초 = 편집 저장 · Thread 실행</td></tr>
+    <tr><td>로터리 회전</td><td class="gpio">PCF8574 P0/P1</td><td>CW/CCW (틸트 ± / 주파수 ±0.01MHz)</td><td>-</td></tr>
+    <tr><td>로터리 클릭</td><td class="gpio">PCF8574 P2 (Pin6)</td><td><strong>정지 / MY 커맨드</strong></td><td>설정 화면 = 취소·복귀 (구 "2초=주파수편집"은 v3.5 제거)</td></tr>
+    <tr><td>SW5 STOP <span class="warn">(_v / _v2만)</span></td><td class="gpio">로터리와 wired-OR</td><td>보조 정지 (로터리 클릭 동등)</td><td>-</td></tr>
+    <tr><td>VS1 VIBRATION <span class="warn">(_v2 / _h2만)</span></td><td class="gpio">IO16 (GPIO 직결)</td><td>흔들기 감지 → light sleep wake</td><td>-</td></tr>
+    <tr><td>MCP73831 STAT <span class="warn">(배터리 변형)</span></td><td class="gpio">IO3 (GPIO 직결)</td><td>충전 시작 → light sleep wake</td><td>-</td></tr>
+  </table>
+</div>
+
+<!-- ═══ PCF8574 상세 ═══ -->
+<h2>📋 PCF8574 (v2.0) — bit-bang I2C 0x20 <span class="tag t-v2">IO18/IO19</span></h2>
+<div class="box">
+  <p style="color:#aaa;font-size:13px">★ v2.0: HP_I2C0 는 OLED 전용, LP_I2C0 는 LP_GPIO6/7 핀 고정. PCF8574 는 IO18/19 에서
+  <strong>소프트웨어 비트뱅 I2C</strong> (50kHz, ~10ms 폴링). 외부 4.7kΩ pull-up 필수.</p>
+  <table>
+    <tr><th>PCF8574 핀</th><th>v2.0 연결</th><th>v1.x 연결 (구)</th><th>비고</th></tr>
+    <tr><td>Pin1 A0</td><td>GND</td><td>GND</td><td>I2C 주소 bit0 = 0</td></tr>
+    <tr><td>Pin2 A1</td><td>GND</td><td>GND</td><td>I2C 주소 bit1 = 0</td></tr>
+    <tr><td>Pin3 A2</td><td>GND</td><td>GND</td><td>addr <code>0x20</code></td></tr>
+    <tr><td>Pin4 P0</td><td>EC11 A상 (ROT_A)</td><td>ROT_A</td><td>로터리 CW/CCW</td></tr>
+    <tr><td>Pin5 P1</td><td>EC11 B상 (ROT_B)</td><td>ROT_B</td><td>로터리 CW/CCW</td></tr>
+    <tr><td>Pin6 P2</td><td>EC11 BTN (ROT_BTN)</td><td>ROT_BTN</td><td>클릭 = STOP/MY, 2초 = 주파수 편집</td></tr>
+    <tr><td>Pin7 P3</td><td class="new">SW6 BTN_SETUP</td><td>MCP73831 STAT</td><td class="new">v2.0 변경 (STAT → IO3 직결로 이전)</td></tr>
+    <tr><td>Pin8 GND</td><td>GND</td><td>GND</td><td></td></tr>
+    <tr><td>Pin9 P4</td><td class="new">SW1 BTN_UP</td><td>VS1 진동</td><td class="new">v2.0 변경 (VS1 → IO16 직결로 이전)</td></tr>
+    <tr><td>Pin10 P5</td><td class="new">SW2 BTN_DOWN</td><td>SW6 SETUP</td><td class="new">v2.0 변경 (SETUP → P3 이전)</td></tr>
+    <tr><td>Pin11 P6</td><td class="new">SW3 BTN_SELECT</td><td>NC</td><td class="new">v2.0 신규 (ESP32 IO17 → P6 이전)</td></tr>
+    <tr><td>Pin12 P7</td><td class="new">SW4 BTN_PROG</td><td>NC</td><td class="new">v2.0 신규 (ESP32 IO2 → P7 이전)</td></tr>
+    <tr style="background:#2a1f3a"><td>Pin13 ~INT</td><td class="new"><strong>→ IO17 (ESP32, wake source)</strong></td><td>NC</td><td class="new">★ v2.0 신규 — 모든 P 변화 시 LOW, <strong>외부 10kΩ pull-up 필수</strong></td></tr>
+    <tr style="background:#2a1f3a"><td>Pin14 SCL</td><td class="new gpio">IO18 (bit-bang)</td><td>IO7 (LP_GPIO7)</td><td class="new">v2.0: software I2C 50kHz</td></tr>
+    <tr style="background:#2a1f3a"><td>Pin15 SDA</td><td class="new gpio">IO19 (bit-bang)</td><td>IO6 (LP_GPIO6)</td><td class="new">v2.0: software I2C 50kHz</td></tr>
+    <tr><td>Pin16 VCC</td><td>3V3</td><td>3V3</td><td><strong>외부 4.7kΩ pull-up 필수</strong> (SDA/SCL 각 1, +3.3V)</td></tr>
+  </table>
+</div>
+
+<!-- ═══ OLED I2C ═══ -->
+<h2>📋 OLED I2C (HP I2C0, ESP32-C6-0.42 보드 내장 IO0/IO1)</h2>
+<div class="box">
+  <table>
+    <tr><th>신호</th><th>GPIO</th><th>실크</th><th>I2C 주소</th><th>해상도</th><th>비고</th></tr>
+    <tr><td>SDA</td><td class="gpio">IO1</td><td><code>SDA-1</code></td><td rowspan="2">0x3C</td><td rowspan="2">72 × 40 px</td><td>HP I2C0 — 보드 하드와이어 (변경 불가)</td></tr>
+    <tr><td>SCL</td><td class="gpio">IO0</td><td><code>SCL-0</code></td><td>HP I2C0 — 보드 하드와이어 (변경 불가)</td></tr>
+  </table>
+  <p style="font-size:13px;color:#aaa">SSD1315(72×40)는 SSD1306 컨트롤러 기반이지만 패널이 SEG28..SEG99 구간에 매핑되어
+  <code>CONFIG_OFFSETX=28</code> + multiplex(<code>0xA8 0x27</code>) / COM pin map(<code>0xDA 0x12</code>) /
+  IREF(<code>0xAD 0x30</code>) 보정 명령 필요.</p>
+  <p class="ok">✓ HP I2C0(OLED, IO0/1) ↔ PCF8574 bit-bang(IO18/19) — 핀 충돌 없음, 독립 동작</p>
+</div>
+
+<!-- ═══ Sleep Wake Source ═══ -->
+<h2>📋 Light Sleep Wake Sources (v2.0)</h2>
+<div class="box">
+  <p style="color:#aaa;font-size:13px">v2.0: 3개 GPIO 모두 LOW level 로 wake 가능. timer wake 불필요.</p>
+  <table>
+    <tr><th>Wake 핀</th><th>소스</th><th>트리거</th><th>용도</th></tr>
+    <tr><td class="gpio">IO17</td><td>PCF8574 ~INT (Pin13)</td><td>P0-P7 중 어느 비트라도 변화</td><td>모든 버튼/로터리 wake</td></tr>
+    <tr><td class="gpio">IO16</td><td>VS1 진동 센서</td><td>접점 닫힘 (active-LOW)</td><td>흔들기 wake</td></tr>
+    <tr><td class="gpio">IO3</td><td>MCP73831 STAT</td><td>충전 시작 (open-drain LOW)</td><td>USB 연결 즉시 화면 ON</td></tr>
+  </table>
+  <p class="ok">✓ Light sleep 전류 ~750µA → 600mAh 33일 standby</p>
+</div>
+
+<!-- ═══ 전원 ═══ -->
+<h2>📋 전원 공급</h2>
+<div class="box">
+  <table>
+    <tr><th>전원</th><th>전압</th><th>공급처</th><th>소비 디바이스</th></tr>
+    <tr><td>USB-C (USB 5V)</td><td>5V</td><td>ESP32-C6-0.42 USB-C 포트</td><td>보드 내부 3.3V 레귤레이터</td></tr>
+    <tr><td>3.3V 레귤레이터</td><td>3.3V</td><td>ESP32-C6-0.42 3V3 핀</td><td>CC1101, PCF8574, EC11, 버튼, VS1, 풀업</td></tr>
+    <tr><td>BAT+ <span class="warn">(배터리 변형)</span></td><td>3.0~4.2V</td><td>851640 LiPo 600mAh</td><td>D1(SS14) → +5V 레일 (USB 분리 시)</td></tr>
+  </table>
+  <p class="ok">✓ 총 소비전류: ESP32-C6 ~150mA + CC1101 TX ~30mA + PCF8574 ~1mA = ~180mA (USB 500mA 한계 36%)</p>
+  <p class="ok">✓ SPICE DC OP 검증: V_USB=5V, I_USB=65mA, +3V3=3.3V, P_dissipated=127mW (LDO heat)</p>
+  <p class="ok">✓ SPICE Transient (300mA TX burst): +3V3 droop=36mV (정격 ±165mV 의 22%)</p>
+</div>
+
+<!-- ═══ Matter over Thread ═══ -->
+<!-- ═══ 전원 정책 + 절전 ═══ -->
+<h2>⚡ 전원 정책 + 절전 (v3.3)</h2>
+<div class="box" style="border-color:#2d6a8a">
+  <table>
+    <tr><th>전원 상태</th><th>활성</th><th>idle 대응</th><th>idle 후 모드</th></tr>
+    <tr>
+      <td><strong>USB 연결</strong> (충전 중 또는 최근 1분)</td>
+      <td>OLED on, CPU full, Matter 명령 즉시 수신</td>
+      <td>3분 무입력</td>
+      <td><strong class="new">화면 보호기</strong> — OLED off, CPU/Thread 정상, Matter 즉시 수신</td>
+    </tr>
+    <tr>
+      <td><strong>배터리 전용</strong></td>
+      <td>OLED on, CPU full (PM 이 idle 시 자동 light sleep)</td>
+      <td>1분 무입력</td>
+      <td><strong class="new">절전 모드</strong> — OLED off + PM auto-light-sleep + Thread SED 5s poll</td>
+    </tr>
+  </table>
+  <p style="font-size:13px;color:#aaa;margin-top:8px">
+    <strong>SED (Sleepy End Device) 절전 메커니즘:</strong> Thread MTD 가 부모 노드에 5초마다 data poll 송신.
+    부모 노드는 Matter 명령을 큐에 저장 후 다음 poll 시 전달. CPU 는 5초 중 99% 이상 light sleep 상태.
+    수신 시 Thread interrupt 가 CPU wake → Matter callback → 블라인드 동작.
+  </p>
+
+  <h3 style="color:#aaddaa;margin-top:16px;font-size:13px">Wake 트리거 (모든 모드)</h3>
+  <table>
+    <tr><th>Wake 원인</th><th>핀</th><th>동작</th></tr>
+    <tr><td>버튼 / 로터리</td><td>IO17 (PCF8574 ~INT)</td><td><code>_btn_event_cb</code> → activity mark + <code>_exit_sleep</code></td></tr>
+    <tr><td>진동 (VS1)</td><td>IO16</td><td>main loop poll + GPIO LOW level wake</td></tr>
+    <tr><td>USB 연결 (충전 시작)</td><td>IO3</td><td>main loop poll + GPIO LOW level wake</td></tr>
+    <tr><td><strong>SmartThings 명령</strong></td><td>802.15.4 RF</td><td><strong class="new">Thread SED slow poll (5s) → Matter callback → activity mark + <code>_exit_sleep</code></strong></td></tr>
+  </table>
+
+  <h3 style="color:#aaddaa;margin-top:16px;font-size:13px">PM (Power Management) 설정</h3>
+  <pre style="background:#0a0c12;color:#bbb;padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;margin:0">CONFIG_PM_ENABLE=y                            # 활성화
+CONFIG_PM_DFS_INIT_AUTO=y                     # DFS 자동: 80MHz idle / 160MHz active
+CONFIG_PM_POWER_DOWN_CPU_IN_LIGHT_SLEEP=y     # CPU power-down OK
+# CONFIG_PM_POWER_DOWN_PERIPHERAL_IN_LIGHT_SLEEP NOT SET  # 주변기기 유지 (안전)
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y           # tickless idle → 자동 light sleep
+CONFIG_FREERTOS_IDLE_TIME_BEFORE_SLEEP=3      # 3 tick 후 sleep
+
+# Matter ICD (SED 자동 설정 트리거)
+CONFIG_ENABLE_ICD_SERVER=y
+CONFIG_ICD_SLOW_POLL_INTERVAL_MS=5000         # 평상시 5s poll
+CONFIG_ICD_FAST_POLL_INTERVAL_MS=200          # 활성 시 200ms
+CONFIG_ICD_ACTIVE_MODE_INTERVAL_MS=300        # 명령 후 300ms 활성 유지</pre>
+
+  <h3 style="color:#aaddaa;margin-top:16px;font-size:13px">코드 초기화 순서</h3>
+  <pre style="background:#0a0c12;color:#bbb;padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;margin:0">app_main() {
+  init_rtc_from_build_time();
+  blind_manager_init();
+  cc1101_init();              // SPI 초기화 (full-speed 필요)
+  somfy_rts_init();
+  oled_ui_init();
+  oled_ui_start_task();
+  btn_handler_init();         // bit-bang I2C 초기화
+  btn_handler_start_task();
+  thread_prov_init();
+  matter_blinds_init();
+  matter_blinds_start();      // OpenThread + Matter 시작
+                              //   → ICD_SERVER=y 이면 SED 모드 자동 설정
+  /* RF worker + time + hold_repeat 태스크 */
+
+  gpio_wakeup_enable(...);    // GPIO wake source 등록
+  esp_sleep_enable_gpio_wakeup();
+
+  esp_pm_configure(&pm_cfg);  // ★ 모든 init 완료 후! 그래야 init 도중
+                              //   tickless idle 데드락 방지
+  while (1) { main_loop }
+}</pre>
+</div>
+
+<!-- ═══ v3.6 UX 개선 ═══ -->
+<h2>🎨 UX / 화면 모션 (v3.6)</h2>
+<div class="box" style="border-color:#2d8a6a">
+  <h3 style="color:#88ff88;margin-top:0;font-size:14px">버튼 모션 (OLED_STATE_ACTION)</h3>
+  <table>
+    <tr><th>모션</th><th>트리거</th><th>시각 효과 (72×40 OLED, 2.5s)</th></tr>
+    <tr><td><strong>UP</strong></td><td>SW1 / SmartThings UP / 로터리 CW (없음)</td><td>큰 화살표 위 방향 슬라이드</td></tr>
+    <tr><td><strong>DOWN</strong></td><td>SW2 / SmartThings DOWN</td><td>큰 화살표 아래 방향 슬라이드</td></tr>
+    <tr><td><strong>STOP (MY)</strong></td><td>로터리 클릭 / SmartThings MY</td><td>정사각형 + 펄스</td></tr>
+    <tr><td><strong>PROG</strong></td><td>SW4 / SmartThings PROG</td><td>동심원 펄싱</td></tr>
+    <tr><td class="new"><strong>TILT UP</strong></td><td>로터리 CW</td><td class="new">3장 블라인드 슬랫 우측 끝이 위로 (8px tilt, 1.2s)</td></tr>
+    <tr><td class="new"><strong>TILT DN</strong></td><td>로터리 CCW</td><td class="new">3장 슬랫 우측 끝이 아래로</td></tr>
+  </table>
+  <p class="note" style="margin-top:8px">★ v3.6: 좌상단 텍스트 라벨 (UP/DN/STOP) 및 우상단 블라인드 번호 (B1/ALL) 제거 — 깔끔한 풀스크린 모션.</p>
+
+  <h3 style="color:#88ff88;margin-top:16px;font-size:14px">모션 중 SELECT 버튼</h3>
+  <p style="font-size:13px;line-height:1.6">
+    OLED 모션 진행 중 SW3 SELECT 누르면 → <strong>즉시 모션 중단 + 다음 블라인드로 순환</strong>.
+    이전 v3.4: 모션 중단만 (순환 안 함). 현재 v3.6: 중단 + 순환 (한 번에 둘 다).
+  </p>
+
+  <h3 style="color:#88ff88;margin-top:16px;font-size:14px">SmartThings 명령 wake</h3>
+  <p style="font-size:13px;line-height:1.6">
+    Sleep / 화면보호기 중 SmartThings 명령 수신 시:
+  </p>
+  <ol style="font-size:13px;line-height:1.7;margin:0">
+    <li>Thread SED slow poll (5s) 으로 명령 도달</li>
+    <li><code>_exit_sleep()</code> / <code>_exit_screensaver()</code> → OLED 패널 ON, 활성 모드 복귀</li>
+    <li><code>oled_ui_notify_action_start()</code> → 해당 모션 (UP/DN/STOP/PROG) 표시 2.5초</li>
+    <li>RF 큐로 송신 (등록된 endpoint 만)</li>
+  </ol>
+</div>
+
+<!-- ═══ v3.6 설정 메뉴 ═══ -->
+<h2>📋 설정 메뉴 (v3.5+ — 정리됨)</h2>
+<div class="box" style="border-color:#8a6a2d">
+  <p style="font-size:13px">SW6 SETUP 짧게 → 메뉴 진입. 4 항목, OLED 가독성 개선 (숫자 prefix 제거).</p>
+  <table>
+    <tr><th>순서</th><th>항목</th><th>동작</th></tr>
+    <tr><td>1</td><td><strong>Cancel</strong></td><td>SETUP 짧게 → 즉시 메인 복귀 (실수 진입 시 빠른 탈출)</td></tr>
+    <tr><td>2</td><td><strong>Freq Edit</strong></td><td>FREQ_EDIT 화면 진입 → 로터리/UP/DN 으로 freq ±0.01 MHz</td></tr>
+    <tr><td>3</td><td><strong>Matter Pair</strong></td><td>BLE 광고 시작 + PIN/QR 표시 (코드는 eFuse 기반 <b>기기 고유</b>)</td></tr>
+    <tr><td>4</td><td><strong>Thread Rst</strong></td><td>확인 화면 → SETUP 2초+ 로 실행 (Thread dataset erase)</td></tr>
+  </table>
+  <h3 style="color:#ffcc66;margin-top:16px;font-size:14px">메뉴 / 하위 화면 버튼 매트릭스</h3>
+  <table>
+    <tr><th>입력</th><th>SETUP_MENU</th><th>FREQ_EDIT</th><th>MATTER_PAIR / THREAD_RST</th></tr>
+    <tr><td>SW6 SETUP 짧게</td><td>선택 항목 진입</td><td><strong>저장</strong> 후 복귀 (v3.9)</td><td>Matter=READY 확정 / Thread=메뉴</td></tr>
+    <tr><td>SW6 SETUP ≥2s</td><td>(무시)</td><td>저장 + 복귀</td><td>실행 (Thread Rst) / 무시</td></tr>
+    <tr><td>로터리 CW/CCW</td><td>커서 ↑/↓</td><td>freq ±0.01</td><td>(무시)</td></tr>
+    <tr><td>UP / DOWN 버튼</td><td>커서 ↑/↓</td><td>freq +/-</td><td>(무시)</td></tr>
+    <tr><td>STOP 짧게</td><td>메인 복귀</td><td>변경 <strong>취소</strong> → 메뉴 (v3.9)</td><td>메뉴 복귀</td></tr>
+    <tr><td>STOP ≥2s</td><td>메인 복귀</td><td>변경 취소 → 메뉴 (길이 무관)</td><td>메인 복귀</td></tr>
+    <tr><td>SELECT / PROG</td><td>무시</td><td>무시</td><td>무시</td></tr>
+  </table>
+</div>
+
+<!-- ═══ v3.6 시간 영속화 + SNTP ═══ -->
+<h2>⏰ 시간 동기화 + 영속화 (v3.6)</h2>
+<div class="box" style="border-color:#6a8a2d">
+  <table>
+    <tr><th>기능</th><th>방식</th><th>간격</th><th>비고</th></tr>
+    <tr><td><strong>SNTP 동기화</strong></td><td>pool.ntp.org (IPv6 via Thread BR)</td><td>1 시간</td><td><code>esp_sntp_set_sync_interval(3600000)</code></td></tr>
+    <tr><td><strong>NVS 영속화 (주기 저장)</strong></td><td><code>nvs_set_i64("last_epoch")</code></td><td>5 분</td><td>~105k writes/year (NVS 한계 100k 안전 margin)</td></tr>
+    <tr><td><strong>NVS 영속화 (SNTP 콜백)</strong></td><td>SNTP 동기화 직후</td><td>1 시간</td><td>정확한 시간 즉시 저장</td></tr>
+    <tr><td><strong>리셋 후 복원</strong></td><td><code>_init_rtc_from_build_time()</code></td><td>부팅 시 1회</td><td>NVS 값 + 2.5분 → 빌드시간 비교 후 큰 값 사용</td></tr>
+  </table>
+  <p style="font-size:13px;line-height:1.6;margin-top:10px">
+    부팅 로그 예시:
+  </p>
+  <pre style="background:#0a0c12;color:#bbb;padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;margin:0">I (612) MAIN: RTC 초기화 [BUILD] (KST-9, 빌드+95s 보정): 2026-05-15 11:07:40   ← 첫 부팅
+I (612) MAIN: RTC 초기화 [NVS] (KST-9, 빌드+95s 보정): 2026-05-15 14:23:15   ← 리셋 후
+
+I (...) MAIN: [TIME] NVS 저장: epoch=1778821395                              ← 5분마다
+I (...) MAIN: [TIME] SNTP 동기화 → epoch=1778821400                          ← 1시간마다 (BR 필요)</pre>
+</div>
+
+<h2>🧵 SmartThings 연결 — Matter over Thread (v3.0~v3.6)</h2>
+<div class="box" style="border-color:#2d8a6a">
+  <table>
+    <tr><th>항목</th><th>v2.x (WiFi)</th><th>v3.0 (Thread)</th></tr>
+    <tr><td>물리 계층</td><td>WiFi 2.4 GHz (802.11 b/g/n)</td><td class="new">802.15.4 (ESP32-C6 내장)</td></tr>
+    <tr><td>네트워크 자격증명</td><td>SSID + 비밀번호 (사용자 입력)</td><td class="new">commissioner 가 BLE 로 자동 주입</td></tr>
+    <tr><td>SoftAP 프로비저닝</td><td>"Somfy-XXXX" SSID + HTTP</td><td class="new">불필요 (BLE 커미셔닝만)</td></tr>
+    <tr><td>외부 인프라</td><td>가정용 WiFi 라우터</td><td class="new"><strong>Thread Border Router</strong> 필수</td></tr>
+    <tr><td>IP</td><td>IPv4 (DHCP)</td><td class="new">IPv6 only (link-local + ULA)</td></tr>
+    <tr><td>전력 (idle)</td><td>~75 mA (Modem-sleep)</td><td class="new">~5 mA (MTD always-listen)</td></tr>
+    <tr><td>커미셔닝 절차</td><td>SmartThings 앱 → BLE → WiFi 자격증명</td><td class="new">SmartThings 앱 → BLE → Thread dataset</td></tr>
+    <tr><td>SW6 5초 롱프레스</td><td>WiFi 자격증명 erase + SoftAP 재시작</td><td class="new">Thread dataset erase + 커미셔닝 윈도우 재오픈</td></tr>
+    <tr><td>OLED 아이콘</td><td>WiFi 3-bar 신호</td><td class="new">Thread 메시 노드 + 이웃</td></tr>
+  </table>
+
+  <h3 style="color:#66ddaa;margin-top:20px;font-size:14px">필요한 Thread Border Router (택1)</h3>
+  <ul style="line-height:1.8;font-size:13px">
+    <li><strong>SmartThings Hub v3+</strong> (Aeotec) — 가장 권장 (Thread + Matter 통합)</li>
+    <li><strong>Apple HomePod mini / Apple TV 4K (2nd gen+)</strong> — Apple Home 사용 시</li>
+    <li><strong>Google Nest Hub Max / Nest Hub (2nd gen)</strong> — Google Home 사용 시</li>
+    <li><strong>Amazon Echo 4th gen+</strong> (Thread 지원 모델)</li>
+    <li><strong>eero 6+/Pro 6/Pro 6E</strong> 라우터 (Matter 인증)</li>
+    <li>또는 자체 빌드: <code>esp-idf/examples/openthread/ot_br</code> 으로 ESP32-S3+C6 보드 활용</li>
+  </ul>
+
+  <h3 style="color:#66ddaa;margin-top:20px;font-size:14px">커미셔닝 흐름 (사용자 절차)</h3>
+  <ol style="line-height:1.9;font-size:13px">
+    <li>디바이스 부팅 → OLED 에 "Thread" 화면 (BLE 광고 시작)</li>
+    <li>SmartThings 앱 → 디바이스 추가 → OLED 의 <strong>기기 고유 QR 스캔/코드 입력</strong> (eFuse 산출, 기기마다 다름)</li>
+    <li>스마트폰이 BLE 로 ESP32-C6 와 연결</li>
+    <li>SmartThings Hub 가 Thread dataset (네트워크 키 등) 을 BLE 로 전송</li>
+    <li>ESP32-C6 가 Thread 네트워크에 부착 → OLED 아이콘 활성화</li>
+    <li>Matter 커미셔닝 완료 → BLE 광고 종료, 일반 Thread 통신 사용</li>
+  </ol>
+</div>
+
+<!-- ═══ PCB 변형 ═══ -->
+<h2>📋 PCB 변형 (5종, v2.0 적용)</h2>
+<div class="box">
+  <table>
+    <tr><th>변형</th><th>폼팩터</th><th>전원</th><th>인코더</th><th>특수</th></tr>
+    <tr><td><strong>base</strong></td><td>USB-C 직결, 단일 PCB</td><td>USB 5V 전용</td><td>EC11 (수직)</td><td>—</td></tr>
+    <tr><td><strong>_v</strong></td><td>분리형 단일 PCB</td><td>600mAh 배터리 + USB 충전</td><td>EC05 (수평)</td><td>+ SW5 보조 STOP</td></tr>
+    <tr><td><strong>_h</strong></td><td>통합형 단일 PCB</td><td>600mAh 배터리 + USB 충전</td><td>EC11 (수직)</td><td>—</td></tr>
+    <tr><td><strong>_v2</strong></td><td>2-board sandwich (분리형)</td><td>600mAh 배터리 + USB 충전</td><td>EC05 (수평)</td><td>+ SW5, <strong>VS1 진동</strong></td></tr>
+    <tr><td><strong>_h2</strong></td><td>2-board sandwich (통합형)</td><td>600mAh 배터리 + USB 충전</td><td>EC11 (수직 SMD)</td><td><strong>VS1 진동</strong></td></tr>
+  </table>
+  <p style="font-size:13px;color:#aaa;margin-top:8px">자세한 비교 + 발주 가이드: <code>kicad/FINAL_REPORT.md</code> 참조.
+  v2.0 변경: <code>V2_0_STATUS.md</code>.</p>
+</div>
+
+<!-- ═══ PCB 설계 사양 ═══ -->
+<h2>📐 PCB 설계 사양 (v2.0)</h2>
+<div class="box">
+  <table>
+    <tr><th>항목</th><th>값</th><th>비고</th></tr>
+    <tr><td>보드 두께</td><td><strong>1.0mm</strong></td><td>v1.x 1.6mm 에서 변경</td></tr>
+    <tr><td>레이어</td><td>2 layer (F.Cu / B.Cu)</td><td></td></tr>
+    <tr><td>동박 두께</td><td>1oz (0.035mm)</td><td></td></tr>
+    <tr><td>유전체</td><td>FR4, Er=4.5, 0.91mm</td><td>JLCPCB 표준 (1MHz Er=4.6 → 447MHz Er≈4.5 보정)</td></tr>
+    <tr><td>일반 트레이스</td><td><strong>0.15mm</strong> (6mil)</td><td>제조 최소, 클리어런스도 0.15mm</td></tr>
+    <tr><td><strong>ANT_447M</strong> 트레이스</td><td><strong>1.712mm</strong></td><td>Hammerstad-Jensen microstrip 50Ω @ 447MHz</td></tr>
+    <tr><td>비아 (외경/드릴)</td><td>0.8 / 0.4mm</td><td></td></tr>
+    <tr><td>에지 클리어런스</td><td>0.5mm</td><td></td></tr>
+  </table>
+  <p style="font-size:13px;color:#aaa">참고: <code>kicad/_apply_v1_2_transline.py</code> — KiCad Calculator
+  Transline 동등 microstrip 50Ω 계산.</p>
+</div>
+
+<!-- ═══ OLED 회전 ═══ -->
+<h2>📋 OLED 화면 회전</h2>
+<div class="box">
+  <p>디바이스를 거꾸로 들고 사용하는 경우를 위해 OLED 표시가 자동으로 180° 회전됩니다.</p>
+  <ul style="line-height:1.7;font-size:13px">
+    <li>구현: <code>oled_ui.c</code>의 <code>_fb_flush()</code> 내부에서 매 프레임 (50ms, 20fps) 변환</li>
+    <li>변환 = 페이지 역순 + 컬럼 역순 + 8비트 역순 (총 360 byte 처리, &lt;50µs CPU)</li>
+    <li>비활성화: <code>#define OLED_ROTATE_180  0</code> 후 재빌드</li>
+  </ul>
+</div>
+
+<!-- ═══ 조립 주의사항 ═══ -->
+<h2>🔧 조립 주의사항 (v2.0)</h2>
+<div class="box">
+  <ul style="line-height:1.9;font-size:13px">
+    <li class="warn">CC1101은 <b>3.3V 전용</b> — 5V 연결 시 즉시 파손됩니다.</li>
+    <li class="warn"><b>CC1101 핀맵 (네이티브 FSPI)</b>: SCK=IO6, MOSI=IO7, MISO=IO2, CSN=IO4. PCF8574 SDA=IO19, SCL=IO18 (bit-bang).</li>
+    <li><b>외부 풀업 필수</b>:
+      <ul style="margin:6px 0">
+        <li>PCF8574 SDA (IO19) ↔ +3V3: <code>4.7kΩ</code></li>
+        <li>PCF8574 SCL (IO18) ↔ +3V3: <code>4.7kΩ</code></li>
+        <li>PCF8574 ~INT (IO17) ↔ +3V3: <code>10kΩ</code> ★ v2.0 신규</li>
+      </ul>
+    </li>
+    <li>PCF8574 A0/A1/A2 를 모두 <b>GND에 연결</b>해야 I2C 주소가 0x20 이 됩니다.</li>
+    <li>OLED는 <b>HP I2C0 (IO0/IO1, 보드 내장)</b>, PCF8574 는 <b>software bit-bang (IO18/IO19)</b> — 핀 충돌 없음.</li>
+    <li>v2.0 에서 LP_I2C0 는 사용 안 함 (LP_GPIO6/7 핀 제약 해제 → 라우팅 자유도 ↑).</li>
+    <li>각 VCC 핀 근처에 <b>100nF 디커플링 캐패시터</b>를 배치하면 노이즈가 줄어듭니다.</li>
+    <li>이 펌웨어는 <b>Matter over Thread (802.15.4)</b> — WiFi 미사용. <b>Thread Border Router</b>(SmartThings Hub v3+/Apple TV 4K/Nest Hub 2nd 등)가 필요합니다.</li>
+    <li>PCB 설계 파일: <code>kicad/somfy_blinds[_v|_h|_v2|_h2].kicad_*</code> 5종.</li>
+    <li>v2.0 적용 스크립트: <code>kicad/_apply_v2_0_sch_rewire.py</code> (스키매틱) + <code>_apply_v2_0_pcb_nets.py</code> (PCB).</li>
+    <li>발주용 거버: <code>kicad/gerber/somfy_blinds*.zip</code> — <strong>v2.0 재라우팅 후 재생성 필요</strong>.</li>
+  </ul>
+</div>
+
+<!-- ═══ 펌웨어 / 드라이버 ═══ -->
+<h2>⚙ 펌웨어 / 드라이버 변경 이력</h2>
+<div class="box">
+  <ul style="line-height:1.8;font-size:13px">
+    <li><strong>v3.6 — UX 개선 + 시간 영속화 + 버그 수정 (2026-05-15):</strong>
+      <ul style="margin:6px 0">
+        <li><code>oled_ui.c</code> — 액션 텍스트 라벨 (UP/DN/STOP/B1/ALL) 제거; 틸트 모션을 3장 블라인드 슬랫 회전으로 재설계 (half_w=18, max tilt=8px)</li>
+        <li><code>main.c</code> — SELECT 모션 중단+순환; 시간 영속화 (5분 NVS 저장 + SNTP callback); SmartThings 명령 wake + 모션</li>
+        <li><code>main.c</code> — <code>_init_rtc_from_build_time()</code>: NVS 우선 복원, BUILD/NVS 출처 로그</li>
+        <li><code>matter_blinds.cpp</code> — <strong>★ 핵심 버그 수정</strong>: <code>app_attribute_cb</code> fall-through 제거 (handled flag) → 연속 버튼 입력 시 갑작스러운 STOP 모션 / 가짜 STOP RF 제거</li>
+        <li>SNTP: <code>esp_sntp_set_sync_interval(3600000)</code> + 동기화 콜백으로 NVS 즉시 저장</li>
+      </ul>
+    </li>
+    <li><strong>v3.5 — 설정 메뉴 정리 (2026-05-15):</strong> 숫자 prefix 제거, Cancel 첫 항목으로 이동, "Matter Pair"/"Thread Rst" 풀 표시</li>
+    <li><strong>v3.4 — 진동 wake (2026-05-15):</strong> VIBE 감지 시 메인 루프가 <code>_exit_screensaver/sleep</code> 호출 → 자동 활성 복귀</li>
+    <li><strong>v3.3 — Thread SED + PM (2026-05-15):</strong> <code>CONFIG_ENABLE_ICD_SERVER=y</code> → esp-matter 가 Thread device type 을 Sleepy End Device 로 자동 설정; <code>CONFIG_PM_ENABLE=y</code> + tickless idle</li>
+    <li><strong>v3.2 — 전원 정책 (2026-05-14):</strong> USB 연결 3분 → 화면 보호기; 배터리 1분 → 절전. <code>_is_usb_powered()</code> 휴리스틱 (CHG_STAT)</li>
+    <li><strong>v3.1 — 설정 메뉴 (2026-05-14):</strong> 4-item 메뉴 + 상태머신 (SETUP_MENU_SCR / FREQ_EDIT / MATTER_PAIR / THREAD_RESET); PROG long-press Matter/Thread 기능 메뉴로 이관</li>
+    <li><strong>v3.0 — WiFi → Thread (2026-05-13):</strong>
+      <ul style="margin:6px 0">
+        <li><code>main/wifi_provision.{h,c}</code> <span class="warn">삭제</span> → <code>main/thread_provision.{h,c}</code> 신규</li>
+        <li><code>main/main.c</code> — <code>esp_wifi.h</code>/<code>esp_wifi_set_ps()</code> 제거, OpenThread 자동 관리</li>
+        <li><code>main/matter_blinds.cpp</code> — <code>kThreadStateChange</code> / <code>kThreadConnectivityChange</code> 이벤트 핸들러 추가</li>
+        <li><code>main/oled_ui.{h,c}</code> — <code>OLED_STATE_WIFI_PROV → OLED_STATE_THREAD_PROV</code>, WiFi 신호바 → Thread 메시 아이콘</li>
+        <li><code>sdkconfig.defaults</code> — <code>CONFIG_ESP_WIFI_*</code> 제거, <code>CONFIG_OPENTHREAD_ENABLED=y</code> + <code>CONFIG_CHIP_ENABLE_OPENTHREAD=y</code> 추가</li>
+        <li>BLE NimBLE 는 Matter 커미셔닝 용으로 유지</li>
+      </ul>
+    </li>
+    <li><strong>v2.0 — 핀 재배치 + bit-bang I2C (2026-05-13):</strong>
+      <ul style="margin:6px 0">
+        <li><code>somfy_config.h</code> — CC1101 SPI (IO4-7), PCF8574 I2C (IO18/19), wake sources (IO3/16/17)</li>
+        <li><code>button_handler.c</code> — software bit-bang I2C 50kHz</li>
+      </ul>
+    </li>
+    <li>빌드 결과: GNPE <code>somfy_blinds.bin</code> <strong>≈0x1A7020 bytes</strong> (OTA 슬롯 1.875 MB) ✅
+      <br><span class="note">v2.0 0x1F4990 (WiFi) → v3.0 0x1E6940 (Thread) → v3.3 0x1CE5A0 (SED+PM) → v3.6 0x1CEB20 → v3.9 ~0x1A7020 (현재)</span></li>
+  </ul>
+</div>
+
+<footer style="margin-top:40px;color:#555;font-size:12px;border-top:1px solid #333;padding-top:12px">
+  Somfy RTS Wood Blind Controller <strong>v3.9</strong> (편집 UX: SETUP 짧게=저장 / STOP=취소) &nbsp;|&nbsp;
+  배선도 최종 갱신: 2026-06-18 &nbsp;|&nbsp;
+  KiCad 회로도: <code>kicad/somfy_blinds*.kicad_sch</code><br>
+  버전 이력: v2.0 (핀 재배치) → v3.0 (Thread) → v3.1 (설정 메뉴) → v3.2 (전원 정책) → v3.3 (SED+PM) → v3.4 (진동 wake) → v3.5 (메뉴 정리) → v3.6 (UX + 시간 + 버그 수정) → v3.9 (편집 UX)
+</footer>
+
+</body>
+</html>

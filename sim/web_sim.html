@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<!-- Somfy Blinds Thing — 펌웨어 동작 웹 시뮬레이터 (v2)
+     OLED 렌더(oled_ui.c)·동시작동 판정(session-gate)을 JS로 재현.
+     oled_sim.js(WASM) 있으면 실펌웨어 렌더로 자동 전환.
+     빌드/플래시/CLI 는 sim_server.py 백엔드와 fetch 연동(python이 실행). -->
+<html lang="ko"><head><meta charset="utf-8"><title>Somfy Blinds — Firmware Web Simulator</title>
+<style>
+ :root{--bg:#14171c;--panel:#1c2029;--panel2:#242a34;--line:#333b47;--txt:#d8dee9;--dim:#8b95a3;
+   --accent:#5aa8ff;--hot:#ff6b5a;--ok:#5ad17a;--warn:#ffb53d}
+ *{box-sizing:border-box} body{margin:0;font:13px/1.45 'Segoe UI',system-ui,sans-serif;
+   background:var(--bg);color:var(--txt);display:flex;height:100vh;overflow:hidden}
+ h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:0 0 7px}
+ .grp{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:10px}
+ .row{display:flex;justify-content:space-between;align-items:center;margin:5px 0;gap:8px}
+ .row label{color:var(--dim);white-space:nowrap}
+ select,input{background:#10141a;color:var(--txt);border:1px solid var(--line);border-radius:5px;
+   padding:3px 6px;font:inherit;min-width:92px} input[type=number]{min-width:80px}
+ .seg{display:flex;gap:4px;flex-wrap:wrap}
+ .seg button{flex:1;background:#10141a;color:var(--dim);border:1px solid var(--line);border-radius:5px;
+   padding:4px 0;cursor:pointer;font:inherit;min-width:40px}
+ .seg button.on{background:var(--accent);color:#08121f;border-color:var(--accent);font-weight:600}
+ .bigbtn{width:100%;padding:8px;border-radius:7px;border:1px solid var(--line);cursor:pointer;font:inherit;
+   font-weight:600;margin-top:4px} .bigbtn.build{background:#243b57;color:#bfe0ff;border-color:#3b6ea5}
+ .bigbtn.flash{background:#3a2b18;color:#ffd9a0;border-color:#7a5a2a} .bigbtn:active{transform:translateY(1px)}
+ .bigbtn:disabled{opacity:.5;cursor:default}
+ /* 좌측 */
+ #side{width:236px;flex:0 0 236px;background:var(--panel);border-right:1px solid var(--line);padding:12px;overflow-y:auto}
+ /* 중앙 */
+ #center{flex:1;display:flex;flex-direction:column;min-width:0}
+ #stage{flex:1;display:flex;align-items:center;justify-content:center;padding:14px;min-height:0}
+ #bezel{background:#0a0c10;border:3px solid #2c3340;border-radius:14px;padding:16px;box-shadow:0 10px 40px #0008}
+ #screen-rot{transition:transform .25s} canvas#oled{display:block;image-rendering:pixelated;background:#080b10;border-radius:3px}
+ #devmeta{color:var(--dim);font-size:11px;margin-top:9px;text-align:center}
+ /* 하단 버튼 */
+ #btnbar{flex:0 0 auto;background:var(--panel);border-top:1px solid var(--line);padding:10px 14px;
+   display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+ .pb{user-select:none;background:linear-gradient(#2a313c,#1e232c);border:1px solid var(--line);border-radius:8px;
+   min-width:64px;padding:8px 6px;text-align:center;cursor:pointer;position:relative}
+ .pb .k{font-size:9px;color:var(--dim);position:absolute;top:2px;right:5px}
+ .pb .n{font-weight:600;font-size:12px} .pb .s{font-size:9px;color:var(--dim)}
+ .pb.down{background:linear-gradient(#3b6ea5,#274b73);border-color:var(--accent);box-shadow:0 0 0 2px #5aa8ff55}
+ .pb.disabled{opacity:.32;pointer-events:none;filter:grayscale(1)}
+ /* log trace */
+ #logtrace{flex:0 0 130px;background:#0d1014;border-top:1px solid var(--line);padding:6px 10px;overflow-y:auto;
+   font:11px/1.45 ui-monospace,Consolas,monospace;color:#9fb0c0}
+ #logtrace .t{color:var(--dim)} #logtrace .a{color:var(--accent)} #logtrace .c{color:var(--hot)}
+ /* 우측 */
+ #rightbar{width:340px;flex:0 0 340px;background:var(--panel);border-left:1px solid var(--line);
+   display:flex;flex-direction:column;min-height:0}
+ #runsec{flex:0 0 auto;border-bottom:1px solid var(--line);padding:11px 12px;max-height:38%;display:flex;flex-direction:column}
+ #runlist{overflow-y:auto;font:11px/1.4 ui-monospace,Consolas,monospace}
+ .run{padding:5px 4px;border-bottom:1px solid var(--line);cursor:pointer} .run:hover{background:var(--panel2)}
+ .run .st{float:right} .run.ok .st{color:var(--ok)} .run.err .st{color:var(--hot)} .run.run .st{color:var(--warn)}
+ #clisec{flex:1;padding:11px 12px;display:flex;flex-direction:column;min-height:0}
+ #cliout{flex:1;overflow:auto;background:#0d1014;border:1px solid var(--line);border-radius:6px;padding:8px;
+   font:11px/1.4 ui-monospace,Consolas,monospace;color:#c8d2dc;white-space:pre-wrap}
+ .tag{display:inline-block;background:#10141a;border:1px solid var(--line);border-radius:4px;padding:1px 6px;color:var(--dim);font-size:11px}
+</style></head><body>
+
+<!-- ════ 좌측 설정 ════ -->
+<div id="side">
+ <div class="grp"><h2>Board</h2>
+  <div class="row"><label>MCU</label><select id="board"><option value="h2">ESP32-H2</option><option value="c6">ESP32-C6 XIAO</option></select></div></div>
+ <div class="grp"><h2>PCF (I2C 버튼)</h2>
+  <div class="row"><label>칩</label><select id="pcf"><option>PCF8574</option><option>PCF8575</option></select></div></div>
+ <div class="grp"><h2>Rotary</h2>
+  <div class="row"><label>엔코더</label><select id="rotary"><option>EC11</option><option>EC05</option></select></div></div>
+ <div class="grp"><h2>OLED</h2>
+  <div class="row"><label>해상도</label><div class="seg" id="res"><button data-w="128" data-h="64" class="on">128×64</button><button data-w="72" data-h="40">72×40</button><button data-w="64" data-h="128">64×128</button></div></div>
+  <div class="row"><label>회전</label><div class="seg" id="rot"><button data-r="0">0°</button><button data-r="180" class="on">180°</button></div></div>
+  <div class="row"><label>좌우반전</label><div class="seg" id="flip"><button data-f="0" class="on">OFF</button><button data-f="1">ON</button></div></div></div>
+ <div class="grp"><h2>주파수 (빌드)</h2>
+  <div class="row"><label>RF MHz</label><input type="number" id="freq" value="447.70" step="0.01" min="300" max="928"></div></div>
+ <div class="grp"><h2>포트 (플래시)</h2>
+  <div class="row"><label>COM</label><select id="port"></select></div></div>
+ <div class="grp"><h2>펌웨어</h2>
+  <button class="bigbtn build" id="btnBuild">⚙ 빌드</button>
+  <button class="bigbtn flash" id="btnFlash">⭳ 플래시</button>
+  <button class="bigbtn" id="btnClear" style="background:#3a2233;color:#ffc0d4;border-color:#7a3a5a">✖ Clear (clean)</button>
+  <div class="row" style="margin-top:6px"><label>실기기 전송</label>
+    <div class="seg" id="live"><button data-l="0" class="on">OFF</button><button data-l="1">ON</button></div></div>
+  <div class="row" style="margin-top:6px"><label>백엔드</label><span class="tag" id="beState">확인중…</span></div></div>
+</div>
+
+<!-- ════ 중앙 ════ -->
+<div id="center">
+ <div id="stage"><div>
+  <div id="bezel"><div id="screen-rot"><canvas id="oled" width="128" height="64"></canvas></div></div>
+  <div id="devmeta"><span id="m-blind">B1</span> · <span id="m-freq">447.70</span>MHz · <span id="m-action">대기</span></div>
+ </div></div>
+ <div id="btnbar">
+  <div class="pb" data-btn="up"    data-key="Q"><span class="k">Q</span><div class="n">▲ UP</div><div class="s">올림</div></div>
+  <div class="pb" data-btn="rot"   data-key="W"><span class="k">W</span><div class="n">■ MY</div><div class="s">정지</div></div>
+  <div class="pb" data-btn="down"  data-key="A"><span class="k">A</span><div class="n">▼ DOWN</div><div class="s">내림</div></div>
+  <div class="pb" data-btn="left"  data-key="Z"><span class="k">Z</span><div class="n">◀ LEFT</div><div class="s">이전</div></div>
+  <div class="pb" data-btn="right" data-key="C"><span class="k">C</span><div class="n">▶ RIGHT</div><div class="s">다음</div></div>
+  <div class="pb" data-btn="sel"   data-key="E"><span class="k">E</span><div class="n">⟳ SEL</div><div class="s">선택</div></div>
+  <div class="pb" data-btn="prog"  data-key="R"><span class="k">R</span><div class="n">◎ PROG</div><div class="s">등록</div></div>
+  <div class="pb" data-btn="ccw"   data-key="["><span class="k">[</span><div class="n">↺ T+</div><div class="s">틸트</div></div>
+  <div class="pb" data-btn="cw"    data-key="]"><span class="k">]</span><div class="n">↻ T−</div><div class="s">틸트</div></div>
+  <div class="pb" data-btn="setup" data-key="T"><span class="k">T</span><div class="n">⚙ SETUP</div><div class="s">메뉴</div></div>
+ </div>
+ <div id="logtrace"></div>
+</div>
+
+<!-- ════ 우측: 실행내역 + CLI ════ -->
+<div id="rightbar">
+ <div id="runsec"><h2>실행 내역</h2><div id="runlist"></div></div>
+ <div id="clisec"><h2>신호 캡처 / CLI (somfy_cli)</h2>
+  <div style="margin-bottom:6px;display:flex;gap:6px"><button class="bigbtn" style="margin:0;padding:5px 8px;flex:0 0 auto" id="btnCli">▶ extract</button>
+   <span class="tag" style="align-self:center">버튼 누르면 송신 프레임도 여기 표시</span></div>
+  <div id="cliout"></div></div>
+</div>
+
+<script>
+"use strict";
+// ═══════════ OLED 프레임버퍼 + 그리기 (oled_ui.c 포팅) ═══════════
+let W=128,H=64, fb=new Uint8Array(W*H);
+function fbAlloc(){ fb=new Uint8Array(W*H); }
+function clear(){ fb.fill(0); }
+function px(x,y,o){x|=0;y|=0; if(x<0||x>=W||y<0||y>=H)return; fb[y*W+x]=o?1:0;}
+function gp(x,y){x|=0;y|=0; if(x<0||x>=W||y<0||y>=H)return 0; return fb[y*W+x];}
+function pfill(x,y,w,h,o){for(let j=0;j<h;j++)for(let i=0;i<w;i++)px(x+i,y+j,o);}
+function hline(y){for(let x=0;x<W;x++)px(x,y,1);}
+const BIG_ARROW=[0x00060000,0x000F0000,0x001F8000,0x003FC000,0x007FE000,0x00FFF000,0x01FFF800,0x03FFFC00,
+ 0x07FFFE00,0x0FFFFF00,0x1FFFFF80,0x3FFFFFC0,0x7FFFFFE0,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,
+ 0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000,0x00FFF000];
+function arrow(cx,cy,flip,slide,tw,th){let ox=cx-(tw>>1),oy=cy-(th>>1)+slide;
+ for(let oc=0;oc<tw;oc++){let sc=(oc*30/tw)|0;for(let r=0;r<th;r++){let sr=(r*30/th)|0,dr=flip?29-sr:sr;
+  if((BIG_ARROW[dr]>>>(31-sc))&1)px(ox+oc,oy+r,1);}}}
+function stopBox(x,y,w,h){pfill(x,y,w,h,1);let hx=x+(w>>1),hy=y+(h>>1);
+ for(let yy=hy-2;yy<=hy+1;yy++)for(let xx=hx-4;xx<=hx+3;xx++)px(xx,yy,gp(xx,yy)?0:1);}
+function circle(cx,cy,r){for(let a=0;a<360;a+=6)px(cx+Math.round(r*Math.cos(a*Math.PI/180)),cy+Math.round(r*Math.sin(a*Math.PI/180)),1);}
+// 5×7 미니 폰트
+const FONT={'0':[14,17,19,21,25,17,14],'1':[4,12,4,4,4,4,14],'2':[14,17,1,2,4,8,31],'3':[31,2,4,2,17,17,14],
+ '4':[2,6,10,18,31,2,2],'5':[31,16,30,1,1,17,14],'6':[6,8,16,30,17,17,14],'7':[31,1,2,4,8,8,8],
+ '8':[14,17,17,14,17,17,14],'9':[14,17,17,15,1,2,12],'.':[0,0,0,0,0,12,12],'M':[17,27,21,21,17,17,17],
+ 'H':[17,17,17,31,17,17,17],'Z':[31,1,2,4,8,16,31],'B':[30,17,17,30,17,17,30],'A':[14,17,17,31,17,17,17],
+ 'L':[16,16,16,16,16,16,31],' ':[0,0,0,0,0,0,0],'%':[25,25,2,4,8,19,19],'U':[17,17,17,17,17,17,14],
+ 'S':[14,17,16,14,1,17,14],'T':[31,4,4,4,4,4,4],'P':[30,17,17,30,16,16,16],'N':[17,25,29,21,23,19,17],
+ 'O':[14,17,17,17,17,17,14],'x':[0,0,17,10,4,10,17],'<':[2,4,8,16,8,4,2],'>':[8,4,2,1,2,4,8],
+ ':':[0,12,12,0,12,12,0],'/':[1,2,2,4,8,8,16]};
+function ch5(x,y,c){let g=FONT[c]||FONT[' ']; for(let r=0;r<7;r++)for(let col=0;col<5;col++) if((g[r]>>(4-col))&1)px(x+col,y+r,1);}
+function str5(x,y,s){for(const c of s){ch5(x,y,c);x+=6;} return x;}
+function strc(y,s){str5(Math.max(1,(W-s.length*6)>>1),y,s);}
+function strr(x,y,s){str5(x-s.length*6,y,s);} // 우측정렬(x=오른쪽끝)
+// 7세그 큰 숫자
+const SEG=[[1,1,1,1,1,1,0],[0,1,1,0,0,0,0],[1,1,0,1,1,0,1],[1,1,1,1,0,0,1],[0,1,1,0,0,1,1],
+ [1,0,1,1,0,1,1],[1,0,1,1,1,1,1],[1,1,1,0,0,0,0],[1,1,1,1,1,1,1],[1,1,1,1,0,1,1]];
+function seg7(x,y,d,w,h){let s=SEG[d]; const hb=(xx,yy,ww)=>{for(let i=0;i<ww;i++){px(xx+i,yy,1);px(xx+i,yy+1,1);}};
+ const vb=(xx,yy,hh)=>{for(let i=0;i<hh;i++){px(xx,yy+i,1);px(xx+1,yy+i,1);}};
+ if(s[0])hb(x,y,w); if(s[3])hb(x,y+h,w); if(s[6])hb(x,y+(h>>1),w);
+ if(s[5])vb(x,y,h>>1); if(s[1])vb(x+w,y,h>>1); if(s[4])vb(x,y+(h>>1),h>>1); if(s[2])vb(x+w,y+(h>>1),h>>1);}
+
+// ═══════════ action 렌더 (좌우배치 combo — oled_ui.c 그대로) ═══════════
+function renderAction(a,f){clear();
+ if(W===128){const cx=64,cy=23;switch(a){
+  case'UP':arrow(cx,cy,false,7-(f%15),56,34);break;
+  case'DOWN':arrow(cx,cy,true,-7+(f%15),56,34);break;
+  case'STOP':case'MY':{let p=Math.round(3*Math.sin(f*0.55)),hw=30+p,hh=20+p;pfill(cx-hw,cy-hh,hw*2,hh*2,1);pfill(cx-8,cy-8,16,16,0);break;}
+  case'UP_DOWN':{let u=7-(f%15),d=-7+(f%15);arrow(34,cy,false,u,52,38);arrow(94,cy,true,d,52,38);break;}
+  case'MY_UP':{pfill(12,cy-18,44,36,1);pfill(27,cy-5,14,10,0);arrow(94,cy,false,7-(f%15),52,38);break;}
+  case'MY_DOWN':{pfill(12,cy-18,44,36,1);pfill(27,cy-5,14,10,0);arrow(94,cy,true,-7+(f%15),52,38);break;}
+  case'PROG':circle(cx,cy,20+((f/4|0)%5));circle(cx,cy,12+((f/5|0)%3));pfill(cx-3,cy-3,6,6,1);break;}
+  strc(cy+33,label());
+ }else{const cx=36,cy=15;switch(a){
+  case'UP':arrow(cx,cy,false,(11-(f%18))/2|0,45,28);break;
+  case'DOWN':arrow(cx,cy,true,(-11+(f%18))/2|0,45,28);break;
+  case'STOP':case'MY':{let p=Math.round(2*Math.sin(f*0.55));stopBox(cx-18-p,cy-12,36+2*p,Math.min(28,24+2*p));break;}
+  case'UP_DOWN':{let d=(5-(f%10))/2|0;arrow(18,cy+d,false,0,30,26);arrow(54,cy-d,true,0,30,26);break;}
+  case'MY_UP':{stopBox(5,cy-12,26,24);arrow(54,cy,false,0,30,26);break;}
+  case'MY_DOWN':{stopBox(5,cy-12,26,24);arrow(54,cy,true,0,30,26);break;}
+  case'PROG':circle(cx,cy,9+((f/4|0)%4));pfill(cx-2,cy-2,4,4,1);break;}
+  strc(cy+18,label());}}
+
+// ═══════════ normal 렌더 (실제 oled_ui.c _render_normal 구조) ═══════════
+function renderNormal(){clear();
+ if(W===128){
+  // 상단바: 좌=연결아이콘 · 중앙=주파수 · 우=배터리
+  ch5(2,0,matter==='conn'?' ':(matter==='pair'?'P':'x'));
+  if(matter==='conn'){pfill(2,6,2,2,1);pfill(5,3,2,5,1);pfill(8,0,2,8,1);}
+  strc(0,freqStr()); strr(W-2,0, usbPwr?'USB':'BAT');
+  hline(13); hline(49);
+  // 중앙: 선택 블라인드 번호 크게(7seg) 또는 ALL (H2 시간비활성 기준)
+  if(selIdx===ALLIDX){ // ALL: 큰 글자
+    let s='ALL',x=(W-s.length*10)>>1; for(const c of s){for(let r=0;r<7;r++)for(let col=0;col<5;col++) if((FONT[c][r]>>(4-col))&1)pfill(x+col*2,20+r*2,2,2,1); x+=12;}
+  } else { seg7((W-13)>>1,20,(selIdx+1)%10,13,22); }
+  // 하단 선택바 (y55): 1..N ALL
+  drawSelBar();
+ } else { // 72×40 요약
+  strc(0,freqStr()); hline(9);
+  if(selIdx===ALLIDX)strc(15,'ALL'); else seg7((W-9)>>1,13,(selIdx+1)%10,9,14);
+  hline(31); drawSelBar72();
+ }}
+function drawSelBar(){ const total=chans()+1, sel=(selIdx===ALLIDX)?chans():selIdx;
+ let win=7; if(win>total)win=total;
+ let ws=sel-(win>>1); if(ws<0)ws=0; if(ws>total-win)ws=total-win;   // 선택 중심 윈도우
+ let disp=0; for(let j=0;j<win&&ws+j<total;j++)disp+=(ws+j<chans())?14:26;
+ let bx=(W-disp)>>1;
+ if(ws>0)ch5(1,55,'<');
+ for(let j=0;j<win&&ws+j<total;j++){const i=ws+j,isSel=(sel===i);
+  if(i<chans()){ if(isSel){pfill(bx-1,54,10,10,1);let g=FONT[String(i+1)];for(let r=0;r<7;r++)for(let c=0;c<5;c++)if((g[r]>>(4-c))&1)px(bx+c,55+r,0);} else ch5(bx,55,String(i+1)); bx+=14; }
+  else{ if(isSel){pfill(bx-1,54,26,10,1);let s='ALL',xx=bx;for(const c of s){let g=FONT[c];for(let r=0;r<7;r++)for(let cc=0;cc<5;cc++)if((g[r]>>(4-cc))&1)px(xx+cc,55+r,0);xx+=8;}} else str5(bx,55,'ALL'); bx+=26; } }
+ if(ws+win<total)ch5(W-6,55,'>');}
+function drawSelBar72(){ const total=chans()+1; let bx=2; for(let i=0;i<total;i++){const isSel=(i===(selIdx===ALLIDX?chans():selIdx));
+  const t=i<chans()?String(i+1):'A'; if(isSel){pfill(bx-1,32,t.length*6+1,8,1);let xx=bx;for(const c of t){let g=FONT[c];for(let r=0;r<7;r++)for(let cc=0;cc<5;cc++)if((g[r]>>(4-cc))&1)px(xx+cc,33+r,0);xx+=6;}} else str5(bx,33,t); bx+=t.length*6+4; }}
+
+// ═══════════ 동시작동 판정 (session-gate) ═══════════
+let held={up:false,down:false,rot:false}, action='NONE',animFrame=0,actionUntil=0;
+let wasm=null; const ACT2INT={UP:1,DOWN:2,MY:3,STOP:3,PROG:6,UP_DOWN:9,MY_UP:10,MY_DOWN:11};
+let liveMode=false;   // ON → 버튼이 sim_server /api/tx 로 실기기 RF 송신
+const ACT2TX={UP:'up',DOWN:'down',MY:'my',STOP:'my',UP_DOWN:'updown',MY_UP:'myup',MY_DOWN:'mydown',PROG:'prog'};
+const ACTION_MS=2500;
+const ACTLABEL={UP:'올림',DOWN:'내림',MY:'정지(MY)',STOP:'정지',UP_DOWN:'UP+DOWN',MY_UP:'MY+UP',MY_DOWN:'MY+DOWN',PROG:'PROG'};
+function press(b){
+ if(b==='up'){if(held.down)return act('UP_DOWN',1);if(held.rot)return act('MY_UP',1);held.up=1;act('UP',1);}
+ else if(b==='down'){if(held.up)return act('UP_DOWN',1);if(held.rot)return act('MY_DOWN',1);held.down=1;act('DOWN',1);}
+ else if(b==='rot'){if(held.up)return act('MY_UP',1);if(held.down)return act('MY_DOWN',1);held.rot=1;act('MY',1);}
+ else if(b==='prog')act('PROG',1);
+ else if(b==='sel'||b==='right')selBlind(1);
+ else if(b==='left')selBlind(-1);
+ else if(b==='cw'){trace('a','Tilt−');} else if(b==='ccw'){trace('a','Tilt+');}
+ else if(b==='setup'){trace('a','SETUP');}}
+function release(b){if(b==='up')held.up=0;else if(b==='down')held.down=0;else if(b==='rot')held.rot=0;
+ if(wasm&&!held.up&&!held.down&&!held.rot)wasm._sim_action_end();}
+function act(a,emit){action=a;animFrame=0;actionUntil=performance.now()+ACTION_MS;
+ document.getElementById('m-action').textContent=(liveMode?'[실기기] ':(wasm?'[FW] ':''))+(ACTLABEL[a]||a);
+ if(wasm&&ACT2INT[a]!==undefined)wasm._sim_action(ACT2INT[a]);
+ trace(ACT2INT[a]>=9?'c':'a',(ACTLABEL[a]||a)+(a.includes('_')?' [동시작동]':''));
+ if(liveMode&&backend&&ACT2TX[a])liveTx(ACT2TX[a]);
+ if(emit)emitFrame(a);}
+function liveTx(cmd){const port=document.getElementById('port').value;
+ fetch('/api/tx',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd,port})})
+  .then(r=>r.text()).then(t=>{trace('c','실기기 tx '+cmd+' →RF');
+   const o=document.getElementById('cliout');o.textContent='[실기기 '+port+'] tx '+cmd+'\n'+t.slice(-500)+'\n'+o.textContent;})
+  .catch(e=>trace('c','실기기 tx 오류: '+e));}
+
+// ═══════════ 신호 프레임 (byte8/9 실측) → 우측 CLI 로그 ═══════════
+const FRAME={UP:[0x2,0,0],DOWN:[0x4,0,0],MY:[0x1,0x40,0x59],STOP:[0x1,0x40,0x59],UP_DOWN:[0x6,0x6C,0xC0],
+ MY_UP:[0x3,0x40,0x59],MY_DOWN:[0x5,0x40,0x59],PROG:[0x8,0,0]};
+let rolling=0x0140, capN=1;
+function emitFrame(a){const fr=FRAME[a];if(!fr)return; rolling=(rolling+1)&0xFFFF;
+ const hx=b=>b.toString(16).toUpperCase().padStart(2,'0'); const combo=a.includes('_');
+ const addr='F0'+hx((0xB0+(selIdx===ALLIDX?4*0x27:0))&0xFF)+'1E';
+ const line=`#${capN++} ${ACTLABEL[a]||a}${combo?' [동시작동]':''}\n  addr ${addr} cmd 0x${fr[0].toString(16).toUpperCase()} roll ${hx(rolling>>8)}${hx(rolling&255)} b8/9 ${hx(fr[1])}/${hx(fr[2])} ${freqStr()}MHz\n`;
+ const o=document.getElementById('cliout'); o.textContent=line+o.textContent; if(o.textContent.length>4000)o.textContent=o.textContent.slice(0,4000);}
+
+// ═══════════ 상태/설정 ═══════════
+let selIdx=0, matter='off', usbPwr=true; const ALLIDX=99;
+function chans(){return document.getElementById('board').value==='c6'?8:3;}  // H2=3(esp32-h2.h), C6=8(board_select.h)
+function selBlind(dir){const total=chans()+1; let cur=(selIdx===ALLIDX)?chans():selIdx; cur=(cur+dir+total)%total;
+ selIdx=(cur>=chans())?ALLIDX:cur; document.getElementById('m-blind').textContent=blindName();
+ if(wasm)wasm._sim_select(selIdx===ALLIDX?chans():selIdx); trace('a','선택 '+blindName());}
+function blindName(){return selIdx===ALLIDX?'ALL':('B'+(selIdx+1));}
+function label(){return blindName();}
+function freqStr(){return document.getElementById('freq').value;}
+
+// ═══════════ canvas 출력 ═══════════
+const cv=document.getElementById('oled'),ctx=cv.getContext('2d'); let SCALE=5,OLED_COLOR='#e9eef4';  // 단색 화이트 OLED
+function resize(){cv.width=W;cv.height=H;fitOled();}
+function fitOled(){const st=document.getElementById('stage'); if(!st||!st.clientWidth)return;
+ const availW=st.clientWidth-48, availH=st.clientHeight-74;   // bezel 패딩 + devmeta 여백
+ let s=Math.min(availW/W, availH/H); if(!isFinite(s)||s<2)s=2; SCALE=Math.floor(s);
+ cv.style.width=(W*SCALE)+'px'; cv.style.height=(H*SCALE)+'px';}
+addEventListener('resize',fitOled);
+function blit(){ctx.fillStyle='#080b10';ctx.fillRect(0,0,W,H);ctx.fillStyle=OLED_COLOR;
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(fb[y*W+x])ctx.fillRect(x,y,1,1);}
+function drawWasm(){const pw=wasm._sim_pw(),ph=wasm._sim_ph(),ptr=wasm._sim_fb(),H8=wasm.HEAPU8;
+ if(cv.width!==pw||cv.height!==ph){W=pw;H=ph;cv.width=pw;cv.height=ph;fitOled();}
+ ctx.fillStyle='#080b10';ctx.fillRect(0,0,pw,ph);ctx.fillStyle=OLED_COLOR;
+ for(let y=0;y<ph;y++){const row=(y>>3)*pw,bit=y&7;for(let x=0;x<pw;x++)if((H8[ptr+row+x]>>bit)&1)ctx.fillRect(x,y,1,1);}}
+
+// ═══════════ log trace ═══════════
+function trace(kind,msg){const d=document.getElementById('logtrace');const t=new Date().toLocaleTimeString('en',{hour12:false});
+ const el=document.createElement('div');el.innerHTML=`<span class="t">${t}</span> <span class="${kind}">${msg}</span>`;
+ d.prepend(el); while(d.children.length>200)d.removeChild(d.lastChild);}
+
+// ═══════════ 백엔드 (sim_server.py) — 빌드/플래시/CLI ═══════════
+let backend=false;
+async function checkBackend(){try{const r=await fetch('/api/ping');backend=r.ok;}catch(e){backend=false;}
+ document.getElementById('beState').textContent=backend?'연결됨':'미실행 (sim_server.py)';
+ document.getElementById('beState').style.color=backend?'var(--ok)':'var(--hot)';}
+function addRun(title){const el=document.createElement('div');el.className='run run';
+ el.innerHTML=`${title}<span class="st">…</span>`; document.getElementById('runlist').prepend(el); return el;}
+async function runCmd(kind,title,body){
+ if(!backend){trace('c',title+' — 백엔드 미실행');return;}
+ const row=addRun(title); trace('a',title+' 시작');
+ try{const r=await fetch('/api/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  const txt=await r.text(); const ok=r.ok;
+  row.className='run '+(ok?'ok':'err'); row.querySelector('.st').textContent=ok?'OK':'FAIL';
+  document.getElementById('cliout').textContent=`$ ${title}\n`+txt+'\n'+document.getElementById('cliout').textContent;
+  trace(ok?'a':'c',title+(ok?' 완료':' 실패'));
+ }catch(e){row.className='run err';row.querySelector('.st').textContent='ERR';trace('c',title+' 오류 '+e);}}
+function variant(){const on=s=>document.querySelector(s+' button.on'); const r=on('#rot').dataset.r, f=on('#flip').dataset.f;
+ return {board:document.getElementById('board').value,
+  pcf:document.getElementById('pcf').value.replace('PCF',''),
+  rotary:document.getElementById('rotary').value.toLowerCase(),
+  oled:on('#res').dataset.w+'x'+on('#res').dataset.h,
+  rotate:(f==='1'?'m':'')+r, freq:freqStr()};}
+document.getElementById('btnBuild').onclick=()=>{const v=variant();runCmd('build',`빌드(${v.board} ${v.oled} pcf${v.pcf})`,v);};
+document.getElementById('btnFlash').onclick=()=>{const v=variant();v.port=document.getElementById('port').value;runCmd('flash',`플래시(${v.port})`,v);};
+document.getElementById('btnCli').onclick=()=>runCmd('cli','CLI extract',{freq:freqStr()});
+document.getElementById('btnClear').onclick=()=>runCmd('clean','clean(빌드정리)',variant());
+
+// ═══════════ 메인 루프 ═══════════
+function loop(){ if(wasm){wasm._sim_tick();drawWasm();requestAnimationFrame(loop);return;}
+ const now=performance.now();
+ if(action!=='NONE'&&now>actionUntil){action='NONE';document.getElementById('m-action').textContent='대기';}
+ if(action==='NONE')renderNormal(); else{renderAction(action,animFrame);animFrame++;}
+ blit(); requestAnimationFrame(loop);}
+
+// ═══════════ 입력 ═══════════
+const keymap={KeyQ:'up',KeyA:'down',KeyW:'rot',KeyE:'sel',KeyR:'prog',KeyZ:'left',KeyC:'right',BracketLeft:'ccw',BracketRight:'cw',KeyT:'setup'};
+const downSet=new Set();
+function bd(b,el){if(el&&el.classList.contains('disabled'))return; if(downSet.has(b))return;downSet.add(b);el&&el.classList.add('down');press(b);}
+function bu(b,el){if(!downSet.has(b))return;downSet.delete(b);el&&el.classList.remove('down');release(b);}
+document.querySelectorAll('.pb').forEach(el=>{const b=el.dataset.btn;
+ el.addEventListener('mousedown',e=>{e.preventDefault();bd(b,el);});
+ el.addEventListener('mouseup',()=>bu(b,el)); el.addEventListener('mouseleave',()=>bu(b,el));
+ el.addEventListener('touchstart',e=>{e.preventDefault();bd(b,el);},{passive:false});
+ el.addEventListener('touchend',e=>{e.preventDefault();bu(b,el);});});
+addEventListener('keydown',e=>{const b=keymap[e.code];if(b){e.preventDefault();bd(b,document.querySelector(`.pb[data-btn=${b}]`));}});
+addEventListener('keyup',e=>{const b=keymap[e.code];if(b)bu(b,document.querySelector(`.pb[data-btn=${b}]`));});
+
+// ═══════════ 설정 UI ═══════════
+document.getElementById('res').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+ document.querySelectorAll('#res button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+ if(wasm)return; W=+b.dataset.w;H=+b.dataset.h;fbAlloc();SCALE=W===128?5:(W===64?4:8);resize();};
+function applyRot(){const r=document.querySelector('#rot button.on').dataset.r,f=document.querySelector('#flip button.on').dataset.f;
+ document.getElementById('screen-rot').style.transform='rotate('+r+'deg)'+(f==='1'?' scaleX(-1)':'');}
+document.getElementById('rot').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+ document.querySelectorAll('#rot button').forEach(x=>x.classList.remove('on'));b.classList.add('on');applyRot();};
+document.getElementById('flip').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+ document.querySelectorAll('#flip button').forEach(x=>x.classList.remove('on'));b.classList.add('on');applyRot();};
+// 색상=화이트 고정(단색 OLED)
+document.getElementById('board').onchange=()=>{selIdx=0;document.getElementById('m-blind').textContent=blindName();if(wasm)wasm._sim_select(0);};
+document.getElementById('live').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+ document.querySelectorAll('#live button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+ liveMode=b.dataset.l==='1'; trace('a','실기기 전송 '+(liveMode?'ON — 버튼이 COM 으로 실제 RF':'OFF'));};
+// LEFT/RIGHT 는 PCF8575(16핀)에만 — PCF8574(8핀)는 핀 부족 → 비활성
+function updatePcfButtons(){const on=document.getElementById('pcf').value==='PCF8575';
+ ['left','right'].forEach(b=>{const el=document.querySelector('.pb[data-btn='+b+']'); if(el)el.classList.toggle('disabled',!on);});}
+document.getElementById('pcf').onchange=updatePcfButtons;
+document.getElementById('freq').oninput=()=>{document.getElementById('m-freq').textContent=freqStr();};
+// 포트 목록
+(function(){const p=document.getElementById('port');for(let i=3;i<=20;i++){const o=document.createElement('option');o.textContent='COM'+i;if(i===8)o.selected=true;p.appendChild(o);}})();
+
+// ═══════════ WASM 로더 ═══════════
+(function loadWasm(){const s=document.createElement('script');s.src='oled_sim.js';
+ s.onload=()=>{if(window.OledSim)OledSim().then(m=>{wasm=m;m._sim_init();document.getElementById('m-action').textContent='[FW] 준비';trace('a','WASM 실펌웨어 로드');});};
+ s.onerror=()=>{trace('c','WASM 미빌드 — WDAC 예외 후 sim/wasm/build.ps1');};
+ document.head.appendChild(s);})();
+
+// 시작
+document.getElementById('screen-rot').style.transform='rotate(180deg)';
+resize(); checkBackend(); updatePcfButtons(); trace('a','시뮬레이터 시작'); loop();
+</script></body></html>

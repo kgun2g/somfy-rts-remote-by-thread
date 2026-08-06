@@ -1,0 +1,37 @@
+name: somfy-blinds-3
+components:
+  - id: main
+    label: 블라인드 1
+    capabilities:
+      - id: windowShade
+        version: 1
+      - id: windowShadeLevel
+        version: 1
+      - id: windowShadeTiltLevel
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: Blind
+  - id: blind2
+    label: 블라인드 2
+    capabilities:
+      - id: windowShade
+        version: 1
+      - id: windowShadeLevel
+        version: 1
+      - id: windowShadeTiltLevel
+        version: 1
+    categories:
+      - name: Blind
+  - id: blind3
+    label: 블라인드 3
+    capabilities:
+      - id: windowShade
+        version: 1
+      - id: windowShadeLevel
+        version: 1
+      - id: windowShadeTiltLevel
+        version: 1
+    categories:
+      - name: Blind
