@@ -79,6 +79,65 @@ void oled_only_test(void)
                  nm, lf, pd, pu);
     }
 
+    /* ★1b) 교차연결(스위치 위치) 검사 — 2026-07-23 회로도 분석으로 발견.
+     *  h4(신 PCB)에는 I2C 라인에 SPDT 슬라이드 스위치(SDA1/SCL1)가 있어
+     *    C=I2C(GPIO22/23) ─ 스위치 ─ B=PCF8575  또는  A=LP_I2C(GPIO6/7)
+     *  스위치가 A 위치면 GPIO22↔GPIO6, GPIO23↔GPIO7 이 물리적으로 단락된다.
+     *  → 정상 펌웨어의 LP 비트뱅(GPIO6/7 구동)이 OLED 버스를 직접 깨뜨림.
+     *  검사법: LP 핀을 LOW 로 구동하고 OLED 핀 레벨을 읽는다. 따라가면 단락. */
+    {
+        const gpio_num_t LP_SDA = (gpio_num_t)6, LP_SCL = (gpio_num_t)7;
+        gpio_reset_pin(OT_SDA); gpio_set_direction(OT_SDA, GPIO_MODE_INPUT);
+        gpio_set_pull_mode(OT_SDA, GPIO_PULLUP_ONLY);
+        gpio_reset_pin(OT_SCL); gpio_set_direction(OT_SCL, GPIO_MODE_INPUT);
+        gpio_set_pull_mode(OT_SCL, GPIO_PULLUP_ONLY);
+        gpio_reset_pin(LP_SDA); gpio_reset_pin(LP_SCL);
+        /* LP 를 입력(방치) 상태에서 기준 레벨 */
+        gpio_set_direction(LP_SDA, GPIO_MODE_INPUT); gpio_set_direction(LP_SCL, GPIO_MODE_INPUT);
+        vTaskDelay(pdMS_TO_TICKS(2));
+        int base_sda = gpio_get_level(OT_SDA), base_scl = gpio_get_level(OT_SCL);
+        /* LP 를 LOW 로 구동 */
+        gpio_set_level(LP_SDA, 0); gpio_set_direction(LP_SDA, GPIO_MODE_OUTPUT);
+        gpio_set_level(LP_SCL, 0); gpio_set_direction(LP_SCL, GPIO_MODE_OUTPUT);
+        vTaskDelay(pdMS_TO_TICKS(2));
+        int drv_sda = gpio_get_level(OT_SDA), drv_scl = gpio_get_level(OT_SCL);
+        gpio_set_direction(LP_SDA, GPIO_MODE_INPUT); gpio_set_direction(LP_SCL, GPIO_MODE_INPUT);
+        gpio_set_pull_mode(OT_SDA, GPIO_FLOATING); gpio_set_pull_mode(OT_SCL, GPIO_FLOATING);
+        int shorted = (base_sda == 1 && drv_sda == 0) || (base_scl == 1 && drv_scl == 0);
+        ESP_LOGW(TAG, "[XCONN] LP(6/7) LOW 구동 시 OLED핀: SDA %d→%d, SCL %d→%d  ⇒ %s",
+                 base_sda, drv_sda, base_scl, drv_scl,
+                 shorted ? "★단락됨(스위치 A위치) — LP 비트뱅이 OLED 버스를 깸!"
+                         : "독립(정상) — 스위치 B/무관, LP 간섭 없음");
+    }
+
+    /* ★1c) I2C 버스 복구 — SDA 가 LOW 로 붙잡혀 있으면(slave 가 전송 중 리셋된 상태)
+     *  SCL 9클럭 + STOP 으로 풀어준다. I2C 표준 복구 절차. SDA 가 이미 HIGH 면 건너뜀
+     *  (정상 버스에 쓰면 오히려 해로움). */
+    {
+        gpio_reset_pin(OT_SDA); gpio_set_direction(OT_SDA, GPIO_MODE_INPUT);
+        gpio_set_pull_mode(OT_SDA, GPIO_PULLUP_ONLY); vTaskDelay(pdMS_TO_TICKS(2));
+        if (gpio_get_level(OT_SDA) == 0) {
+            ESP_LOGW(TAG, "[RECOVER] SDA LOW 고착 감지 → SCL 9클럭 복구 시도");
+            gpio_reset_pin(OT_SCL); gpio_set_level(OT_SCL, 1);
+            int released = 0;
+            for (int i = 0; i < 9; i++) {
+                _bb(OT_SCL, 0); esp_rom_delay_us(6);
+                _bb(OT_SCL, 1); esp_rom_delay_us(6);
+                if (gpio_get_level(OT_SDA)) { released = 1; break; }
+            }
+            _bb(OT_SDA, 0); esp_rom_delay_us(6);   /* STOP: SCL HIGH 중 SDA LOW→HIGH */
+            _bb(OT_SCL, 1); esp_rom_delay_us(6);
+            _bb(OT_SDA, 1); esp_rom_delay_us(6);
+            gpio_set_pull_mode(OT_SDA, GPIO_PULLUP_ONLY); vTaskDelay(pdMS_TO_TICKS(2));
+            ESP_LOGW(TAG, "[RECOVER] 결과: SDA=%d (%s)", gpio_get_level(OT_SDA),
+                     (released || gpio_get_level(OT_SDA)) ? "★풀림! slave 고착이었음"
+                                                          : "여전히 LOW — 물리 단락(복구 불가)");
+        } else {
+            ESP_LOGW(TAG, "[RECOVER] SDA 정상 HIGH — 복구 불필요(건너뜀)");
+        }
+        gpio_set_pull_mode(OT_SDA, GPIO_FLOATING);
+    }
+
     /* 2) bit-bang 전체 스캔 (IDF 드라이버 우회) */
     char buf[100]; int n = 0; buf[0] = '\0';
     for (uint8_t a = 0x08; a <= 0x77; a++) {
