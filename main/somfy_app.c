@@ -578,18 +578,15 @@ static void _time_edit_save(void) {
 #ifndef CFG_CHG_ANIM_ENABLE
 #define CFG_CHG_ANIM_ENABLE 0
 #endif
-#define SCREENSAVER_TIMEOUT_MS  180000   /* USB 연결: 3분 무입력 → 화면 보호기 */
-#define SLEEP_TIMEOUT_MS         60000   /* 배터리: 1분 무입력 → 절전 */
+/* ★2026-07-23 화면 정책: 화면보호기(중간 애니메이션) **코드 삭제**.
+ *  유휴 CFG_SCREEN_OFF_SEC(somfy_config.h) 초가 지나면 곧바로 패널 OFF.
+ *  버튼/진동으로 즉시 복귀. 시간을 바꾸려면 CFG_SCREEN_OFF_SEC 만 수정. */
 #define USB_DETECT_HOLD_MS    60000      /* 마지막 충전 감지 후 1분간 USB 모드 유지 */
 #define VIBRATION_HOLD_MS         5000   /* 진동 후 5초 sleep 차단 */
-/* ★ v3.11: 유휴 타임아웃 → 먼저 화면보호기 애니메이션을 OLED ON 으로
- *  SAVER_ANIM_MS 동안 보여준 뒤, 이후 패널 OFF + 절전(배터리)/패널OFF(USB). */
-#define SAVER_ANIM_MS            30000   /* 화면보호기 애니메이션 노출(이후 OFF) */
 static volatile int64_t s_last_activity_us = 0;
 static volatile int64_t s_last_chg_active_us = 0;  /* CHG_STAT LOW 였던 마지막 시각 */
 static volatile bool s_is_sleeping = false;
 static volatile bool s_screensaver_active = false; /* OLED off 상태 (USB 모드) */
-static bool s_saver_anim = false;                  /* 화면보호기 애니 표시 단계(패널 ON) */
 
 static inline void _mark_activity(void) {
   s_last_activity_us = esp_timer_get_time();
@@ -2251,7 +2248,8 @@ void somfy_app_run(void *arg) {
   /* ── 9. 메인 루프 ── */
   ESP_LOGI(
       TAG,
-      "메인 루프 시작 (USB: 3분→화면보호기 / 배터리: 1분→절전, Thread SED 활성)");
+      "메인 루프 시작 (유휴 %d초 → 화면 OFF, 버튼/진동으로 복귀, 화면보호기 없음)",
+      CFG_SCREEN_OFF_SEC);
   /* Task WDT subscribe — 메인 루프가 N초 이상 안 돌면 자동 panic+리부트.
    *  silent hang(스크린세이버에서 wake 무반응 등) 자동 복구 + 다음 boot 시
    *  reset_reason=TASK_WDT 로 breadcrumb 와 함께 진단 가능. */
@@ -2486,14 +2484,6 @@ void somfy_app_run(void *arg) {
       _mark_activity();
       if (s_screensaver_active) _exit_screensaver("vibration");
       if (s_is_sleeping)        _exit_sleep("vibration");
-      /* ★ 화면보호기 애니메이션(2단계) 도 즉시 종료 — 이 플래그가 있는 동안엔
-       *  아래 idle 정책 블록의 "vibrating" 분기가 활성화돼 anim 종료 분기
-       *  까지 도달 못 함(홀드오프 5초). 여기서 명시적으로 해제한다. */
-      if (s_saver_anim) {
-        s_saver_anim = false;
-        oled_ui_wake(&s_ui);
-        ESP_LOGI(TAG, "[VIBE] 진동 감지 → 화면보호기 애니 종료");
-      }
       if (vib_event && !was_vibrating) {
         ESP_LOGI(TAG, "[VIBE] 진동 감지 → 활성 모드 복귀");
       }
@@ -2509,55 +2499,38 @@ void somfy_app_run(void *arg) {
                    s_ui.state == OLED_STATE_CHARGING ||
                    s_ui.state == OLED_STATE_PAIRING ||
                    s_ui.state == OLED_STATE_THREAD_PROV;
-
-    /* ── v3.11 3단계 유휴 정책 ──────────────────────────────────────
-     *   1단계 활성 (idle < base)        : 정상 화면
-     *   2단계 화면보호기 애니 (base ~ base+ANIM): 패널 ON, SCREENSAVER 렌더
-     *   3단계 OFF (idle >= base+ANIM)   : 패널 OFF (+배터리는 light sleep)
-     *  base = USB 3분 / 배터리 1분, ANIM = SAVER_ANIM_MS. */
-    int64_t base_to_us = (usb_mode ? (int64_t)SCREENSAVER_TIMEOUT_MS
-                                   : (int64_t)SLEEP_TIMEOUT_MS) * 1000;
-    int64_t off_to_us  = base_to_us + (int64_t)SAVER_ANIM_MS * 1000;
+    /* ── 2026-07-23 유휴 정책(화면보호기 삭제 후) ─────────────────────
+     *   1단계 활성 (idle < off)  : 정상 화면
+     *   2단계 OFF  (idle >= off) : 패널 OFF (+배터리는 light sleep)
+     *  중간의 "화면보호기 애니메이션" 단계는 **제거**했다(사용자 요청).
+     *  꺼지는 시간은 CFG_SCREEN_OFF_SEC(somfy_config.h) 하나로 설정한다.
+     *  깨우기: 버튼(_btn_event_cb) / 진동(아래 vibration 분기)이 담당. */
+    int64_t off_to_us = (int64_t)CFG_SCREEN_OFF_SEC * 1000000LL;
 
     if (inhibit) {
-      /* 설정/페어링/충전 화면 — 화면보호기·절전 보류, 타이머 재시작 */
-      if (idle_us > base_to_us) _mark_activity();
-      s_saver_anim = false;
+      /* 설정/페어링/충전 화면 — 화면 OFF 보류, 타이머 재시작 */
+      if (idle_us > off_to_us) _mark_activity();
     } else if (vibration_active || vibration_holdoff) {
-      if (idle_us > base_to_us) {
+      if (idle_us > off_to_us) {
         static int last_log_s = -1;
         int now_s = (int)(since_vib_us / 1000000);
         if (now_s != last_log_s) {
-          ESP_LOGI(TAG, "진동 감지로 절전/화면보호기 차단 (last %ds, %s)",
+          ESP_LOGI(TAG, "진동 감지로 화면 OFF 차단 (last %ds, %s)",
                    now_s, vibration_active ? "active" : "holdoff");
           last_log_s = now_s;
         }
       }
     } else if (idle_us >= off_to_us) {
-      /* 3단계: 패널 OFF (+배터리 light sleep) */
-      s_saver_anim = false;
+      /* 2단계: 패널 OFF (+배터리 light sleep) */
       if (usb_mode) {
         if (!s_screensaver_active) _enter_screensaver();
       } else {
         if (s_screensaver_active) s_screensaver_active = false;
         if (!s_is_sleeping) _enter_sleep();
       }
-    } else if (idle_us >= base_to_us) {
-      /* 2단계: 화면보호기 애니메이션 (패널 ON 유지) */
-      if (!s_saver_anim && !s_screensaver_active && !s_is_sleeping) {
-        s_saver_anim = true;
-        if (s_setup_screen == SETUP_NONE)
-          s_ui.state = OLED_STATE_SCREENSAVER;
-        oled_ui_set_display_on(true);
-        ESP_LOGI(TAG, "화면보호기 애니메이션 시작 (%s, %ds 후 %s)",
-                 usb_mode ? "USB" : "배터리", SAVER_ANIM_MS / 1000,
-                 usb_mode ? "패널OFF" : "절전");
-      }
-    } else if (s_saver_anim) {
-      /* 1단계 복귀: 애니 단계 중 활동 재개 → 정상 화면 복원 */
-      s_saver_anim = false;
-      oled_ui_wake(&s_ui);
     }
+    /* (화면보호기 애니메이션 단계 삭제 — 2026-07-23 사용자 요청.
+     *  유휴 CFG_SCREEN_OFF_SEC 초가 지나면 위 분기에서 곧바로 패널 OFF 한다.) */
 
     was_charging = charging;
 

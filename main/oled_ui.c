@@ -93,7 +93,7 @@ static void _main_freq_str(const oled_ui_ctx_t *ctx, char *buf, size_t n) {
 /* ★2026-07-23 속도: half-period 5us(=100kHz)면 128×64 한 프레임(1KB)에 약 93ms 걸려
  *  화면이 눈에 띄게 느려진다(실사용 확인). SSD1306 규격 상한은 400kHz 이므로 2us(≈200kHz)
  *  로 올려 프레임을 ~45ms 로 단축. 불안정하면 3~5 로 되돌릴 것. */
-#define BBO_HALF_US 2
+#define BBO_HALF_US 1
 
 static inline void _bbo(gpio_num_t p, int v) {
     if (v) gpio_set_direction(p, GPIO_MODE_INPUT);          /* 릴리즈(풀업이 HIGH) */
