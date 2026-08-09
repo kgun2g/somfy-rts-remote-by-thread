@@ -639,6 +639,18 @@ typedef struct {
   bool            keep_rolling;   // true=롤링코드 증가 안 함(hold 반복 — 정품처럼 같은 코드 유지)
 } rf_job_t;
 
+/* ★★2026-07-24 임시 진단 빌드 (사용자 요청):
+ *  "충전률 측정 / 버튼 RF 송신 부분을 바꾸면서 OLED 가 망가진 것 같다" →
+ *  두 기능을 임시로 빼고 화면 멈춤이 사라지는지 확인한다. 원인 격리용이며,
+ *  확인이 끝나면 두 값을 0 으로 되돌릴 것(코드는 삭제하지 않고 #if 로만 차단).
+ *    TEMP_NO_CHARGE : 배터리 ADC init + 충전 감지 비활성
+ *    TEMP_NO_BTN_RF : 버튼으로 발생하는 RF 송신 job 투입 차단(Matter 경로는 유지) */
+/* 2026-07-24 격리 2단계: 둘 다 끄면 멈춤 없음 확인됨 → RF 만 되살려 범인 판별.
+ *   RF 살린 뒤 멈추면 → 버튼 RF 송신이 원인
+ *   RF 살려도 안 멈추면 → 충전률 측정이 원인 */
+#define TEMP_NO_CHARGE   1   /* 충전측정: 계속 차단 */
+#define TEMP_NO_BTN_RF   0   /* ★버튼 RF 송신: 되살림 */
+
 #define RF_JOB_FROM_BTN     0xFF
 #define RF_QUEUE_DEPTH      8
 
@@ -777,6 +789,12 @@ static void _rf_worker_task(void *pvParam)
 static void _send_command_ex(somfy_command_t cmd, uint32_t hold_ms,
                              bool abortable, bool keep_rolling) {
   if (s_rf_queue == NULL) return;
+#if TEMP_NO_BTN_RF
+  /* ★임시: 버튼발 RF 송신 차단(진단용). 화면/메뉴 동작은 그대로, 전파만 안 나간다. */
+  ESP_LOGW(TAG, "[TEMP] 버튼 RF 송신 차단됨 (cmd=%d) — 진단 빌드", cmd);
+  (void)hold_ms; (void)abortable; (void)keep_rolling;
+  return;
+#endif
 
   rf_job_t job = { .cmd = cmd, .hold_ms = hold_ms,
                    .endpoint_idx = RF_JOB_FROM_BTN, .abortable = abortable,
@@ -2161,7 +2179,7 @@ void somfy_app_run(void *arg) {
 
   oled_ui_init(&s_ui);                 /* SSD1306 1회 init (연속 X) */
   btn_handler_init(_btn_event_cb, NULL); /* GPIO 설정 (연속 X) */
-#if BOARD_HAS_BAT_ADC
+#if BOARD_HAS_BAT_ADC && !TEMP_NO_CHARGE
   _bat_adc_init();                     /* 배터리 전압 ADC (실측 %) */
 #endif
 
@@ -2401,7 +2419,11 @@ void somfy_app_run(void *arg) {
     }
 
     /* USB 케이블 연결 + 충전 중 검사 (MCP73831 STAT pin) */
+#if TEMP_NO_CHARGE
+    bool charging = false;             /* ★임시: 충전 감지 비활성(진단용) */
+#else
     bool charging = btn_handler_is_charging();
+#endif
     int64_t now_us = esp_timer_get_time();
     static int64_t _dbg_us = -5000000;
     if (now_us - _dbg_us >= 5LL * 1000 * 1000) {
