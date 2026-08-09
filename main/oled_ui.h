@@ -344,6 +344,11 @@ void oled_ui_notify_blind_select(oled_ui_ctx_t *ctx, uint8_t idx);
  */
 void oled_ui_wake(oled_ui_ctx_t *ctx);
 
+/* ★2026-07-23 RF 송신 구간 알림 — true 동안 OLED I2C 접근을 전면 중단한다.
+ *  CC1101 447MHz 송신 노이즈가 I2C 를 깨뜨려 SSD1306 이 고착되는 것을 막는다
+ *  (고착 시 모듈 전원차단 전엔 복구 불가). somfy_app.c 의 _do_rf_send 가 감싼다. */
+void oled_ui_set_rf_tx(bool active);
+
 /**
  * @brief 설정 메뉴 화면 진입 (v3.1+).
  * @param ctx     UI 컨텍스트

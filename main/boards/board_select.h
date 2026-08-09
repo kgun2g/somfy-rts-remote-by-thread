@@ -101,6 +101,18 @@ See main/boards/ for available boards."
 #ifndef BOARD_I2C_LP_FALLBACK
 #  define BOARD_I2C_LP_FALLBACK  0
 #endif
+
+/* ── OLED 를 소프트웨어 비트뱅 I2C 로 구동 (2026-07-23) ─────────────────────
+ *   0 (기본): ESP32 HW I2C 페리페럴 사용(기존 동작).
+ *   1       : 순수 GPIO 비트뱅으로 OLED 전송. HW I2C 버스를 만들지 않는다.
+ *   왜: xiao-c6(h4)에서 **HW I2C0 가 "bus busy" 로 고착**되는 현상이 실측 재현됨
+ *       (라인은 idle 1/1 인데 clear bus failed / reset hardware failed, 버스 재생성도 무효).
+ *       같은 순간에도 비트뱅은 0x3C ACK 를 받아낸다 → 페리페럴을 통째로 우회한다.
+ *   주의: PCF8574 를 OLED 와 **공유 HW I2C**로 쓰는 보드(BOARD_I2C_SHARED 경로)는
+ *       버스 핸들이 없어지므로 함께 쓰지 말 것(현 xiao-c6 는 PCF 가 LP 비트뱅이라 무관). */
+#ifndef BOARD_OLED_BITBANG
+#  define BOARD_OLED_BITBANG     0
+#endif
 #if BOARD_I2C_LP_FALLBACK
 #  if !BOARD_I2C_SHARED || !defined(BOARD_PIN_PCF_LP_SDA) || !defined(BOARD_PIN_PCF_LP_SCL)
 #    error "BOARD_I2C_LP_FALLBACK=1 requires BOARD_I2C_SHARED=1 and BOARD_PIN_PCF_LP_SDA/SCL."

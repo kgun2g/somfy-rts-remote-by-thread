@@ -667,7 +667,22 @@ static volatile int64_t s_action_press_us = 0;   /* 세션 첫 누름 시각(0=�
 static volatile somfy_command_t s_last_sent_cmd = 0;  /* 직전 송신 cmd — 같으면 롤링코드 고정(정품 매칭) */
 
 /* 실제 RF 송신 (worker task 내부에서만 호출) */
+static void _do_rf_send_inner(const rf_job_t *job);
+
+/* ★2026-07-23 RF 송신 전 구간 OLED I2C 차단 래퍼.
+ *  왜: CC1101 447MHz 송신(1~1.5초) 노이즈가 I2C 트랜잭션을 깨뜨려 SSD1306 이
+ *  전송 중간 상태로 **고착**되는 것이 실사용에서 확인됐다(좌/우=RF없음 정상,
+ *  상/하=RF송신 후 느려지다 멈춤). 고착되면 모듈 전원차단 전엔 복구 불가
+ *  (RES 핀 없는 4핀 모듈)이므로, 가장 위험한 구간엔 버스를 아예 안 건드린다.
+ *  _do_rf_send 는 return 경로가 여러 개라 래퍼로 감싸 해제 누락을 원천 차단. */
 static void _do_rf_send(const rf_job_t *job)
+{
+  oled_ui_set_rf_tx(true);
+  _do_rf_send_inner(job);
+  oled_ui_set_rf_tx(false);
+}
+
+static void _do_rf_send_inner(const rf_job_t *job)
 {
   if (!g_rf_ready) {
     ESP_LOGW(TAG, "RF 미준비(CC1101 하드웨어 미응답) — 송신 skip (cmd=%d)",

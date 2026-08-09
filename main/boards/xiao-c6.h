@@ -113,6 +113,11 @@
 #define BOARD_PIN_PCF_SDA      22  // D4(GPIO22)=OLED SDA 공유 (공유 모드)
 #define BOARD_PIN_PCF_SCL      23  // D5(GPIO23)=OLED SCL 공유 (공유 모드)
 #define BOARD_I2C_LP_FALLBACK  1   // LP_I2C(아래 핀) 우선 프로브 → 무응답 시 공유로 자동 전환
+/* ★2026-07-23: 이 보드의 HW I2C0 가 "bus busy" 로 고착돼 화면이 멈추는 현상이 실측 재현됨
+ *  (라인 idle 1/1 인데 clear bus failed/reset hardware failed, 버스 재생성도 무효.
+ *   같은 순간 비트뱅은 0x3C ACK 정상). → OLED 전송을 비트뱅으로 전환해 페리페럴 우회.
+ *  되돌리려면 0. (PCF 는 LP 비트뱅이라 공유버스 영향 없음) */
+#define BOARD_OLED_BITBANG     1
 #define BOARD_PIN_PCF_LP_SDA   6   // MTCK / LP_I2C_SDA (뒷면 패드, 비트뱅)
 #define BOARD_PIN_PCF_LP_SCL   7   // MTDO / LP_I2C_SCL (뒷면 패드, 비트뱅)
 #define BOARD_PIN_PCF_INT      2   // D2 (GPIO2, LP) ~INT (active-LOW, wake) — 공통

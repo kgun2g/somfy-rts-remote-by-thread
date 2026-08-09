@@ -32,6 +32,17 @@ static SemaphoreHandle_t s_i2c_mutex = NULL;
  * 로그 스팸(50ms마다)을 막는다. 미검출이면 5초마다 자동 재검출(hot-plug 지원). */
 static bool     s_oled_present = false;
 static uint32_t s_oled_last_probe_ms = 0;
+/* 2026-07-23 모듈 고착 자동복구: 연속 검출실패 횟수(성공 시 0 으로 리셋) */
+static uint32_t s_oled_recover_tries = 0;
+
+/* ★2026-07-23 RF 송신 중 OLED 정지 (somfy_app.c 의 _do_rf_send 가 설정).
+ *  왜: 447MHz CC1101 송신(1~1.5초, 안테나가 I2C 배선 근처) 동안 I2C 트랜잭션이
+ *  깨져 **SSD1306 이 전송 중간 상태로 고착**되는 것이 실사용에서 확인됐다
+ *  (좌/우 버튼=RF 없음 → 정상 / 상/하 버튼=RF 송신 → 느려지다 멈춤).
+ *  고착되면 모듈 전원을 끊기 전엔 안 풀리므로(RES 핀 없는 4핀 모듈),
+ *  가장 위험한 구간에는 아예 버스를 건드리지 않는다. */
+static volatile bool s_rf_tx_active = false;
+void oled_ui_set_rf_tx(bool active) { s_rf_tx_active = active; }
 static void _oled_panel_init(void);   /* 패널 init 시퀀스 (정의는 oled_ui_init 직전) */
 
 /* ── CC1101(RF) 검출 여부 — app_main.cpp 가 부팅 시 1회 설정(extern "C") ──
@@ -64,6 +75,65 @@ static void _main_freq_str(const oled_ui_ctx_t *ctx, char *buf, size_t n) {
  *  (히스토리 07-17 04:38:33 의 _oled_i2c_init_at 방식 복원.) */
 #define OLED_I2C_HZ 100000
 
+/* ═══════════════════════════════════════════════════════════════════════
+   ★2026-07-23 OLED 소프트웨어 비트뱅 I2C 전송 (BOARD_OLED_BITBANG)
+
+   왜: 이 보드에서 ESP32 의 **HW I2C0 페리페럴이 "bus busy" 로 고착**되는 현상이
+   재현된다(실측). 라인은 idle 1/1 인데 `i2c.master: clear bus failed` +
+   `reset hardware failed` 가 뜨고, 버스 del→재생성으로도 안 풀린다.
+   반면 **순수 GPIO 비트뱅은 같은 순간에도 0x3C ACK 를 받아낸다.**
+   → 전송 계층을 비트뱅으로 바꿔 페리페럴을 통째로 우회한다.
+
+   open-drain 에뮬: 1=INPUT(외부 4.7k 풀업이 HIGH) / 0=OUTPUT LOW.
+   속도: half-period 5us ≈ 100kHz (HW 와 동일 마진).
+   ═══════════════════════════════════════════════════════════════════════ */
+#if BOARD_OLED_BITBANG
+#define BBO_SDA ((gpio_num_t)BOARD_PIN_OLED_SDA)
+#define BBO_SCL ((gpio_num_t)BOARD_PIN_OLED_SCL)
+/* ★2026-07-23 속도: half-period 5us(=100kHz)면 128×64 한 프레임(1KB)에 약 93ms 걸려
+ *  화면이 눈에 띄게 느려진다(실사용 확인). SSD1306 규격 상한은 400kHz 이므로 2us(≈200kHz)
+ *  로 올려 프레임을 ~45ms 로 단축. 불안정하면 3~5 로 되돌릴 것. */
+#define BBO_HALF_US 2
+
+static inline void _bbo(gpio_num_t p, int v) {
+    if (v) gpio_set_direction(p, GPIO_MODE_INPUT);          /* 릴리즈(풀업이 HIGH) */
+    else { gpio_set_level(p, 0); gpio_set_direction(p, GPIO_MODE_OUTPUT); }
+}
+/* 핀을 GPIO 로 확보. HW I2C 를 쓰지 않으므로 버스 생성도 하지 않는다. */
+static void _bbo_init_pins(void) {
+    gpio_reset_pin(BBO_SDA); gpio_reset_pin(BBO_SCL);
+    gpio_set_level(BBO_SDA, 0); gpio_set_level(BBO_SCL, 0);  /* 출력래치 0(방향으로 제어) */
+    _bbo(BBO_SDA, 1); _bbo(BBO_SCL, 1);
+    esp_rom_delay_us(10);
+}
+/* 1바이트 송신 후 ACK 수신. true=ACK */
+static bool _bbo_byte(uint8_t b) {
+    for (int i = 0; i < 8; i++) {
+        _bbo(BBO_SDA, (b & 0x80) ? 1 : 0); b <<= 1; esp_rom_delay_us(3);
+        _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
+        _bbo(BBO_SCL, 0); esp_rom_delay_us(3);
+    }
+    _bbo(BBO_SDA, 1); esp_rom_delay_us(3);                   /* SDA 릴리즈 → 슬레이브 ACK */
+    _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
+    int ack = gpio_get_level(BBO_SDA);
+    _bbo(BBO_SCL, 0); esp_rom_delay_us(3);
+    return ack == 0;
+}
+/* addr7 로 buf[len] 쓰기. START→addr(W)→데이터…→STOP. true=전 바이트 ACK */
+static bool _bbo_write(uint8_t addr7, const uint8_t *buf, size_t len) {
+    _bbo(BBO_SDA, 1); _bbo(BBO_SCL, 1); esp_rom_delay_us(3);
+    _bbo(BBO_SDA, 0); esp_rom_delay_us(BBO_HALF_US);         /* START */
+    _bbo(BBO_SCL, 0); esp_rom_delay_us(3);
+    bool ok = _bbo_byte((uint8_t)(addr7 << 1));              /* write */
+    for (size_t i = 0; ok && i < len; i++) ok = _bbo_byte(buf[i]);
+    _bbo(BBO_SDA, 0); esp_rom_delay_us(3);                   /* STOP */
+    _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
+    _bbo(BBO_SDA, 1); esp_rom_delay_us(BBO_HALF_US);
+    return ok;
+}
+static bool _bbo_probe(uint8_t addr7) { return _bbo_write(addr7, NULL, 0); }
+#endif /* BOARD_OLED_BITBANG */
+
 /* 라이브러리가 init 시 보유한 device handle을 통해 직접 명령을 전송 */
 static esp_err_t _oled_send_cmds(const uint8_t *cmds, size_t len)
 {
@@ -72,8 +142,13 @@ static esp_err_t _oled_send_cmds(const uint8_t *cmds, size_t len)
     if (len > sizeof(buf) - 1) return ESP_ERR_INVALID_SIZE;
     buf[0] = 0x00;
     memcpy(&buf[1], cmds, len);
+#if BOARD_OLED_BITBANG
+    return _bbo_write(s_dev._address ? s_dev._address : BOARD_OLED_ADDR, buf, len + 1)
+               ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+#else
     return i2c_master_transmit(s_dev._i2c_dev_handle, buf, len + 1,
                                 OLED_I2C_TIMEOUT_MS);
+#endif
 }
 
 #if OLED_PANEL_FIXUP_72X40
@@ -712,15 +787,39 @@ static void _oled_bitbang_diag(void) {
  *  클럭을 기다린다. 다음 부팅에서 마스터는 SDA 가 눌린 걸 보고 **모든 전송이 timeout**
  *  → OLED 영구 미검출. 클럭 9개를 억지로 넣어 슬레이브가 남은 비트를 뱉게 하고 STOP.
  *  ※핀을 페리페럴에서 떼야 비트뱅이 먹히므로 **버스 del → 비트뱅 → 재생성** 순서 필수. */
-/* ★기본 OFF(위 _oled_try_detect 주석 참조 — 이 보드에선 해로웠다). 1 로 켜면 사용. */
+/* ★2026-07-23 기본 ON 으로 전환.
+ *  과거 OFF 이유: "정상 idle 버스에 9클럭을 쓰면 해로웠다"(에러 258 자작).
+ *  → 이제 **검출 실패 시에만** 호출하도록 _fb_flush() 재검출 경로에서 조건부 실행하므로
+ *    정상 버스를 건드리지 않는다. 실기(COM7)에서 모듈이 "버스 정상인데 무응답"으로
+ *    고착돼 화면이 멈추는 현상이 반복 확인됐고, 9클럭+STOP 반복으로 전원차단 없이
+ *    되살아나는 것을 실측했다. 되돌리려면 0. */
 #ifndef OLED_BUS_RECOVER_ENABLE
-#define OLED_BUS_RECOVER_ENABLE 0
+#define OLED_BUS_RECOVER_ENABLE 1
 #endif
 #if OLED_BUS_RECOVER_ENABLE
 static void _oled_i2c_bus_recover(void) {
     ESP_LOGW(TAG, "[OLED] 버스 물림 감지 → 9클럭 복구 시도");
+    /* ★2026-07-23 크래시 수정(실기 재부팅 루프 유발):
+     *  이전 코드는 device 핸들을 남긴 채 i2c_del_master_bus() 만 불렀다.
+     *  → "Bus not freed entirely" 로 삭제 실패 → 이어지는 i2c_master_init() 의
+     *    i2c_new_master_bus() 가 "bus id(0) has already been acquired" 로 실패 →
+     *    라이브러리의 ESP_ERROR_CHECK 가 **abort()** → 패닉 재부팅 반복.
+     *  반드시 **device 제거 → 버스 삭제** 순서로 내리고, 실패하면 복구를 포기한다
+     *  (abort 금지 — 화면만 못 쓰지 기기는 계속 동작해야 한다). */
+    if (s_dev._i2c_dev_handle) {
+        esp_err_t rd = i2c_master_bus_rm_device(s_dev._i2c_dev_handle);
+        if (rd != ESP_OK) {
+            ESP_LOGW(TAG, "[OLED] device 제거 실패(%s) — 복구 중단", esp_err_to_name(rd));
+            return;
+        }
+        s_dev._i2c_dev_handle = NULL;
+    }
     if (s_dev._i2c_bus_handle) {                 /* 핀을 페리페럴에서 떼어낸다 */
-        i2c_del_master_bus(s_dev._i2c_bus_handle);
+        esp_err_t rb = i2c_del_master_bus(s_dev._i2c_bus_handle);
+        if (rb != ESP_OK) {
+            ESP_LOGW(TAG, "[OLED] 버스 삭제 실패(%s) — 복구 중단", esp_err_to_name(rb));
+            return;                               /* 핸들 유지: 다음 기회에 재시도 */
+        }
         s_dev._i2c_bus_handle = NULL;
     }
     /* ★GPIO_MODE_**INPUT_**OUTPUT_OD 여야 한다. OUTPUT_OD 는 **입력 버퍼가 꺼져** 있어
@@ -742,10 +841,40 @@ static void _oled_i2c_bus_recover(void) {
     gpio_set_level(BOARD_PIN_OLED_SCL, 1); esp_rom_delay_us(5);
     gpio_set_level(BOARD_PIN_OLED_SDA, 1); esp_rom_delay_us(5);
     _oled_log_lines("복구후");
-    /* 버스 재생성 — 부팅 때와 같은 라이브러리 경로(oled_ui_init 의 i2c_master_init 와 동일).
-     * ※-1 = reset 핀 없음. 이 호출은 버스+device 생성까지만 하고 패널 init 은 안 한다
-     *   (패널 init 은 검출 성공 후 _oled_panel_init 이 담당). */
-    i2c_master_init(&s_dev, OLED_PIN_SDA, OLED_PIN_SCL, -1);
+    /* 버스+device 재생성 — ★라이브러리 i2c_master_init() 은 내부가 ESP_ERROR_CHECK 라
+     *  실패 시 abort() 한다(위 크래시의 직접 원인). 여기서는 동일 설정을 직접 만들되
+     *  **에러를 반환값으로 처리**해 절대 abort 하지 않는다.
+     *  (패널 init 은 하지 않는다 — 검출 성공 후 _oled_panel_init 담당.) */
+    i2c_master_bus_config_t bus_cfg = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .i2c_port = I2C_NUM_0,
+        .scl_io_num = BOARD_PIN_OLED_SCL,
+        .sda_io_num = BOARD_PIN_OLED_SDA,
+        .flags.enable_internal_pullup = true,
+    };
+    i2c_master_bus_handle_t bus = NULL;
+    esp_err_t e = i2c_new_master_bus(&bus_cfg, &bus);
+    if (e != ESP_OK) {
+        ESP_LOGW(TAG, "[OLED] 버스 재생성 실패(%s) — 다음 주기에 재시도", esp_err_to_name(e));
+        return;
+    }
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address  = BOARD_OLED_ADDR,
+        .scl_speed_hz    = OLED_I2C_HZ,
+    };
+    i2c_master_dev_handle_t devh = NULL;
+    e = i2c_master_bus_add_device(bus, &dev_cfg, &devh);
+    if (e != ESP_OK) {
+        ESP_LOGW(TAG, "[OLED] device 재등록 실패(%s) — 버스 정리 후 재시도", esp_err_to_name(e));
+        i2c_del_master_bus(bus);
+        return;
+    }
+    s_dev._address        = BOARD_OLED_ADDR;
+    s_dev._i2c_num        = I2C_NUM_0;
+    s_dev._i2c_bus_handle = bus;
+    s_dev._i2c_dev_handle = devh;
 }
 #endif /* OLED_BUS_RECOVER_ENABLE */
 
@@ -753,8 +882,24 @@ static void _oled_i2c_bus_recover(void) {
  * 재지정 후 패널 init + s_oled_present=true. (반환: 검출 여부) */
 static bool _oled_try_detect(void) {
     uint8_t addr = 0;
-    if      (i2c_master_probe(s_dev._i2c_bus_handle, 0x3C, 80) == ESP_OK) addr = 0x3C;
-    else if (i2c_master_probe(s_dev._i2c_bus_handle, 0x3D, 80) == ESP_OK) addr = 0x3D;
+    /* ★2026-07-23 실측 근거로 재시도 추가 — "화면 멈춤"의 직접 원인이었다.
+     *  로그에서 모순이 잡혔다: 같은 버스에서
+     *      [OLED] 검출실패 (probe 0x3C 1회 → 실패)
+     *      I2C 스캔: 응답 주소 = 0x3C      ← 바로 뒤 스캔은 성공
+     *  즉 **모듈은 살아 있는데 첫 probe 만 실패**한다(첫 트랜잭션 글리치).
+     *  기존 코드는 주소당 1회만 시도하고 포기 → s_oled_present=false 유지 →
+     *  화면이 마지막 프레임에 멈춘 채로 남았다.
+     *  → 각 주소를 여러 번 시도한다. 스캔이 찾아내는 것과 동일한 조건이 된다. */
+    for (int t = 0; t < 4 && !addr; t++) {
+#if BOARD_OLED_BITBANG
+        if      (_bbo_probe(0x3C)) addr = 0x3C;
+        else if (_bbo_probe(0x3D)) addr = 0x3D;
+#else
+        if      (i2c_master_probe(s_dev._i2c_bus_handle, 0x3C, 80) == ESP_OK) addr = 0x3C;
+        else if (i2c_master_probe(s_dev._i2c_bus_handle, 0x3D, 80) == ESP_OK) addr = 0x3D;
+#endif
+        if (!addr) vTaskDelay(pdMS_TO_TICKS(10));
+    }
     if (!addr) {
         /* 2026-07-17: 실패 원인을 라인 레벨로 구분한다(관찰만 — 버스를 건드리지 않음). */
         int sda = _oled_log_lines("검출실패");
@@ -831,14 +976,23 @@ static void _oled_write_page_locked(SSD1306_t *dev, int page, int seg,
          *  SSD1306 은 write 마다 컬럼 포인터를 자동증가하므로 각 청크에 0x40(DATA)를 붙여
          *  이어 쓰면 라이브러리 한 방 전송과 출력이 동일하다. 짧은 전송 = 글리치 중 깨질
          *  확률↓ → 마진 버스 폭주 감소. 한 청크라도 실패하면 그 시도 중단 후 재시도. */
+#if BOARD_OLED_BITBANG
+        uint8_t a7 = (uint8_t)(dev->_address ? dev->_address : BOARD_OLED_ADDR);
+        bool ok = _bbo_write(a7, cmd, 4);
+#else
         bool ok = (i2c_master_transmit(dev->_i2c_dev_handle, cmd, 4, OLED_I2C_TIMEOUT_MS) == ESP_OK);
+#endif
         for (int off = 0; ok && off < width; off += OLED_WR_CHUNK) {
             int n = width - off;
             if (n > OLED_WR_CHUNK) n = OLED_WR_CHUNK;
             uint8_t buf[1 + OLED_WR_CHUNK];
             buf[0] = 0x40;                                      /* DATA stream */
             memcpy(&buf[1], images + off, n);
+#if BOARD_OLED_BITBANG
+            if (!_bbo_write(a7, buf, n + 1)) ok = false;
+#else
             if (i2c_master_transmit(dev->_i2c_dev_handle, buf, n + 1, OLED_I2C_TIMEOUT_MS) != ESP_OK) ok = false;
+#endif
         }
         if (ok) { s_fail_run = 0; return; }                    /* 전체 성공 */
         esp_rom_delay_us(50);                                  /* 글리치 흡수 후 재시도 */
@@ -858,13 +1012,35 @@ static void _oled_write_page_locked(SSD1306_t *dev, int page, int seg,
 
 /* 프레임 버퍼 → SSD1306 전송 */
 static void _fb_flush(void) {
+    /* ★RF 송신 중에는 I2C 를 아예 건드리지 않는다(모듈 고착 방지 — 위 주석 참조).
+     *  송신은 1~1.5초라 그동안 화면이 안 갱신되지만, 고착돼 영구히 멈추는 것보다 낫다.
+     *  검출(재프로브)도 하지 않는다 — 노이즈 구간의 프로브가 곧 고착 유발 트랜잭션이다. */
+    if (s_rf_tx_active) return;
     if (!s_oled_present) {
         /* OLED 미검출: ssd1306_display_image 호출 안 함 → I2C NACK 로그 스팸 차단.
          * 5초마다 1회 재검출(0x3C/0x3D) → 나중에 연결하면 자동 활성화(hot-plug). */
         uint32_t now = _ms_now();
         if (now - s_oled_last_probe_ms >= 5000) {
             s_oled_last_probe_ms = now;
-            _oled_try_detect();   /* 성공 시 내부에서 s_oled_present=true + 로그 */
+            if (!_oled_try_detect()) {   /* 성공 시 내부에서 s_oled_present=true + 로그 */
+                /* ★2026-07-23 자동복구: 모듈이 "버스는 정상(SDA/SCL 둘 다 HIGH)인데
+                 *  응답만 안 하는" 상태로 고착되는 현상이 실기에서 반복 확인됐다
+                 *  (화면이 마지막 프레임에 멈춤). 원인은 슬레이브 I2C 상태머신 고착.
+                 *  실측: 표준 9클럭+STOP 복구를 **반복**하면 전원차단 없이 되살아난다
+                 *  (1회로는 안 풀리는 경우가 있어 재검출 실패마다 시도).
+                 *  검출 실패 시에만 수행하므로 정상 버스를 건드리지 않는다
+                 *  (과거 "idle 버스에 쓰면 해로웠다"는 지적을 이 조건으로 회피). */
+                s_oled_recover_tries++;
+                _oled_i2c_bus_recover();
+                if ((s_oled_recover_tries % 6) == 1) {   /* 30초마다 1회만 로그 */
+                    ESP_LOGW(TAG, "[OLED] 검출 실패 %u회 → 9클럭 버스복구 시도 중"
+                                  " (모듈 고착 자동해제)", (unsigned)s_oled_recover_tries);
+                }
+            } else if (s_oled_recover_tries) {
+                ESP_LOGW(TAG, "[OLED] ★버스복구 성공 — %u회 시도 후 모듈 재검출됨",
+                         (unsigned)s_oled_recover_tries);
+                s_oled_recover_tries = 0;
+            }
         }
         return;
     }
@@ -2689,14 +2865,56 @@ void oled_sim_render(oled_ui_ctx_t *ctx){
  *  해상도/오프셋/회전/72×40 보정은 BOARD_OLED_* 가 결정. */
 static void _oled_panel_init(void)
 {
+#if BOARD_OLED_BITBANG
+    /* ★비트뱅 모드: 라이브러리 ssd1306_init/clear/contrast 는 내부가 HW I2C 라 못 쓴다.
+     *  표준 SSD1306 init 시퀀스를 _oled_send_cmds(=비트뱅)로 직접 보낸다.
+     *  (라이브러리 i2c_init() 이 보내던 것과 동일 구성, MUX/COM 만 패널 높이로 분기.) */
+    {
+        const uint8_t h = OLED_PHYS_H;
+        uint8_t seq1[] = { 0xAE,                       /* display off        */
+                           0xA8, (uint8_t)(h - 1),     /* mux ratio          */
+                           0xD3, 0x00,                 /* display offset     */
+                           0x40,                       /* start line 0       */
+                           0xA1,                       /* seg remap          */
+                           0xC8 };                     /* com scan dec       */
+        uint8_t seq2[] = { 0xD5, 0x80,                 /* clk div            */
+                           0xDA, (uint8_t)(h == 32 ? 0x02 : 0x12), /* com pins */
+                           0x81, 0xFF,                 /* contrast           */
+                           0xA4,                       /* display from RAM   */
+                           0xDB, 0x40 };               /* vcomh              */
+        uint8_t seq3[] = { 0x20, 0x02,                 /* page addressing    */
+                           0x00, 0x10,                 /* col start          */
+                           0x8D, 0x14,                 /* charge pump on     */
+                           0x2E,                       /* scroll off         */
+                           0xA6,                       /* normal (not inv)   */
+                           0xAF };                     /* display ON         */
+        _oled_send_cmds(seq1, sizeof(seq1));
+        _oled_send_cmds(seq2, sizeof(seq2));
+        _oled_send_cmds(seq3, sizeof(seq3));
+        s_dev._width = OLED_PHYS_W;
+        s_dev._height = OLED_PHYS_H;
+    }
+#else
     ssd1306_init(&s_dev, OLED_PHYS_W, OLED_PHYS_H);   /* 물리 패널 크기(회전 무관 원본) */
+#endif
     s_dev._pages = OLED_PHYS_H / 8;   /* 라이브러리 i2c_init 의 _pages=8 하드코딩 회피(세로 패널 16페이지 대비; 128×64 가로는 8 로 동일) */
 #if OLED_PANEL_FIXUP_72X40
     /* 0.42" SSD1315 72×40 전용 보정(멀티플렉스/COM/IREF). 표준 128×64 는 불필요. */
     _ssd1315_apply_72x40_fixup();
 #endif
+#if BOARD_OLED_BITBANG
+    {   /* clear: 전 페이지에 0x00 채움 (라이브러리 대체) — 이 함수는 비트뱅 경로를 탄다 */
+        static uint8_t zero[128];
+        memset(zero, 0, sizeof(zero));
+        for (int p = 0; p < OLED_PHYS_H / 8; p++)
+            _oled_write_page_locked(&s_dev, p, 0, zero, OLED_PHYS_W > 128 ? 128 : OLED_PHYS_W);
+        uint8_t ct[2] = { 0x81, 0xCF };
+        _oled_send_cmds(ct, 2);
+    }
+#else
     ssd1306_clear_screen(&s_dev, false);
     ssd1306_contrast(&s_dev, 0xCF);
+#endif
 }
 
 /* ── 2026-07-19: 저속 I2C 버스 생성(라이브러리 400k 우회) — 금요일 04:38 버전 복원 ──
@@ -2738,7 +2956,19 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
     /* esp-idf-ssd1306 라이브러리 초기화 — I2C 모드.
      * ESP32-C6-0.42 보드의 0.42" OLED는 IO1(SDA) / IO0(SCL)에
      * 하드와이어 연결됨. RST 핀 없음 (SSD1306 internal POR 사용). */
+#if BOARD_OLED_BITBANG
+    /* ★비트뱅 모드: HW I2C 버스를 아예 만들지 않는다(페리페럴 고착 회피).
+     *  핀만 GPIO 로 확보하고 s_dev 의 주소/크기 필드만 채운다. */
+    _bbo_init_pins();
+    s_dev._address = BOARD_OLED_ADDR;
+    s_dev._i2c_num = I2C_NUM_0;
+    s_dev._i2c_bus_handle = NULL;
+    s_dev._i2c_dev_handle = NULL;
+    ESP_LOGW(TAG, "[OLED] ★비트뱅 I2C 모드 (SDA=IO%d SCL=IO%d, HW 페리페럴 미사용)",
+             BOARD_PIN_OLED_SDA, BOARD_PIN_OLED_SCL);
+#else
     _oled_i2c_init_at(&s_dev, OLED_PIN_SDA, OLED_PIN_SCL, OLED_I2C_HZ, 0x3C);  /* 400k→100k 저속 */
+#endif
 
     if (!s_i2c_mutex) s_i2c_mutex = xSemaphoreCreateMutex();   /* 공유 I2C 직렬화(버튼 칩과) */
 
