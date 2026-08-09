@@ -2556,6 +2556,21 @@ void somfy_app_run(void *arg) {
 
     was_charging = charging;
 
+    /* ★2026-07-24 안정성 모니터 (충전측정 OFF 상태 검증용) — 60초마다 요약.
+     *  OLED 비트뱅 전송 실패가 0 으로 유지되면 "충전측정만 끄면 안정"이 입증된다. */
+    {
+      extern volatile uint32_t g_bbo_tx_cnt, g_bbo_fail_cnt;
+      extern volatile bool g_oled_present_mon;
+      static int64_t last_rep_us = 0;
+      int64_t nu = esp_timer_get_time();
+      if (nu - last_rep_us >= 60LL * 1000000LL) {
+        last_rep_us = nu;
+        ESP_LOGW(TAG, "[OLEDMON] %llds  전송 %u회 / 실패 %u회  present=%d  free=%uB",
+                 nu / 1000000, (unsigned)g_bbo_tx_cnt, (unsigned)g_bbo_fail_cnt,
+                 g_oled_present_mon ? 1 : 0, (unsigned)esp_get_free_heap_size());
+      }
+    }
+
     /* FW Update 화면일 때 OTA 상태/진행률을 매 tick 갱신(OLED 가 반영). */
     if (s_setup_screen == SETUP_FW_UPDATE) {
       uint8_t prog = 0;

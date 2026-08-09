@@ -153,6 +153,14 @@ static bool _bbo_byte(uint8_t b) {
     return ack == 0;
 }
 /* addr7 로 buf[len] 쓰기. START→addr(W)→데이터…→STOP. true=전 바이트 ACK */
+/* ★2026-07-24 계측: ADC 읽기와 OLED 전송 실패의 상관관계를 잡기 위한 전역.
+ *  somfy_app.c 의 _read_bat_mv 가 읽기 직전/직후에 기록한다. */
+volatile int64_t g_adc_enter_us = 0;   /* ADC 읽기 진입 시각 */
+volatile int64_t g_adc_exit_us  = 0;   /* ADC 읽기 종료 시각 */
+volatile uint32_t g_bbo_fail_cnt = 0;  /* 비트뱅 전송 실패 누적 */
+volatile uint32_t g_bbo_tx_cnt   = 0;  /* 비트뱅 전송 시도 누적 */
+volatile bool     g_oled_present_mon = false;  /* 모니터용 검출상태 미러 */
+
 static bool _bbo_write(uint8_t addr7, const uint8_t *buf, size_t len) {
     _bbo(BBO_SDA, 1); _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
     _bbo(BBO_SDA, 0); esp_rom_delay_us(BBO_HALF_US);         /* START */
@@ -162,6 +170,20 @@ static bool _bbo_write(uint8_t addr7, const uint8_t *buf, size_t len) {
     _bbo(BBO_SDA, 0); esp_rom_delay_us(BBO_HALF_US);         /* STOP */
     _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
     _bbo(BBO_SDA, 1); esp_rom_delay_us(BBO_HALF_US);
+    g_bbo_tx_cnt++;
+    if (!ok) {
+        /* ★실패 순간을 ADC 읽기와 대조 — "ADC 구간 중/직후에 깨지는가"를 실측한다.
+         *  adc_in_window: 이 전송이 ADC 읽기 구간과 겹쳤는지(진입<시작 && 종료없음/이후) */
+        int64_t now = esp_timer_get_time();
+        int64_t ent = g_adc_enter_us, ext = g_adc_exit_us;
+        g_bbo_fail_cnt++;
+        if ((g_bbo_fail_cnt % 20) == 1)   /* 20회마다 1줄(로그 폭주 방지) */
+            ESP_LOGE(TAG, "[BBFAIL] #%u len=%u  ADC진입후 %lldms / ADC종료후 %lldms %s",
+                     (unsigned)g_bbo_fail_cnt, (unsigned)len,
+                     ent ? (now - ent) / 1000 : -1,
+                     ext ? (now - ext) / 1000 : -1,
+                     (ent > ext) ? "★ADC 진행중!" : "");
+    }
     return ok;
 }
 static bool _bbo_probe(uint8_t addr7) { return _bbo_write(addr7, NULL, 0); }
@@ -961,7 +983,7 @@ static bool _oled_try_detect(void) {
      *  깨어나 첫 프레임이 깨지고(부팅 점깨짐), 그 연속 실패가 flush 정지를 유발해 화면이
      *  얼어붙었다(실측). init 후 잠깐 정착시켜 첫 flush 를 안정화한다. */
     vTaskDelay(pdMS_TO_TICKS(200));
-    s_oled_present = true;
+    s_oled_present = true; g_oled_present_mon = true;
     ESP_LOGI(TAG, "OLED 검출 (addr 0x%02X, 패널 %d×%d) — 표시 활성화", addr, OLED_PANEL_W, OLED_PANEL_H);
     return true;
 }
@@ -1038,7 +1060,7 @@ static void _oled_write_page_locked(SSD1306_t *dev, int page, int seg,
      *  4초 이후의 연속 실패만 진짜 탈락으로 보고 정지시킨다. */
     if (++s_fail_run >= OLED_PAGES && _ms_now() > 4000) {
         s_fail_run = 0;
-        s_oled_present = false;
+        s_oled_present = false; g_oled_present_mon = false;
         ESP_LOGW(TAG, "[OLED] 연속 write 실패 → flush 정지 (5초 주기 재프로브로 자동 복구)");
     }
 }
@@ -3018,7 +3040,7 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
         ESP_LOGI(TAG, "OLED init OK (캔버스 %d×%d, 회전=%d)",
                  OLED_WIDTH, OLED_HEIGHT, OLED_ROTATE_180);
     } else {
-        s_oled_present = false;
+        s_oled_present = false; g_oled_present_mon = false;
         s_oled_last_probe_ms = _ms_now();
         ESP_LOGW(TAG, "OLED(0x3C/0x3D) 미검출 — 표시 비활성(5s마다 자동 재검출)");
         _oled_i2c_scan();     /* 진단: 버스에 응답하는 주소 목록 */
