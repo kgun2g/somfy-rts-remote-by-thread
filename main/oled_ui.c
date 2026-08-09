@@ -93,40 +93,73 @@ static void _main_freq_str(const oled_ui_ctx_t *ctx, char *buf, size_t n) {
 /* ★2026-07-23 속도: half-period 5us(=100kHz)면 128×64 한 프레임(1KB)에 약 93ms 걸려
  *  화면이 눈에 띄게 느려진다(실사용 확인). SSD1306 규격 상한은 400kHz 이므로 2us(≈200kHz)
  *  로 올려 프레임을 ~45ms 로 단축. 불안정하면 3~5 로 되돌릴 것. */
+/* ★2026-07-23 속도: 라이브러리 기본값과 같은 400kHz 목표(half-period 1.25us→1us).
+ *  이전에 1us 로 올렸을 때 화면에 랜덤 점이 찍힌 것은 속도 자체가 아니라
+ *  gpio_set_direction() HAL 호출의 큰/불규칙한 지연 때문이었다. 위 레지스터 직접
+ *  접근으로 파형이 깨끗해져 이 속도를 감당할 수 있다.
+ *  ※그래도 점/깨짐이 보이면 2~3 으로 올릴 것(값이 클수록 느리고 안정). */
 #define BBO_HALF_US 1
 
+/* ★2026-07-23 GPIO 레지스터 직접 접근으로 전환.
+ *  이전엔 비트마다 gpio_set_direction() (HAL 함수)을 불렀는데, 호출 비용이 커서
+ *  (a) 실제 속도가 공칭의 몇 분의 1이고 (b) 타이밍이 불규칙해 400kHz 시도 시
+ *  데이터가 깨졌다(화면에 랜덤 점). 레지스터 쓰기는 수십 ns라 파형이 깨끗하다.
+ *
+ *  핀을 **INPUT_OUTPUT_OD**(오픈드레인+입력버퍼 ON)로 한 번만 설정해두면
+ *  출력 레지스터만 토글해도 I2C 오픈드레인 동작이 그대로 된다:
+ *     1 쓰기 = 라인 릴리즈(외부 풀업이 HIGH) / 0 쓰기 = LOW 구동.
+ *  방향 레지스터를 건드릴 필요가 없어 더 빠르고 안전하다.
+ *  ※OUTPUT_OD(입력버퍼 OFF)로 하면 gpio 읽기가 늘 0이 된다 — 반드시 INPUT_OUTPUT_OD. */
+#define BBO_SDA_MASK (1UL << BOARD_PIN_OLED_SDA)
+#define BBO_SCL_MASK (1UL << BOARD_PIN_OLED_SCL)
+
+static inline void _bbo_hi(uint32_t mask) { REG_WRITE(GPIO_OUT_W1TS_REG, mask); }
+static inline void _bbo_lo(uint32_t mask) { REG_WRITE(GPIO_OUT_W1TC_REG, mask); }
+static inline int  _bbo_rd(uint32_t mask) { return (REG_READ(GPIO_IN_REG) & mask) ? 1 : 0; }
+/* 구 인터페이스 유지(호출부 변경 최소화) */
 static inline void _bbo(gpio_num_t p, int v) {
-    if (v) gpio_set_direction(p, GPIO_MODE_INPUT);          /* 릴리즈(풀업이 HIGH) */
-    else { gpio_set_level(p, 0); gpio_set_direction(p, GPIO_MODE_OUTPUT); }
+    uint32_t m = (1UL << (uint32_t)p);
+    if (v) _bbo_hi(m); else _bbo_lo(m);
 }
-/* 핀을 GPIO 로 확보. HW I2C 를 쓰지 않으므로 버스 생성도 하지 않는다. */
+/* 핀을 오픈드레인 GPIO 로 확보. HW I2C 를 쓰지 않으므로 버스 생성도 하지 않는다. */
 static void _bbo_init_pins(void) {
     gpio_reset_pin(BBO_SDA); gpio_reset_pin(BBO_SCL);
-    gpio_set_level(BBO_SDA, 0); gpio_set_level(BBO_SCL, 0);  /* 출력래치 0(방향으로 제어) */
-    _bbo(BBO_SDA, 1); _bbo(BBO_SCL, 1);
+    gpio_config_t io = {
+        .pin_bit_mask = BBO_SDA_MASK | BBO_SCL_MASK,
+        .mode         = GPIO_MODE_INPUT_OUTPUT_OD,   /* 오픈드레인 + 입력버퍼 ON */
+        .pull_up_en   = GPIO_PULLUP_ENABLE,          /* 외부 4.7k 와 병렬(보조) */
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io);
+    _bbo_hi(BBO_SDA_MASK | BBO_SCL_MASK);            /* idle = 둘 다 릴리즈 */
     esp_rom_delay_us(10);
 }
 /* 1바이트 송신 후 ACK 수신. true=ACK */
 static bool _bbo_byte(uint8_t b) {
+    /* ★2026-07-23 속도수정: 데이터 setup/hold 에 3us 를 하드코딩해 두었던 탓에
+     *  비트당 7us(≈143kHz)가 걸려 BBO_HALF_US 를 낮춘 효과가 상쇄되고 있었다.
+     *  레지스터 직접 쓰기는 수십 ns 라 SSD1306 의 setup(~100ns) 요구를 이미 만족한다.
+     *  → 모든 구간을 BBO_HALF_US 로 통일해 비트당 2×HALF 로 만든다(1us → ≈400kHz). */
     for (int i = 0; i < 8; i++) {
-        _bbo(BBO_SDA, (b & 0x80) ? 1 : 0); b <<= 1; esp_rom_delay_us(3);
+        _bbo(BBO_SDA, (b & 0x80) ? 1 : 0); b <<= 1; esp_rom_delay_us(BBO_HALF_US);
         _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
-        _bbo(BBO_SCL, 0); esp_rom_delay_us(3);
+        _bbo(BBO_SCL, 0);
     }
-    _bbo(BBO_SDA, 1); esp_rom_delay_us(3);                   /* SDA 릴리즈 → 슬레이브 ACK */
+    _bbo(BBO_SDA, 1); esp_rom_delay_us(BBO_HALF_US);         /* SDA 릴리즈 → 슬레이브 ACK */
     _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
-    int ack = gpio_get_level(BBO_SDA);
-    _bbo(BBO_SCL, 0); esp_rom_delay_us(3);
+    int ack = _bbo_rd(BBO_SDA_MASK);
+    _bbo(BBO_SCL, 0);
     return ack == 0;
 }
 /* addr7 로 buf[len] 쓰기. START→addr(W)→데이터…→STOP. true=전 바이트 ACK */
 static bool _bbo_write(uint8_t addr7, const uint8_t *buf, size_t len) {
-    _bbo(BBO_SDA, 1); _bbo(BBO_SCL, 1); esp_rom_delay_us(3);
+    _bbo(BBO_SDA, 1); _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
     _bbo(BBO_SDA, 0); esp_rom_delay_us(BBO_HALF_US);         /* START */
-    _bbo(BBO_SCL, 0); esp_rom_delay_us(3);
+    _bbo(BBO_SCL, 0); esp_rom_delay_us(BBO_HALF_US);
     bool ok = _bbo_byte((uint8_t)(addr7 << 1));              /* write */
     for (size_t i = 0; ok && i < len; i++) ok = _bbo_byte(buf[i]);
-    _bbo(BBO_SDA, 0); esp_rom_delay_us(3);                   /* STOP */
+    _bbo(BBO_SDA, 0); esp_rom_delay_us(BBO_HALF_US);         /* STOP */
     _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
     _bbo(BBO_SDA, 1); esp_rom_delay_us(BBO_HALF_US);
     return ok;
@@ -2886,8 +2919,10 @@ static void _oled_panel_init(void)
                            0x00, 0x10,                 /* col start          */
                            0x8D, 0x14,                 /* charge pump on     */
                            0x2E,                       /* scroll off         */
-                           0xA6,                       /* normal (not inv)   */
-                           0xAF };                     /* display ON         */
+                           0xA6 };                     /* normal (not inv)   */
+        /* ★display ON(0xAF)은 여기서 보내지 않는다 — GDDRAM 을 지우기 전에 켜면
+         *  전원인가 직후의 **초기화 안 된 랜덤 RAM**이 그대로 보인다(실기에서
+         *  "화면에 점이 무수히" 증상으로 확인). 아래 clear 이후에 켠다. */
         _oled_send_cmds(seq1, sizeof(seq1));
         _oled_send_cmds(seq2, sizeof(seq2));
         _oled_send_cmds(seq3, sizeof(seq3));
@@ -2910,6 +2945,9 @@ static void _oled_panel_init(void)
             _oled_write_page_locked(&s_dev, p, 0, zero, OLED_PHYS_W > 128 ? 128 : OLED_PHYS_W);
         uint8_t ct[2] = { 0x81, 0xCF };
         _oled_send_cmds(ct, 2);
+        /* ★RAM 을 다 지운 **뒤에** 디스플레이 ON — 랜덤 픽셀 표시 방지(위 주석 참조) */
+        uint8_t on[1] = { 0xAF };
+        _oled_send_cmds(on, 1);
     }
 #else
     ssd1306_clear_screen(&s_dev, false);
