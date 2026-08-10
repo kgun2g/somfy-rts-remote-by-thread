@@ -458,6 +458,67 @@ verifier      = Spake2pVerifier.Generate(iter=1000, salt(eFuse), passcode)  // P
 > 기존 경로(EXAMPLE 기본 `3840`/`20202021`). discriminator 12bit(4096)·short 4bit(16) 공간이라
 > 수십 대 규모면 충돌 가능(생일 문제) — 그땐 `factory_nvs_gen.py` 로 fctry 고유성 부여.
 
+## OLED 구동 방식 & 화면 정책 (2026-07 갱신)
+
+### 비트뱅 I2C (`BOARD_OLED_BITBANG`, xiao-c6 = 1)
+
+xiao-c6(h4)에서 **ESP32 하드웨어 I2C0 페리페럴이 "bus busy" 로 고착**되는 현상이 재현됐다.
+라인은 idle(1/1)인데 `i2c.master: clear bus failed` / `reset hardware failed` 가 뜨고 버스를
+지웠다 다시 만들어도 풀리지 않는다. 같은 순간 **순수 GPIO 비트뱅은 정상 ACK** 를 받는다.
+
+→ OLED 전송을 비트뱅으로 옮겨 페리페럴을 통째로 우회한다.
+
+- `_bbo_write()` : GPIO **레지스터 직접 접근**(`GPIO_OUT_W1TS/W1TC`, `GPIO_IN`). HAL 호출
+  (`gpio_set_direction`)은 비용이 크고 불규칙해 400 kHz 에서 파형이 깨진다(화면에 랜덤 점).
+- 핀은 `GPIO_MODE_INPUT_OUTPUT_OD` 로 **한 번만** 설정하고 이후 출력 레지스터만 토글한다.
+  `OUTPUT_OD` 로 하면 입력 버퍼가 꺼져 읽기가 항상 0 이 되므로 반드시 `INPUT_OUTPUT_OD`.
+- 속도 `BBO_HALF_US` (1 ≈ 400 kHz). 점/깨짐이 보이면 2~3 으로 올릴 것.
+- HW I2C 버스를 **아예 만들지 않으므로**, PCF8574 를 OLED 와 공유 HW I2C 로 쓰는 보드
+  (`BOARD_I2C_SHARED` 경로, 예: esp32-h2)는 이 옵션과 함께 쓰지 말 것.
+- **이식성 주의**: 비트뱅 계측 전역(`g_bbo_tx_cnt` 등)은 `#if BOARD_OLED_BITBANG` **밖**에
+  선언해야 한다. 가드 안에 두면 `BOARD_OLED_BITBANG=0` 보드(H2)에서 링크 에러가 난다.
+
+### dirty-page 전송 감축
+
+화면 전체를 매번 재전송하면 초당 약 450 건의 I2C 트랜잭션이 발생한다(전송 1건 = 고착 기회).
+마지막으로 성공 전송한 페이지를 `s_shadow` 에 보관하고 **내용이 바뀐 페이지만** 보낸다.
+전송 실패 시 shadow 를 갱신하지 않아 다음 주기에 자동 재시도되고, 검출 실패/재검출 시에는
+무효화해 전량 재전송한다. 실측: 전송 **75 % 감축**, 페이지 **86 % 건너뜀**.
+
+### 화면 정책 — 화면보호기 없음
+
+- 화면보호기(중간 애니메이션)는 **코드째 삭제**됐다. 유휴 시간이 지나면 곧바로 패널 OFF.
+- 꺼지는 시간: `CFG_SCREEN_OFF_SEC` (`main/somfy_config.h`, 기본 10초). 이 값 하나로 제어하며
+  보드별로 바꾸려면 `boards/<board>.h` 에서 먼저 정의하면 된다.
+- 복귀: **버튼 또는 진동**. 스택이 자동 진입하는 상태(PAIRING/THREAD_PROV/CHARGING)는
+  화면 유지 조건에서 제외했다 — 포함하면 유휴 타이머가 계속 리셋돼 화면이 영영 안 꺼진다.
+
+### 채널변경 잠금 (`CFG_CH_LOCK_MS`, 기본 700 ms)
+
+상/하 등을 **동시에** 누를 때 좌/우가 스쳐 채널이 바뀌는 것을 막는다. 아래 중 하나라도
+해당하면 SELECT·좌·우를 무시한다.
+
+1. RF 발생 버튼(상·하·정지(로터리)·PROG)이 눌려 있는 동안
+2. 동작 애니메이션이 재생되는 동안 (`OLED_STATE_ACTION`)
+3. 마지막 RF 버튼 눌림 후 `CFG_CH_LOCK_MS` 이내 (동시 누름의 "텀" 대응)
+
+### 진단 로그
+
+- `[OLEDMON]` (60초 주기) — 가동시간 · 전송/실패 누적 · 페이지 보냄/건너뜀 · `present` · free heap
+- `[BBFAIL]` — 비트뱅 전송 실패(20회마다 1줄)
+- ★시리얼 로그는 **CP949** 인코딩. UTF-8 로 grep 하면 한글 에러가 0건으로 오독된다.
+
+### 알려진 미해결 / 임시 상태
+
+- **`TEMP_NO_CHARGE = 1`(충전률 측정 비활성)** — `_read_bat_mv()` 의 `adc_oneshot_read()` 가
+  IDF 내부에서 `portENTER_CRITICAL` 로 **인터럽트를 끈 채** 8회 연속 실행되어 비트뱅 전송을
+  깨뜨린다(이분 탐색으로 확정). 재활성하려면 `_bbo_write` 뮤텍스 보호 + ADC 8→1~2회 축소 +
+  측정주기 5→30초를 먼저 적용할 것.
+- **진동센서 오검출** — 핀이 고정 HIGH 인데 ISR 이 계속 발생해 화면이 저절로 켜지는 사례.
+  `[VIBE-stat] 진동=1 HIGH=300/300` 로 확인. HW 로는 VIBE 핀·VS1 배선 점검 필요.
+- **ESP32-H2 메모리** — 블라인드 3개면 free heap 이 5 KB 미만까지 떨어진다(C6 는 171 KB).
+  H2 는 `BLIND_MAX_COUNT` 를 2 이하로 둘 것. BLE 커미셔닝은 사실상 불가.
+
 ## 안전 / 진단
 
 - **Task WDT**: 메인 루프 + 버튼 태스크가 5 s 이상 멈추면 자동 panic→리부트.

@@ -32,6 +32,12 @@ static SemaphoreHandle_t s_i2c_mutex = NULL;
  * 로그 스팸(50ms마다)을 막는다. 미검출이면 5초마다 자동 재검출(hot-plug 지원). */
 static bool     s_oled_present = false;
 static uint32_t s_oled_last_probe_ms = 0;
+/* ★2026-07-24 모니터용 검출상태 미러 — **비트뱅 가드 밖**에 두어야 한다.
+ *  (BOARD_OLED_BITBANG=0 인 보드(H2 등)에서 선언만 사라져 빌드가 깨졌던 이력) */
+volatile bool g_oled_present_mon = false;
+/* 계측 카운터도 **가드 밖**에 둔다 — somfy_app 의 [OLEDMON] 이 보드 무관하게 참조하므로
+ *  BOARD_OLED_BITBANG=0 인 보드(H2)에서 링크 에러가 났던 이력. */
+volatile uint32_t g_bbo_tx_cnt = 0, g_bbo_fail_cnt = 0;
 /* 2026-07-23 모듈 고착 자동복구: 연속 검출실패 횟수(성공 시 0 으로 리셋) */
 static uint32_t s_oled_recover_tries = 0;
 
@@ -157,9 +163,6 @@ static bool _bbo_byte(uint8_t b) {
  *  somfy_app.c 의 _read_bat_mv 가 읽기 직전/직후에 기록한다. */
 volatile int64_t g_adc_enter_us = 0;   /* ADC 읽기 진입 시각 */
 volatile int64_t g_adc_exit_us  = 0;   /* ADC 읽기 종료 시각 */
-volatile uint32_t g_bbo_fail_cnt = 0;  /* 비트뱅 전송 실패 누적 */
-volatile uint32_t g_bbo_tx_cnt   = 0;  /* 비트뱅 전송 시도 누적 */
-volatile bool     g_oled_present_mon = false;  /* 모니터용 검출상태 미러 */
 
 static bool _bbo_write(uint8_t addr7, const uint8_t *buf, size_t len) {
     _bbo(BBO_SDA, 1); _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
