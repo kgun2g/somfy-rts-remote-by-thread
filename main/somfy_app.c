@@ -2546,10 +2546,28 @@ void somfy_app_run(void *arg) {
 
     /* 설정 모드 / 페어링 / Thread reset 화면 / charging anim 중에는
      * 절전/화면보호기 진입 안 함 */
-    bool inhibit = _in_setup_mode() ||
-                   s_ui.state == OLED_STATE_CHARGING ||
-                   s_ui.state == OLED_STATE_PAIRING ||
-                   s_ui.state == OLED_STATE_THREAD_PROV;
+    /* ★2026-07-24 수정 — "화면이 저절로 켜진 뒤 다시 안 꺼진다" 증상 대응.
+     *  기존엔 CHARGING/PAIRING/THREAD_PROV 상태에서도 inhibit 이 걸렸는데, 이 상태들은
+     *  **Matter/Thread 스택이 자동으로** 진입할 수 있다(재광고·재부착 등). inhibit 분기는
+     *  매 tick _mark_activity() 로 유휴 타이머를 리셋하므로, 한 번 그 상태가 되면
+     *  화면이 켜진 채 **영영 안 꺼진다**. 버튼을 누르면 상태가 풀려 10초 뒤 정상적으로
+     *  꺼지던 것도 이 때문.
+     *  → 사용자가 **직접** 들어간 설정 메뉴(_in_setup_mode)만 화면을 유지한다.
+     *    어떤 상태 때문에 걸릴 뻔했는지는 아래 로그로 남겨 추적 가능하게 둔다. */
+    bool inhibit = _in_setup_mode();
+    {
+      static oled_state_t last_auto = OLED_STATE_NORMAL;
+      oled_state_t st = s_ui.state;
+      if (!inhibit && (st == OLED_STATE_CHARGING || st == OLED_STATE_PAIRING ||
+                       st == OLED_STATE_THREAD_PROV)) {
+        if (st != last_auto) {
+          ESP_LOGI(TAG, "[SCROFF] 자동상태(%d)에서도 화면 OFF 타이머 유지", (int)st);
+          last_auto = st;
+        }
+      } else if (st != last_auto) {
+        last_auto = OLED_STATE_NORMAL;
+      }
+    }
     /* ── 2026-07-23 유휴 정책(화면보호기 삭제 후) ─────────────────────
      *   1단계 활성 (idle < off)  : 정상 화면
      *   2단계 OFF  (idle >= off) : 패널 OFF (+배터리는 light sleep)
