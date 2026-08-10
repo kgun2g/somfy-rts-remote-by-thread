@@ -666,6 +666,27 @@ extern bool g_rf_ready;
  *  (PRESS set, RELEASE clear). _hold_repeat_task 가 이 조합으로 combo(UP+DOWN 등)를 판정해
  *  연속 재송신한다. 이벤트 기반이라 btn_is_pressed 캐시 글리치보다 강하다. */
 static volatile bool s_held_up = false, s_held_down = false, s_held_rot = false;
+static volatile bool s_held_prog = false;          /* PROG 홀드(RF 발생 버튼) */
+static volatile int64_t s_rf_btn_until_us = 0;     /* RF 발생 버튼의 보호구간 종료시각 */
+
+/* ★2026-07-24 사용자 요청 — 조합/RF 중 채널변경 버튼(SELECT·좌·우) 무시.
+ *  왜: 상/하, 상/정지, 하/정지 를 **동시에** 누를 때 손가락이 스치며 좌/우 가 같이
+ *  눌려 채널이 바뀌어 버렸다. 또 상/하/정지/PROG 로 RF 를 쏘는 중에 채널이 바뀌면
+ *  엉뚱한 블라인드로 명령이 나간다.
+ *  동시 누름은 완전히 같은 순간이 아니라 **약간의 텀**이 있으므로, RF 발생 버튼이
+ *  눌린 뒤 CFG_CH_LOCK_MS 동안은 채널 변경을 막는다(떼어도 여운 유지).
+ *  ※정지(MY)=로터리 버튼(ROT), 채널변경=SELECT/좌/우 임을 사용자 확인. */
+#ifndef CFG_CH_LOCK_MS
+#define CFG_CH_LOCK_MS  700    /* RF 버튼 눌림 후 채널변경 차단 유지시간(ms) */
+#endif
+static inline void _ch_lock_touch(void) {          /* RF 발생 버튼 눌릴 때 갱신 */
+  s_rf_btn_until_us = esp_timer_get_time() + (int64_t)CFG_CH_LOCK_MS * 1000;
+}
+/* 지금 채널 변경을 막아야 하는가 */
+static inline bool _ch_locked(void) {
+  if (s_held_up || s_held_down || s_held_rot || s_held_prog) return true;  /* 홀드 중 */
+  return esp_timer_get_time() < s_rf_btn_until_us;                          /* 여운 */
+}
 
 /* ═══ 버튼 지속 누름 → 신호 연속 발생 (과거 _hold_repeat_task 복원) ══════════════════
  *  UP/DOWN/STOP 를 누르고 있는 동안 CFG_BTN_HOLD_REPEAT_MS(500ms)마다 재송신한다.
@@ -969,11 +990,13 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
    *   날짜 편집   : 편집 자리 이동 (년·월·일·시·분)
    *   주파수 편집 : 굵은 자리 ±0.1 (UP/DOWN 미세 ±0.01 보조) */
   case BTN_EVT_LEFT_PRESS:
+    if (_ch_locked()) { ESP_LOGI(TAG, "[CHLOCK] RF 버튼 조작 중 — 채널변경 무시(LEFT)"); break; }
     if (s_setup_screen == SETUP_TIME_EDIT)      _time_edit_field_move(-1);
     else if (s_setup_screen == SETUP_FREQ_EDIT) _freq_cursor_move(-1);
     else if (!_in_setup_mode())                 _blind_cycle(-1);
     break;
   case BTN_EVT_RIGHT_PRESS:
+    if (_ch_locked()) { ESP_LOGI(TAG, "[CHLOCK] RF 버튼 조작 중 — 채널변경 무시(RIGHT)"); break; }
     if (s_setup_screen == SETUP_TIME_EDIT)      _time_edit_field_move(+1);
     else if (s_setup_screen == SETUP_FREQ_EDIT) _freq_cursor_move(+1);
     else if (!_in_setup_mode())                 _blind_cycle(+1);
@@ -985,6 +1008,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
 
   /* ── UP 버튼 ─────────────────────────────── */
   case BTN_EVT_UP_PRESS:
+    _ch_lock_touch();
     if (_in_setup_mode()) {
       /* 메뉴: 커서 위로 / 주파수 편집: freq + / 그 외: 무시 */
       if (s_setup_screen == SETUP_MENU_SCR) {
@@ -1032,6 +1056,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
 
   /* ── DOWN 버튼 ───────────────────────────── */
   case BTN_EVT_DOWN_PRESS:
+    _ch_lock_touch();
     if (_in_setup_mode()) {
       if (s_setup_screen == SETUP_MENU_SCR) {
         _setup_menu_cursor_move(+1);
@@ -1079,6 +1104,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
    *   v3.6: 버튼 모션 (OLED_STATE_ACTION) 진행 중일 때는 모션 중단 후 메인
    *         화면 표시 (블라인드 순환은 안 함) */
   case BTN_EVT_SELECT_PRESS:
+    if (_ch_locked()) { ESP_LOGI(TAG, "[CHLOCK] RF 버튼 조작 중 — 채널변경 무시(SELECT)"); break; }
     if (_in_setup_mode()) {
       ESP_LOGI(TAG, "[SETUP] SELECT 무시");
       break;
@@ -1132,6 +1158,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
    *   v3.1+: Matter 페어링 / Thread 리셋 기능 제거 (설정 메뉴로 이전).
    *          PROG 는 단순히 Somfy PROG 커맨드만 송신. */
   case BTN_EVT_PROG_PRESS:
+    _ch_lock_touch(); s_held_prog = true;
     if (_in_setup_mode()) {
       ESP_LOGI(TAG, "[SETUP] PROG 무시");
       break;
@@ -1153,6 +1180,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
     break;
 
   case BTN_EVT_PROG_RELEASE:
+    s_held_prog = false;
     somfy_rts_abort = true;                     /* 뗌 → PROG 송신 즉시 종료 */
     oled_ui_notify_action_end(&s_ui);
     if (evt->hold_ms > CFG_BTN_MIN_HOLD_MS) {
@@ -1213,6 +1241,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
    *   메인 화면: 정품 리모컨처럼 누르고 있는 동안 STOP 송신.
    *   설정 모드: 무시 (메뉴/취소는 release=ROT_CLICK 가 처리). */
   case BTN_EVT_ROT_PRESS:
+    _ch_lock_touch();
     if (_in_setup_mode()) break;
     {
       /* ★버튼 지속 누름 → 연속 송신(위 UP/DOWN 과 동일 구조). */
