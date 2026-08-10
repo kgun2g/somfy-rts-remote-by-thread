@@ -570,7 +570,7 @@ static void _fb_draw_char_8x8(int x, int y, char c) {
     }
 }
 
-/* 2× 스케일 5×7 폰트 (10×14) — _render_normal/_render_screensaver 양쪽 사용.
+/* 2× 스케일 5×7 폰트 (10×14) — _render_normal 에서 사용.
  * 정의는 파일 하단에 있음, 전방 선언만 추가. */
 static void _fb_draw_char_2x(int x, int y, char c);
 static void _fb_draw_string_2x(int x, int y, const char *s);
@@ -677,15 +677,6 @@ static void _fb_apply_fade(uint8_t level) {
     }
 }
 
-/* 화면 보호기 fade LFO — 경과 ms → 페이드 레벨 0..16.
- *  주기 10s: 2.5s 점점 나타남 → 3s 유지 → 2.5s 점점 사라짐 → 2s 꺼짐. */
-static uint8_t _screensaver_fade_level(uint32_t elapsed_ms) {
-    uint32_t t = elapsed_ms % 10000;
-    if (t < 2500)  return (uint8_t)(t * 16 / 2500);              /* fade in  0→16 */
-    if (t < 5500)  return 16;                                    /* hold full */
-    if (t < 8000)  return (uint8_t)(16 - (t - 5500) * 16 / 2500);/* fade out 16→0 */
-    return 0;                                                    /* off (8~10s) */
-}
 
 /* I2C 버스 스캔 — 응답하는 주소를 로그로 덤프(OLED 미검출 진단용). */
 static void _oled_i2c_scan(void) {
@@ -2209,133 +2200,6 @@ static void _fb_draw_string_2x(int x, int y, const char *s)
     }
 }
 
-/* ─── 화면 보호기 ──────────────────────────────────────
- * 단순화: 큰 시계(HH:MM, 2배 스케일 5×7) + 작은 날짜(MM-DD).
- * 번인 방지를 위해 30초 간격으로 ±2px 슬로우 시프트.
- * ─────────────────────────────────────────────────── */
-static void _render_screensaver(oled_ui_ctx_t *ctx)
-{
-    _fb_clear();
-
-#if OLED_RENDER_128X64
-    {   /* ══ 128×64 네이티브 화면보호기 (큰 7-seg 시계 + 고딕 날짜) ══ */
-        uint32_t ss = _ms_now() - ctx->last_activity_ms - OLED_SCREENSAVER_IDLE_MS;
-        int sx = (int)((ss / 30000) % 5) - 2;   /* 번인 방지 ±2 */
-        int sy = (int)((ss / 60000) % 3) - 1;   /* ±1 */
-#if !BOARD_DISABLE_TIME
-        time_t t0 = time(NULL); struct tm lt; localtime_r(&t0, &lt);
-
-        int ccx = 31 + sx, ccy = 12 + sy;       /* 시계 (폭 66) 중앙 */
-        _draw_7seg(ccx,      ccy, lt.tm_hour / 10);
-        _draw_7seg(ccx + 15, ccy, lt.tm_hour % 10);
-        if ((lt.tm_sec & 1) == 0) _draw_colon(ccx + 31, ccy);
-        _draw_7seg(ccx + 38, ccy, lt.tm_min / 10);
-        _draw_7seg(ccx + 53, ccy, lt.tm_min % 10);
-
-        char d[20];
-        snprintf(d, sizeof(d), "%04d-%02d-%02d",
-                 (lt.tm_year + 1900) % 10000, (lt.tm_mon + 1) % 100, lt.tm_mday % 100);
-        _pstr8((OLED_PANEL_W - _pstr8_w(d)) / 2 + sx, 40 + sy, d, true);
-
-        static const char *kWd3s[7] = {"SUN","MON","TUE","WED","THU","FRI","SAT"};
-        const char *wd = (lt.tm_wday >= 0 && lt.tm_wday < 7) ? kWd3s[lt.tm_wday] : "---";
-        _pstr8((OLED_PANEL_W - _pstr8_w(wd)) / 2 + sx, 51 + sy, wd, true);  /* 요일 3자 */
-#else
-        /* ── 시간/날짜 비활성: "SOMFY / RTS" 텍스트 바운스(번인 방지 시프트) ── */
-        _pstr8((OLED_PANEL_W - _pstr8_w("SOMFY")) / 2 + sx, 22 + sy, "SOMFY", true);
-        _pstr8((OLED_PANEL_W - _pstr8_w("RTS"))   / 2 + sx, 36 + sy, "RTS",   true);
-#endif
-
-        _fb_apply_fade(_screensaver_fade_level(ss));
-        _fb_flush();
-        return;
-    }
-#elif OLED_RENDER_64X128
-    {   /* ══ 64×128 세로 화면보호기 (연도/큰 적층 시계/날짜) ══ */
-        uint32_t ss = _ms_now() - ctx->last_activity_ms - OLED_SCREENSAVER_IDLE_MS;
-        int sx = (int)((ss / 30000) % 5) - 2;   /* 번인 방지 ±2 */
-        int sy = (int)((ss / 60000) % 3) - 1;   /* ±1 */
-        time_t t0 = time(NULL); struct tm lt; localtime_r(&t0, &lt);
-
-        /* 연도 (상단) */
-        char yr[12]; snprintf(yr, sizeof(yr), "%04d", (lt.tm_year + 1900) % 10000);
-        _pstr8((OLED_PANEL_W - _pstr8_w(yr)) / 2 + sx, 14 + sy, yr, true);
-
-        /* 시계 HH/MM 적층 (7-seg 2자리 가운데) */
-        const int hx = (OLED_PANEL_W - 28) / 2 + sx;
-        _draw_7seg(hx,      30 + sy, lt.tm_hour / 10);
-        _draw_7seg(hx + 15, 30 + sy, lt.tm_hour % 10);
-        _draw_7seg(hx,      58 + sy, lt.tm_min / 10);
-        _draw_7seg(hx + 15, 58 + sy, lt.tm_min % 10);
-        if ((lt.tm_sec & 1) == 0) {
-            _pfill(OLED_PANEL_W / 2 - 4 + sx, 54 + sy, 3, 3, true);
-            _pfill(OLED_PANEL_W / 2 + 1 + sx, 54 + sy, 3, 3, true);
-        }
-
-        /* MM/DD + 요일 (하단) */
-        char d[20];
-        snprintf(d, sizeof(d), "%02d/%02d", (lt.tm_mon + 1) % 100, lt.tm_mday % 100);
-        _pstr8((OLED_PANEL_W - _pstr8_w(d)) / 2 + sx, 90 + sy, d, true);
-        static const char *kWd3s[7] = {"SUN","MON","TUE","WED","THU","FRI","SAT"};
-        const char *wd = (lt.tm_wday >= 0 && lt.tm_wday < 7) ? kWd3s[lt.tm_wday] : "---";
-        _pstr8((OLED_PANEL_W - _pstr8_w(wd)) / 2 + sx, 101 + sy, wd, true);
-
-        _fb_apply_fade(_screensaver_fade_level(ss));
-        _fb_flush();
-        return;
-    }
-#endif
-
-    /* 현재 시각 — UI ctx의 time_str는 main.c의 time_task가 갱신.
-     * 날짜는 localtime()에서 직접 추출. */
-    time_t tnow = time(NULL);
-    struct tm tm;
-    localtime_r(&tnow, &tm);
-
-    /* 번인 방지 시프트: 30초마다 ±2px 미세 이동 */
-    uint32_t ss_elapsed = _ms_now() - ctx->last_activity_ms - OLED_SCREENSAVER_IDLE_MS;
-    int shift_x = ((ss_elapsed / 30000) % 5) - 2;   // -2..+2
-    int shift_y = (((ss_elapsed / 60000) % 3)) - 1; // -1..+1
-
-    /* HH:MM, 2배 스케일 (10×14 char, pitch 12) — 5글자 × 12 = 60px */
-    char hhmm[6];
-    snprintf(hhmm, sizeof(hhmm), "%02d:%02d", tm.tm_hour, tm.tm_min);
-    int hx = (OLED_WIDTH - 60) / 2 + shift_x;   // 6 + shift
-    int hy = 4 + shift_y;
-    _fb_draw_string_2x(hx, hy, hhmm);
-
-    /* 콜론 깜박임 (초당 1회) — anim_frame 기반 */
-    if ((ctx->anim_frame / 10) % 2 == 0) {
-        /* 콜론 위치 지우기 (10×14 영역에서 위치 추정 — "HH:" 다음에 콜론은 3번째 글자) */
-        /* 단순화: 그대로 두고 깜박이지 않음 (단순 화면 보호기 컨셉) */
-    }
-
-    /* 날짜 "MM-DD" 또는 "YYYY-MM-DD" — 5×7 narrow font */
-    char date[32];
-    snprintf(date, sizeof(date), "%04d-%02d-%02d",
-             (tm.tm_year + 1900) % 10000,
-             (tm.tm_mon + 1) % 100,
-             tm.tm_mday % 100);
-    int dlen = (int)strlen(date);
-    int dx = (OLED_WIDTH - dlen * FONT_W) / 2 + shift_x;
-    int dy = 24 + shift_y;
-    _fb_draw_string(dx, dy, date);
-
-    /* 요일 (일~토) 작게 — 4글자 폭이 부족하면 1글자만 (S/M/T/W/T/F/S) */
-    static const char *wd_short[7] = {"SUN","MON","TUE","WED","THU","FRI","SAT"};
-    if (tm.tm_wday >= 0 && tm.tm_wday < 7) {
-        int wlen = 3;
-        int wx = (OLED_WIDTH - wlen * FONT_W) / 2 + shift_x;
-        int wy = 33 + shift_y;
-        _fb_draw_string(wx, wy, wd_short[tm.tm_wday]);
-    }
-
-    /* v3.6: 화면 보호기 정보가 고정되지 않고 서서히 사라졌다 나타나도록
-     * 페이드 애니메이션 적용 (Bayer 디더링, 10s 주기). */
-    _fb_apply_fade(_screensaver_fade_level(ss_elapsed));
-
-    _fb_flush();
-}
 
 /* ═══════════════════════════════════════════════
    주파수 편집 화면
@@ -2910,18 +2774,22 @@ static void _ui_task(void *pvParam)
                              ctx->chg_resume_state : OLED_STATE_NORMAL;
             }
 
-        } else {
-            /* 2분 대기 후 화면 보호기 */
-            if (idle_ms >= OLED_SCREENSAVER_IDLE_MS) {
-                ctx->state = OLED_STATE_SCREENSAVER;
-            }
         }
+        /* ★2026-07-24 화면보호기 제거(사용자 요청) — oled_ui 자체의 유휴 타이머로
+         *  OLED_STATE_SCREENSAVER 로 넘어가던 경로를 삭제했다.
+         *  (somfy_app 쪽 화면보호기 단계는 먼저 지웠는데 이쪽이 남아 있어
+         *   "분명히 제거했는데 화면보호기가 나타난다"는 증상이 계속됐다.)
+         *  화면 OFF 는 somfy_app 의 유휴 정책(CFG_SCREEN_OFF_SEC)이 단독으로 담당한다. */
 
         /* 렌더링 */
         switch (ctx->state) {
             case OLED_STATE_NORMAL:      _render_normal(ctx);      break;
             case OLED_STATE_ACTION:      _render_action(ctx);      break;
-            case OLED_STATE_SCREENSAVER: _render_screensaver(ctx); break;
+            case OLED_STATE_SCREENSAVER:
+                /* ★2026-07-24 화면보호기 **완전 삭제**(사용자 요청).
+                 *  이 상태는 이제 "패널 OFF" 표시용 마커일 뿐이며 아무것도 그리지 않는다.
+                 *  (렌더 함수 _render_screensaver 와 페이드 헬퍼는 코드에서 제거함) */
+                break;
             case OLED_STATE_FREQ_EDIT:   _render_freq_edit(ctx);   break;
             case OLED_STATE_PAIRING:     _render_pairing(ctx);     break;
             case OLED_STATE_THREAD_PROV: _render_thread_prov(ctx); break;

@@ -84,7 +84,7 @@ extern "C" {
 typedef enum {
     OLED_STATE_NORMAL          = 0,  // 일반 동작 화면
     OLED_STATE_ACTION          = 1,  // 버튼 동작 중 애니메이션
-    OLED_STATE_SCREENSAVER     = 2,  // 화면 보호기
+    OLED_STATE_SCREENSAVER     = 2,  // 패널 OFF 상태 마커(화면보호기 기능은 삭제됨)
     OLED_STATE_FREQ_EDIT       = 3,  // 주파수 편집 화면
     OLED_STATE_PAIRING         = 4,  // Matter 페어링 화면 (BLE 광고 + PIN 표시)
     OLED_STATE_THREAD_PROV     = 5,  // Thread 네트워크 부착 대기/안내
@@ -190,9 +190,7 @@ typedef struct {
 } oled_ui_ctx_t;
 
 /* ─── 타임아웃 설정 ──────────────────────────── */
-#define OLED_SCREENSAVER_IDLE_MS    300000   // 5분 후 화면 보호기
                                              // (1분 시 사용자 시계 사용 중 불편)
-#define OLED_SCREENSAVER_ANIM_MS    60000    // 화면 보호기 1분 후 애니메이션
 #define OLED_ACTION_DISPLAY_MS      2500     // 액션 애니메이션 2.5초 후 NORMAL 복귀
 #define OLED_TASK_INTERVAL_MS       50       // 화면 업데이트 주기 (50ms = 20fps)
 #define OLED_CHG_ANIM_DISPLAY_MS    6000     // 충전 애니메이션 1회 재생 길이 6초
