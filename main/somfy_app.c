@@ -685,6 +685,11 @@ static inline void _ch_lock_touch(void) {          /* RF 발생 버튼 눌릴 �
 /* 지금 채널 변경을 막아야 하는가 */
 static inline bool _ch_locked(void) {
   if (s_held_up || s_held_down || s_held_rot || s_held_prog) return true;  /* 홀드 중 */
+  /* ★2026-07-24 사용자 요청 — **애니메이션이 끝날 때까지** 채널변경 금지.
+   *  버튼을 떼도 동작 애니메이션(OLED_STATE_ACTION)이 재생되는 동안에는 아직
+   *  그 명령이 진행 중인 것으로 보이므로, 이 구간에 채널이 바뀌면 사용자가
+   *  "방금 조작한 채널"과 화면이 어긋난다. 애니메이션 종료까지 잠금을 연장한다. */
+  if (s_ui.state == OLED_STATE_ACTION || s_ui.action_active) return true;
   return esp_timer_get_time() < s_rf_btn_until_us;                          /* 여운 */
 }
 

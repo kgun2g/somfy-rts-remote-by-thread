@@ -793,9 +793,40 @@ uint32_t btn_handler_vibe_isr_count(void) { return s_vibe_isr_count; }
 /* HIGH 샘플 누적 — 30폴(=300ms) 윈도우 안에 2개 이상 잡히면 즉시 발사
  *  (윈도우 종료까지 안 기다림 → 최저지연 ~20ms). X160 에서 가만≈0/30,
  *  흔듦≈10~25/30 라 임계값 2 면 첫 흔들림에서 바로 트리거. */
+/* ★2026-07-24 진동센서 고장(stuck) 판별 추가.
+ *  증상: COM7 에서 화면이 저절로 켜지고 안 꺼졌다. 로그
+ *    `[VIBE-stat] 진동=1 ISR누적=70338 (3초+100) HIGH=300/300`
+ *  = 핀이 **300/300 전부 HIGH** 로 붙어 있는데 ISR 은 초당 33회씩 발생.
+ *  기존 판정은 "HIGH 2회면 진동"이라 **핀이 고정 HIGH 면 무조건 통과** →
+ *  매번 _mark_activity()+화면 깨우기가 반복돼 화면이 영영 안 꺼졌다.
+ *  정상 진동은 접점이 떨렸다 붙었다 하므로 HIGH/LOW 가 **섞여야** 한다.
+ *  → 최근 윈도우가 전부 HIGH(또는 전부 LOW)로 고정되면 배선/스위치 고장으로 보고
+ *    진동 이벤트를 무시한다. 섞인 패턴이 돌아오면 자동으로 다시 인정한다. */
+#define VIBE_STUCK_WIN   200          /* 고장 판정 관찰 샘플 수 */
+static volatile bool s_vibe_stuck = false;
+bool btn_handler_vibe_stuck(void) { return s_vibe_stuck; }
+
 static void _vibration_track(bool high_now) {
   static int s_win_cnt = 0;
   static int s_win_high = 0;
+  /* ── 고장(stuck) 감지: 최근 VIBE_STUCK_WIN 샘플이 한쪽으로만 고정인가 ── */
+  {
+    static int st_cnt = 0, st_high = 0;
+    st_cnt++;
+    if (high_now) st_high++;
+    if (st_cnt >= VIBE_STUCK_WIN) {
+      bool stuck = (st_high == st_cnt) || (st_high == 0);   /* 전부 HIGH 또는 전부 LOW */
+      if (stuck != s_vibe_stuck) {
+        s_vibe_stuck = stuck;
+        ESP_LOGW(TAG, "[VIBE] %s (최근 %d샘플 HIGH=%d) — 진동 %s",
+                 stuck ? "센서 고장 판정(핀 고정)" : "정상 복귀",
+                 st_cnt, st_high, stuck ? "무시함" : "다시 인정");
+      }
+      st_cnt = 0; st_high = 0;
+    }
+  }
+  if (s_vibe_stuck) return;           /* 고장 상태 — 진동으로 인정하지 않음 */
+
   s_win_cnt++;
   if (high_now) s_win_high++;
   if (s_win_high >= 2) {              /* 임계값 도달 — 즉시 timestamp 갱신 */
