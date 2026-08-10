@@ -30,9 +30,13 @@
 | OLED 일반 화면 (주파수/블라인드/버튼) | `oled_ui.c` `_render_normal()` | ✅ |
 | OLED 애니메이션 20fps | `oled_ui.c` FreeRTOS 태스크 50ms | ✅ |
 | 버튼 동작 중 5초 애니메이션 | `oled_ui.c` `_render_action()` | ✅ |
-| 화면보호기 5분 후 진입 | `oled_ui.h` `OLED_SCREENSAVER_IDLE_MS=300000` | ✅ |
-| 화면보호기 시계 플로팅 애니메이션 | `oled_ui.c` `_render_screensaver()` | ✅ |
-| 버튼 조작 시 즉시 화면 복귀 | `oled_ui_wake()` | ✅ |
+| ~~화면보호기~~ **삭제됨**(2026-07) — 대신 유휴 후 패널 OFF | `somfy_config.h` `CFG_SCREEN_OFF_SEC`(기본 10초) | ✅ |
+| 버튼·**진동** 조작 시 즉시 화면 복귀 | `oled_ui_wake()` / `_exit_screensaver()` | ✅ |
+| **OLED 비트뱅 I2C**(HW 페리페럴 고착 우회, GPIO 레지스터 직접 접근) | `oled_ui.c` `_bbo_write()` + `BOARD_OLED_BITBANG` | ✅ |
+| **dirty-page 전송 감축**(변경된 페이지만 전송, 실측 86% 절감) | `oled_ui.c` `s_shadow`/`_page_dirty()` | ✅ |
+| **채널변경 잠금**(RF 버튼·애니메이션 중 SELECT·좌·우 무시) | `somfy_app.c` `_ch_locked()` + `CFG_CH_LOCK_MS` | ✅ |
+| **OLED 안정성 계측** `[OLEDMON]`(60초)·`[BBFAIL]` | `oled_ui.c` `g_bbo_tx_cnt`/`g_bbo_fail_cnt` | ✅ |
+| ~~충전률 측정~~ **임시 비활성** — ADC 가 비트뱅 전송을 깸 | `somfy_app.c` `TEMP_NO_CHARGE=1` | ⚠ |
 | **OLED 180° 회전 표시** (보드별) | `oled_ui.c` `_fb_flush()` + `BOARD_OLED_ROTATE_180` | ✅ |
 | **보드별 디스플레이 규격** (해상도/오프셋/회전/72×40 보정) | `boards/<board>.h` `BOARD_OLED_*` (단일 진실원천) | ✅ |
 | **해상도별 렌더러 자동 선택** (보드 무관) | `oled_ui.h` `OLED_RENDER_128X64`/`OLED_RENDER_64X128`/`OLED_RENDER_NATIVE` | ✅ |
