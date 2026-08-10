@@ -333,6 +333,30 @@ static const uint8_t icon_wifi[8] = {
 #define OLED_PAGES   (OLED_PANEL_H / 8)   // GNPE 5 / XIAO 8 pages
 static uint8_t s_fb[OLED_PAGES][OLED_PANEL_W];
 
+/* ★2026-07-24 전송량 감축(dirty-page).
+ *  왜: 계측 결과 화면 전체를 초당 ~11장 다시 보내 **초당 약 450건**의 I2C 트랜잭션이
+ *  발생했다. 실제로 바뀌는 건 시계 등 일부인데 전량을 매번 재전송한 것.
+ *  전송 1건마다 실패(고착) 기회가 생기므로, **직전에 보낸 내용과 같은 페이지는 건너뛴다.**
+ *  기대: 40건/화면 → 5~10건(75~87% 감축).
+ *  s_shadow 는 "마지막으로 성공적으로 보낸" 페이지 내용. 전송 실패 시 갱신하지 않아
+ *  다음 주기에 자동 재시도된다. 검출 실패/재검출 시에는 전체 무효화(강제 전량 전송). */
+static uint8_t s_shadow[OLED_PAGES][OLED_PANEL_W];
+static bool    s_shadow_valid = false;
+volatile uint32_t g_page_skip = 0, g_page_sent = 0;   /* 감축 효과 계측(모니터에서 출력) */
+#define s_skip_cnt g_page_skip
+#define s_sent_cnt g_page_sent
+static inline void _shadow_invalidate(void) { s_shadow_valid = false; }
+/* 이 페이지를 보내야 하는가(내용이 바뀌었나) */
+static inline bool _page_dirty(int p, const uint8_t *src, int width) {
+    if (!s_shadow_valid) return true;
+    if (p < 0 || p >= OLED_PAGES || width > OLED_PANEL_W) return true;  /* 방어 */
+    return memcmp(s_shadow[p], src, (size_t)width) != 0;
+}
+static inline void _shadow_store(int p, const uint8_t *src, int width) {
+    if (p < 0 || p >= OLED_PAGES || width > OLED_PANEL_W) return;       /* 방어 */
+    memcpy(s_shadow[p], src, (size_t)width);
+}
+
 static void _fb_clear(void) {
     memset(s_fb, 0, sizeof(s_fb));
 }
@@ -983,7 +1007,7 @@ static bool _oled_try_detect(void) {
      *  깨어나 첫 프레임이 깨지고(부팅 점깨짐), 그 연속 실패가 flush 정지를 유발해 화면이
      *  얼어붙었다(실측). init 후 잠깐 정착시켜 첫 flush 를 안정화한다. */
     vTaskDelay(pdMS_TO_TICKS(200));
-    s_oled_present = true; g_oled_present_mon = true;
+    s_oled_present = true; g_oled_present_mon = true; _shadow_invalidate();
     ESP_LOGI(TAG, "OLED 검출 (addr 0x%02X, 패널 %d×%d) — 표시 활성화", addr, OLED_PANEL_W, OLED_PANEL_H);
     return true;
 }
@@ -1060,7 +1084,7 @@ static void _oled_write_page_locked(SSD1306_t *dev, int page, int seg,
      *  4초 이후의 연속 실패만 진짜 탈락으로 보고 정지시킨다. */
     if (++s_fail_run >= OLED_PAGES && _ms_now() > 4000) {
         s_fail_run = 0;
-        s_oled_present = false; g_oled_present_mon = false;
+        s_oled_present = false; g_oled_present_mon = false; _shadow_invalidate();
         ESP_LOGW(TAG, "[OLED] 연속 write 실패 → flush 정지 (5초 주기 재프로브로 자동 복구)");
     }
 }
@@ -1070,7 +1094,20 @@ static void _fb_flush(void) {
     /* ★RF 송신 중에는 I2C 를 아예 건드리지 않는다(모듈 고착 방지 — 위 주석 참조).
      *  송신은 1~1.5초라 그동안 화면이 안 갱신되지만, 고착돼 영구히 멈추는 것보다 낫다.
      *  검출(재프로브)도 하지 않는다 — 노이즈 구간의 프로브가 곧 고착 유발 트랜잭션이다. */
+    /* ★2026-07-24 RF 송신 중 차단 **해제**.
+     *  넣은 이유는 "RF 노이즈가 모듈을 고착시킨다"는 가설이었으나, 이후 이분 탐색에서
+     *  RF 를 켜도 멈추지 않고 **충전측정(ADC)이 진범**임이 밝혀져 근거가 사라졌다.
+     *  반대로 부작용이 컸다: 버튼을 누르고 있으면 RF 가 연속 송신되는 동안 화면 갱신이
+     *  통째로 막혀 **애니메이션이 멈춰 보였다**(손을 떼면 복귀). 그래서 차단을 끈다.
+     *  되살리려면 OLED_BLOCK_ON_RF 를 1 로. */
+#ifndef OLED_BLOCK_ON_RF
+#define OLED_BLOCK_ON_RF 0
+#endif
+#if OLED_BLOCK_ON_RF
     if (s_rf_tx_active) return;
+#else
+    (void)s_rf_tx_active;
+#endif
     if (!s_oled_present) {
         /* OLED 미검출: ssd1306_display_image 호출 안 함 → I2C NACK 로그 스팸 차단.
          * 5초마다 1회 재검출(0x3C/0x3D) → 나중에 연결하면 자동 활성화(hot-plug). */
@@ -1121,7 +1158,9 @@ static void _fb_flush(void) {
         }
     }
     for (int p = 0; p < OLED_PHYS_H / 8; p++) {
+        if (!_page_dirty(p, rot[p], OLED_PHYS_W)) { s_skip_cnt++; continue; }  /* dirty-page */
         _oled_write_page_locked(&s_dev, p, 0, rot[p], OLED_PHYS_W);
+        _shadow_store(p, rot[p], OLED_PHYS_W); s_sent_cnt++;
     }
 #elif OLED_FLIP_X && !OLED_ROTATE_180
     /* 좌우(가로) 반전만 — 각 페이지의 열을 역순으로 (x → W-1-x). */
@@ -1132,7 +1171,9 @@ static void _fb_flush(void) {
         }
     }
     for (int p = 0; p < OLED_PAGES; p++) {
+        if (!_page_dirty(p, flipped[p], OLED_PANEL_W)) { s_skip_cnt++; continue; }
         _oled_write_page_locked(&s_dev, p, 0, flipped[p], OLED_PANEL_W);
+        _shadow_store(p, flipped[p], OLED_PANEL_W); s_sent_cnt++;
     }
 #elif OLED_FLIP_X && OLED_ROTATE_180
     /* 좌우반전 + 180° = 상하(세로) 반전 — 페이지 역순 + 바이트 비트 역순(열 유지).
@@ -1145,7 +1186,9 @@ static void _fb_flush(void) {
         }
     }
     for (int p = 0; p < OLED_PAGES; p++) {
+        if (!_page_dirty(p, flipped[p], OLED_PANEL_W)) { s_skip_cnt++; continue; }
         _oled_write_page_locked(&s_dev, p, 0, flipped[p], OLED_PANEL_W);
+        _shadow_store(p, flipped[p], OLED_PANEL_W); s_sent_cnt++;
     }
 #elif OLED_ROTATE_180
     /* 회전 버퍼는 스택에 임시 할당 (물리 패널 크기). 매 frame 50ms 주기. */
@@ -1158,13 +1201,18 @@ static void _fb_flush(void) {
         }
     }
     for (int p = 0; p < OLED_PAGES; p++) {
+        if (!_page_dirty(p, rotated[p], OLED_PANEL_W)) { s_skip_cnt++; continue; }
         _oled_write_page_locked(&s_dev, p, 0, rotated[p], OLED_PANEL_W);
+        _shadow_store(p, rotated[p], OLED_PANEL_W); s_sent_cnt++;
     }
 #else
     for (int p = 0; p < OLED_PAGES; p++) {
+        if (!_page_dirty(p, s_fb[p], OLED_PANEL_W)) { s_skip_cnt++; continue; }
         _oled_write_page_locked(&s_dev, p, 0, s_fb[p], OLED_PANEL_W);
+        _shadow_store(p, s_fb[p], OLED_PANEL_W); s_sent_cnt++;
     }
 #endif
+    s_shadow_valid = true;   /* 이번 프레임 반영 완료 */
     oled_ui_i2c_unlock();
 }
 
@@ -3040,7 +3088,7 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
         ESP_LOGI(TAG, "OLED init OK (캔버스 %d×%d, 회전=%d)",
                  OLED_WIDTH, OLED_HEIGHT, OLED_ROTATE_180);
     } else {
-        s_oled_present = false; g_oled_present_mon = false;
+        s_oled_present = false; g_oled_present_mon = false; _shadow_invalidate();
         s_oled_last_probe_ms = _ms_now();
         ESP_LOGW(TAG, "OLED(0x3C/0x3D) 미검출 — 표시 비활성(5s마다 자동 재검출)");
         _oled_i2c_scan();     /* 진단: 버스에 응답하는 주소 목록 */
