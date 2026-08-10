@@ -36,7 +36,8 @@
 | **dirty-page 전송 감축**(변경된 페이지만 전송, 실측 86% 절감) | `oled_ui.c` `s_shadow`/`_page_dirty()` | ✅ |
 | **채널변경 잠금**(RF 버튼·애니메이션 중 SELECT·좌·우 무시) | `somfy_app.c` `_ch_locked()` + `CFG_CH_LOCK_MS` | ✅ |
 | **OLED 안정성 계측** `[OLEDMON]`(60초)·`[BBFAIL]` | `oled_ui.c` `g_bbo_tx_cnt`/`g_bbo_fail_cnt` | ✅ |
-| ~~충전률 측정~~ **임시 비활성** — ADC 가 비트뱅 전송을 깸 | `somfy_app.c` `TEMP_NO_CHARGE=1` | ⚠ |
+| 충전률 측정 (5초 주기·8표본) — 직렬화 구멍 수정 후 **재활성** | `somfy_app.c` `TEMP_NO_CHARGE=0` / `_read_bat_mv()` | ✅ |
+| OLED 전송 직렬화 — 락을 `_bbo_write()` 로 이동 + **재귀 뮤텍스** | `oled_ui.c` `s_i2c_mutex` · `[OLEDMON] lockTO` | ✅ |
 | **OLED 180° 회전 표시** (보드별) | `oled_ui.c` `_fb_flush()` + `BOARD_OLED_ROTATE_180` | ✅ |
 | **보드별 디스플레이 규격** (해상도/오프셋/회전/72×40 보정) | `boards/<board>.h` `BOARD_OLED_*` (단일 진실원천) | ✅ |
 | **해상도별 렌더러 자동 선택** (보드 무관) | `oled_ui.h` `OLED_RENDER_128X64`/`OLED_RENDER_64X128`/`OLED_RENDER_NATIVE` | ✅ |

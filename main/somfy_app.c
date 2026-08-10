@@ -648,7 +648,21 @@ typedef struct {
 /* 2026-07-24 격리 2단계: 둘 다 끄면 멈춤 없음 확인됨 → RF 만 되살려 범인 판별.
  *   RF 살린 뒤 멈추면 → 버튼 RF 송신이 원인
  *   RF 살려도 안 멈추면 → 충전률 측정이 원인 */
-#define TEMP_NO_CHARGE   1   /* 충전측정: 계속 차단 */
+/* ★★2026-08-11 **충전측정 재활성**(TEMP_NO_CHARGE 1 → 0).
+ *  차단해 뒀던 진짜 이유는 "ADC 가 OLED 를 깬다"가 아니라 **직렬화 구멍**이었다:
+ *    · `_read_bat_mv()` 는 oled_ui_i2c_trylock() 으로 `_fb_flush` 하고만 직렬화됐다.
+ *    · 그런데 OLED 전송 경로는 flush 말고도 두 곳이 더 있고 **락이 없었다** —
+ *        `_oled_send_cmds()`(화면 자동 OFF/ON, 10초마다) / `_bbo_probe()`(5초 재검출).
+ *    · somfy_app(prio 4) 이 oled_ui(prio 3) 를 선점하므로, 이 무보호 경로가
+ *      flush 중인 비트뱅 전송을 중간에 끊어 SSD1306 을 고착시켰다.
+ *  → oled_ui.c 에서 락 범위를 **`_bbo_write()` 전송 함수 자체**로 옮기고 재귀
+ *    뮤텍스로 바꿔 구멍을 막았다(그쪽 주석 참조). 그래서 이제 되살린다.
+ *  검증: sim/tools/adc_oled_mutex_sim.py — 수정 전 8회x10분 중 6회 고착(최빠른 80초),
+ *        수정 후 손상 0 / 고착 0, 배터리 측정 952/952 성공(기아 없음).
+ *  ※측정 주기(5초)와 표본 수(8회)는 **그대로 둔다**. 줄이면 `_nobat_track` 의
+ *    "5분 창 / 반쪽당 30표본" 노이즈 상쇄 가정이 깨져 배터리 미연결 오판이 난다.
+ *  ※되돌리려면 TEMP_NO_CHARGE 를 1 로. 관찰 지표는 [OLEDMON] 의 실패/락타임아웃. */
+#define TEMP_NO_CHARGE   0   /* ★충전측정: 되살림(직렬화 구멍 수정 후) */
 #define TEMP_NO_BTN_RF   0   /* ★버튼 RF 송신: 되살림 */
 
 #define RF_JOB_FROM_BTN     0xFF
@@ -682,6 +696,31 @@ static volatile int64_t s_rf_btn_until_us = 0;     /* RF 발생 버튼의 보호
 static inline void _ch_lock_touch(void) {          /* RF 발생 버튼 눌릴 때 갱신 */
   s_rf_btn_until_us = esp_timer_get_time() + (int64_t)CFG_CH_LOCK_MS * 1000;
 }
+
+/* ★★2026-08-11 보완 — "애니메이션 재생 중인데 좌/우가 먹는다"는 재신고 수정.
+ *
+ *  기존 잠금이 실사용에서 뚫린 이유 2가지 (sim/tools/ch_lock_sim.py 로 확정):
+ *
+ *   (1) `s_ui.state == OLED_STATE_ACTION` 판정이 긴 누름에서 무력하다.
+ *       oled_ui 는 `now - action_start_ms >= OLED_ACTION_DISPLAY_MS(2.5초)` 로 상태를
+ *       푸는데, `action_start_ms` 는 **누른 시각**이다. 블라인드를 올리려고 2.5초보다
+ *       길게 누르면(=정상 사용) **떼는 순간 이미 2.5초가 지나 있어** 상태가 즉시
+ *       NORMAL 로 떨어지고 잠금도 같이 풀린다.
+ *       → 뗄 때 `_ch_lock_release()` 로 **'뗀 시각' 기준** 여운을 다시 건다.
+ *
+ *   (2) 실제 RF 송신 진행 여부를 아예 안 봤다. 송신은 버튼을 뗀 뒤에도 마지막
+ *       job(1~1.5초)이 남고, hold 반복으로 큐에 쌓여 있으면 더 길다. 이 구간에
+ *       채널이 바뀌면 **엉뚱한 블라인드로 명령이 나간다**(원래 요청의 핵심 위험).
+ *       → 진행 중(`s_rf_tx_busy`) + 큐 대기분까지 잠금에 포함한다.
+ *
+ *  실측 시뮬: 누름 3초일 때 기존은 3.0~7.2초(4.2초간) 채널변경이 열려 있었다. */
+static volatile bool s_rf_tx_busy = false;   /* _do_rf_send 진행 중 */
+
+static inline void _ch_lock_release(void) {  /* RF 발생 버튼 뗄 때 — 뗀 시각 기준 연장 */
+  int64_t until = esp_timer_get_time() + (int64_t)OLED_ACTION_DISPLAY_MS * 1000;
+  if (until > s_rf_btn_until_us) s_rf_btn_until_us = until;
+}
+
 /* 지금 채널 변경을 막아야 하는가 */
 static inline bool _ch_locked(void) {
   if (s_held_up || s_held_down || s_held_rot || s_held_prog) return true;  /* 홀드 중 */
@@ -690,6 +729,9 @@ static inline bool _ch_locked(void) {
    *  그 명령이 진행 중인 것으로 보이므로, 이 구간에 채널이 바뀌면 사용자가
    *  "방금 조작한 채널"과 화면이 어긋난다. 애니메이션 종료까지 잠금을 연장한다. */
   if (s_ui.state == OLED_STATE_ACTION || s_ui.action_active) return true;
+  /* ★송신이 실제로 진행 중이거나 큐에 남아 있으면 무조건 잠금 (위 (2)) */
+  if (s_rf_tx_busy) return true;
+  if (s_rf_queue && uxQueueMessagesWaiting(s_rf_queue) > 0) return true;
   return esp_timer_get_time() < s_rf_btn_until_us;                          /* 여운 */
 }
 
@@ -713,7 +755,9 @@ static void _do_rf_send_inner(const rf_job_t *job);
 static void _do_rf_send(const rf_job_t *job)
 {
   oled_ui_set_rf_tx(true);
+  s_rf_tx_busy = true;          /* ★채널변경 잠금용 — _ch_locked() 가 참조 */
   _do_rf_send_inner(job);
+  s_rf_tx_busy = false;
   oled_ui_set_rf_tx(false);
 }
 
@@ -1047,6 +1091,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
 
   case BTN_EVT_UP_RELEASE:
     s_held_up = false;                          /* 이 버튼 놓음(combo 조합 갱신) */
+    _ch_lock_release();                         /* ★뗀 시각 기준으로 채널변경 잠금 연장 */
     if (!(s_held_down || s_held_rot)) {         /* 전부 뗌 → 반복 게이트 닫고 진행 burst 중단 */
       s_action_press_us = 0;
       s_last_sent_cmd = 0;
@@ -1092,6 +1137,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
 
   case BTN_EVT_DOWN_RELEASE:
     s_held_down = false;                        /* 이 버튼 놓음(combo 조합 갱신) */
+    _ch_lock_release();                         /* ★뗀 시각 기준으로 채널변경 잠금 연장 */
     if (!(s_held_up || s_held_rot)) {           /* 전부 뗌 → 반복 게이트 닫고 진행 burst 중단 */
       s_action_press_us = 0;
       s_last_sent_cmd = 0;
@@ -1186,6 +1232,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
 
   case BTN_EVT_PROG_RELEASE:
     s_held_prog = false;
+    _ch_lock_release();                         /* ★뗀 시각 기준으로 채널변경 잠금 연장 */
     somfy_rts_abort = true;                     /* 뗌 → PROG 송신 즉시 종료 */
     oled_ui_notify_action_end(&s_ui);
     if (evt->hold_ms > CFG_BTN_MIN_HOLD_MS) {
@@ -1268,6 +1315,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
     bool long_press = (evt->hold_ms >= CFG_BTN_LONG_PRESS_MS);
 
     s_held_rot = false;                         /* 이 버튼 놓음(combo 조합 갱신) */
+    _ch_lock_release();                         /* ★뗀 시각 기준으로 채널변경 잠금 연장 */
     if (!_in_setup_mode()) {
       if (!(s_held_up || s_held_down)) {        /* 전부 뗌 → 반복 정지·burst 종료 */
         s_action_press_us = 0;
@@ -1886,6 +1934,16 @@ static uint8_t _bat_mv_to_pct(int mv) {
 #define BAT_NOBAT_MIN_N        3   /* 전/후반 각 최소 표본 수 */
 
 static bool    s_nobat         = false;   /* true = 배터리 미연결 → 0% 표시 */
+/* ★2026-08-11 첫 판정 완료 여부. 판정 전에는 **% 를 표시하지 않는다**(사용자 선택).
+ *
+ *  왜: 배터리를 빼면 충전 IC 가 BAT+ 를 3970mV 로 띄우는데, 이 값이 OCV 곡선상
+ *  정확히 **78%** 라 "배터리 없는데 78%" 로 보인다. 전압만으론 실제 78% 와 구분이
+ *  불가능하고, 구분 단서인 "전압이 오르는가"는 창(5분)이 차야 판정된다.
+ *  → 판정 전에 78% 를 보여주느니 `--%` 로 두는 편이 정직하다.
+ *  ※창을 줄이면 안 된다: 충전 상승률이 ≈9.3mV/5분 이라 창이 2분 10초보다 짧으면
+ *    **진짜 충전 중인 배터리도 "안 오름"으로 오판**해 0% 로 표시된다(문턱 4mV). */
+static bool    s_nobat_judged   = false;
+#define BAT_PCT_UNKNOWN 255               /* >100 = 표시측이 "--%" 로 렌더 */
 static int64_t s_nobat_t0_us   = 0;
 static int32_t s_nobat_sum1 = 0, s_nobat_sum2 = 0;   /* 전반/후반 전압 합 */
 static int16_t s_nobat_n1   = 0, s_nobat_n2   = 0;   /* 전반/후반 표본 수 */
@@ -1926,6 +1984,7 @@ static void _nobat_track(int mv) {
       s_logged_once = true;
     }
     s_nobat = nobat;
+    s_nobat_judged = true;      /* ★이제부터 % 를 표시해도 된다 */
   }
   /* ★다음 창을 새로 시작 (주기 재판정) */
   s_nobat_t0_us = now;
@@ -2210,6 +2269,11 @@ void somfy_app_run(void *arg) {
   s_ui.selected_blind = s_mgr.selected;
   s_ui.freq_mhz =
       (s_mgr.count > 0) ? s_mgr.blinds[0].freq_mhz : CFG_FREQ_DEF_MHZ;
+#if BOARD_HAS_BAT_ADC && !BOARD_BAT_SWAPPED
+  /* ★첫 측정 전에는 "--%". memset 0 을 그대로 두면 첫 5초간 "0%"(=방전 직전)로
+   *  보여 오해를 준다. 표시측은 >100 을 미지값으로 렌더한다. */
+  s_ui.chg_percent = BAT_PCT_UNKNOWN;
+#endif
 
   oled_ui_init(&s_ui);                 /* SSD1306 1회 init (연속 X) */
   btn_handler_init(_btn_event_cb, NULL); /* GPIO 설정 (연속 X) */
@@ -2488,7 +2552,18 @@ void somfy_app_run(void *arg) {
       int _bat_mv = _read_bat_mv();
       if (_bat_mv > 0) {
         _nobat_track(_bat_mv);
-        s_ui.chg_percent = s_nobat ? 0 : _bat_mv_to_pct(_bat_mv);
+        /* ★2026-08-11 첫 판정 전 % 숨김 — 단, **애매한 구간에서만** 숨긴다.
+         *  무배터리 float 창(3940~4010mV) 밖이면 배터리가 있다는 게 전압만으로
+         *  이미 확정이므로(충전 IC 가 그 값을 만들 수 없다) 즉시 % 를 보여준다.
+         *  창 안 + USB 연결일 때만 진짜로 구분이 안 되고, 이때만 판정을 기다린다.
+         *  → 실제 배터리를 꽂은 사용자는 대기 없이 바로 %, 배터리 없는 경우만
+         *    5분 뒤 0% 로 확정된다(그 전엔 "--%"). */
+        const bool _ambiguous = (_bat_mv >= BAT_NOBAT_LO && _bat_mv <= BAT_NOBAT_HI &&
+                                 _is_usb_powered());
+        if (!s_nobat_judged && _ambiguous)
+          s_ui.chg_percent = BAT_PCT_UNKNOWN;          /* 표시측이 "--%" 로 렌더 */
+        else
+          s_ui.chg_percent = s_nobat ? 0 : _bat_mv_to_pct(_bat_mv);
       } else if (!s_bat_adc_ok) {
         s_ui.chg_percent = _estimate_battery_percent();  /* ADC 자체가 없는 경우만 */
       }
@@ -2608,18 +2683,26 @@ void somfy_app_run(void *arg) {
 
     was_charging = charging;
 
-    /* ★2026-07-24 안정성 모니터 (충전측정 OFF 상태 검증용) — 60초마다 요약.
-     *  OLED 비트뱅 전송 실패가 0 으로 유지되면 "충전측정만 끄면 안정"이 입증된다. */
+    /* ★2026-07-24 안정성 모니터 — 60초마다 요약.
+     *  2026-08-11 충전측정 재활성 검증용으로 **락타임아웃(lockTO)** 을 추가했다.
+     *  판정 기준:
+     *    · 실패 0  + present=1 유지 → 직렬화 수정이 먹힌 것
+     *    · lockTO 가 0 이 아님      → 누군가 뮤텍스를 200ms 넘게 쥔다(원인 추적 필요)
+     *  ★함정: "실패 0"만 보면 안 된다. OLED 미검출이면 flush 를 건너뛰어 전송도
+     *    에러도 안 생긴다 → **present=1 과 전송 카운터 증가를 같이** 볼 것. */
     {
       extern volatile uint32_t g_bbo_tx_cnt, g_bbo_fail_cnt, g_page_skip, g_page_sent;
+      extern volatile uint32_t g_bbo_lock_to_cnt;
       extern volatile bool g_oled_present_mon;
       static int64_t last_rep_us = 0;
       int64_t nu = esp_timer_get_time();
       if (nu - last_rep_us >= 60LL * 1000000LL) {
         last_rep_us = nu;
-        ESP_LOGW(TAG, "[OLEDMON] %llds  전송 %u / 실패 %u  페이지 보냄 %u / 건너뜀 %u  present=%d free=%uB",
+        ESP_LOGW(TAG, "[OLEDMON] %llds  전송 %u / 실패 %u  페이지 보냄 %u / 건너뜀 %u  "
+                      "lockTO %u  present=%d free=%uB",
                  nu / 1000000, (unsigned)g_bbo_tx_cnt, (unsigned)g_bbo_fail_cnt,
                  (unsigned)g_page_sent, (unsigned)g_page_skip,
+                 (unsigned)g_bbo_lock_to_cnt,
                  g_oled_present_mon ? 1 : 0, (unsigned)esp_get_free_heap_size());
       }
     }

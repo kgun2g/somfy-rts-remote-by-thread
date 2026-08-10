@@ -26,6 +26,24 @@ static SSD1306_t s_dev;
 /* OLED 와 PCF8574(버튼)가 HW I2C 버스를 공유. _ui_task flush(콜론 anim 으로 잦음)와
  * btn_task PCF read 가 동시에 같은 버스를 건드리면 unexpected nack 발생 → 뮤텍스로 직렬화한다.
  * (scl 400k 로 INVALID_STATE 격번은 해결됐지만, 동시 접근 nack 은 별개라 직렬화가 필요.) */
+/* ★★2026-08-11 **재귀 뮤텍스로 변경** — 충전률 측정 재활성의 전제조건.
+ *
+ *  왜 재귀여야 하나:
+ *    보호 범위를 `_fb_flush` 에서 **`_bbo_write()` 전송 함수 자체**로 옮겼는데,
+ *    `_fb_flush` 는 바깥 락을 쥔 채 `_bbo_write` 를 부른다. 일반 뮤텍스면 자기
+ *    자신을 기다려 **즉시 데드락**(화면 영구 정지)이다.
+ *
+ *  왜 범위를 옮겼나:
+ *    기존엔 `_fb_flush`(oled_ui.c) 만 락이 있어 아래 두 경로가 **무방비**였다.
+ *      · `_oled_send_cmds()`  ← oled_ui_set_display_on() : 화면 자동 OFF/ON 마다
+ *      · `_bbo_probe()`       ← _oled_try_detect()       : 미검출 시 5초마다
+ *    두 경로 모두 **somfy_app(prio 4)** 에서 불리고, OLED flush 는 **oled_ui(prio 3)**
+ *    라 somfy_app 이 전송 도중에 끼어든다. 비트뱅은 CPU 가 곧 클럭이므로 선점당한
+ *    전송은 SCL/SDA 가 중간 상태로 수백 us 멈춰 SSD1306 이 고착된다.
+ *    (sim/tools/adc_oled_mutex_sim.py — 8회x10분 중 6회 고착, 최빠른 80초.
+ *     락을 _bbo_write 로 옮기면 손상 0 / 고착 0, 배터리 측정 952/952 정상.)
+ *
+ *  ※ 해제는 반드시 획득한 태스크가 한다(FreeRTOS 재귀 뮤텍스 제약). */
 static SemaphoreHandle_t s_i2c_mutex = NULL;
 
 /* OLED 존재 여부 — 미연결(예: 배선 전 보드) 시 flush 를 건너뛰어 I2C NACK
@@ -38,6 +56,9 @@ volatile bool g_oled_present_mon = false;
 /* 계측 카운터도 **가드 밖**에 둔다 — somfy_app 의 [OLEDMON] 이 보드 무관하게 참조하므로
  *  BOARD_OLED_BITBANG=0 인 보드(H2)에서 링크 에러가 났던 이력. */
 volatile uint32_t g_bbo_tx_cnt = 0, g_bbo_fail_cnt = 0;
+/* ★2026-08-11 _bbo_write 의 락 획득 타임아웃 횟수. 정상이면 0 이어야 한다.
+ *  0 이 아니면 누군가 뮤텍스를 오래 쥐고 있다는 뜻 → [OLEDMON] 으로 관찰한다. */
+volatile uint32_t g_bbo_lock_to_cnt = 0;
 /* 2026-07-23 모듈 고착 자동복구: 연속 검출실패 횟수(성공 시 0 으로 리셋) */
 static uint32_t s_oled_recover_tries = 0;
 
@@ -164,7 +185,28 @@ static bool _bbo_byte(uint8_t b) {
 volatile int64_t g_adc_enter_us = 0;   /* ADC 읽기 진입 시각 */
 volatile int64_t g_adc_exit_us  = 0;   /* ADC 읽기 종료 시각 */
 
+/* ★★2026-08-11 전송 1건을 통째로 뮤텍스로 보호한다(충전률 측정 재활성의 핵심).
+ *
+ *  이전에는 `_fb_flush` 만 락을 잡아 `_oled_send_cmds`(화면 OFF/ON)와 `_bbo_probe`
+ *  (5초 재검출)가 무방비였다. 두 경로는 somfy_app(prio 4)에서 불려 oled_ui(prio 3)의
+ *  전송을 선점 → 비트뱅 파형이 중간에 멈춰 SSD1306 고착. 위 s_i2c_mutex 주석 참조.
+ *
+ *  락은 **여기 한 곳**에 두는 것이 안전하다. 호출 지점이 늘어도 자동으로 보호되고,
+ *  `_fb_flush` 의 바깥 락과 중첩되면 재귀 획득으로 흡수된다(depth 증가).
+ *
+ *  타임아웃 시 동작: **그냥 전송한다**(건너뛰지 않는다). 락은 겹침 방지용 최적화지,
+ *  전송의 전제조건이 아니다. 200ms 나 못 잡았다면 보유자가 이상한 상태라는 뜻인데,
+ *  그때 화면을 영구히 멈추는 것보다 한 프레임 깨지는 편이 낫다. 발생 횟수는
+ *  g_bbo_lock_to_cnt 로 관찰한다(정상=0). */
+#define BBO_LOCK_WAIT_MS 200
+
 static bool _bbo_write(uint8_t addr7, const uint8_t *buf, size_t len) {
+    bool held = false;
+    if (s_i2c_mutex) {
+        held = (xSemaphoreTakeRecursive(s_i2c_mutex,
+                                        pdMS_TO_TICKS(BBO_LOCK_WAIT_MS)) == pdTRUE);
+        if (!held) g_bbo_lock_to_cnt++;   /* 락 없이 진행 — 위 주석의 판단 근거 */
+    }
     _bbo(BBO_SDA, 1); _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
     _bbo(BBO_SDA, 0); esp_rom_delay_us(BBO_HALF_US);         /* START */
     _bbo(BBO_SCL, 0); esp_rom_delay_us(BBO_HALF_US);
@@ -173,6 +215,7 @@ static bool _bbo_write(uint8_t addr7, const uint8_t *buf, size_t len) {
     _bbo(BBO_SDA, 0); esp_rom_delay_us(BBO_HALF_US);         /* STOP */
     _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
     _bbo(BBO_SDA, 1); esp_rom_delay_us(BBO_HALF_US);
+    if (held) xSemaphoreGiveRecursive(s_i2c_mutex);   /* ★STOP 까지 끝낸 뒤 해제 */
     g_bbo_tx_cnt++;
     if (!ok) {
         /* ★실패 순간을 ADC 읽기와 대조 — "ADC 구간 중/직후에 깨지는가"를 실측한다.
@@ -2932,6 +2975,12 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
 {
     s_ctx = ctx;
 
+    /* ★2026-08-11 뮤텍스를 **함수 맨 앞**에서 만든다.
+     *  전에는 패널 검출 직전(아래)에 만들었는데, 그 사이의 `_bbo_write` 호출과
+     *  다른 태스크(btn_handler)의 oled_ui_i2c_lock() 이 s_i2c_mutex==NULL 을 만나
+     *  **무보호로 통과**했다. 보호 구멍을 없애려고 앞으로 당긴다. */
+    if (!s_i2c_mutex) s_i2c_mutex = xSemaphoreCreateRecursiveMutex();
+
     /* esp-idf-ssd1306 라이브러리 초기화 — I2C 모드.
      * ESP32-C6-0.42 보드의 0.42" OLED는 IO1(SDA) / IO0(SCL)에
      * 하드와이어 연결됨. RST 핀 없음 (SSD1306 internal POR 사용). */
@@ -2949,7 +2998,7 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
     _oled_i2c_init_at(&s_dev, OLED_PIN_SDA, OLED_PIN_SCL, OLED_I2C_HZ, 0x3C);  /* 400k→100k 저속 */
 #endif
 
-    if (!s_i2c_mutex) s_i2c_mutex = xSemaphoreCreateMutex();   /* 공유 I2C 직렬화(버튼 칩과) */
+    /* (뮤텍스 생성은 이 함수 맨 앞으로 이동 — 위 주석 참조) */
 
     /* ── OLED 존재 여부 검출(0x3C/0x3D) ────────────────────────────
      *  미연결 보드(예: 배선 전 XIAO)에서 ssd1306 init/flush 의 I2C NACK
@@ -3037,13 +3086,16 @@ i2c_master_bus_handle_t oled_ui_get_i2c_bus(void)
 
 /* 공유 HW I2C 버스 직렬화 — btn_handler 의 PCF8574 read 가 OLED flush(_fb_flush)와
  * 겹치지 않도록 lock/unlock. 뮤텍스 미생성(oled_ui_init 전) 시 무동작. */
+/* ★2026-08-11 재귀 뮤텍스로 바뀌었다(s_i2c_mutex 주석 참조) → Take/Give 도
+ *  반드시 Recursive 판을 써야 한다. 일반 판을 섞어 쓰면 소유권 검사가 어긋나
+ *  해제가 안 되거나(=영구 점유) assert 로 죽는다. */
 void oled_ui_i2c_lock(void)
 {
-    if (s_i2c_mutex) xSemaphoreTake(s_i2c_mutex, portMAX_DELAY);
+    if (s_i2c_mutex) xSemaphoreTakeRecursive(s_i2c_mutex, portMAX_DELAY);
 }
 void oled_ui_i2c_unlock(void)
 {
-    if (s_i2c_mutex) xSemaphoreGive(s_i2c_mutex);
+    if (s_i2c_mutex) xSemaphoreGiveRecursive(s_i2c_mutex);
 }
 
 /* ── 2026-07-17 추가: 대기 없는(유한 대기) 버전 ─────────────────────────────
@@ -3060,7 +3112,7 @@ void oled_ui_i2c_unlock(void)
 bool oled_ui_i2c_trylock(uint32_t timeout_ms)
 {
     if (!s_i2c_mutex) return true;   /* 뮤텍스 없으면 직렬화 대상 없음 */
-    return xSemaphoreTake(s_i2c_mutex, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    return xSemaphoreTakeRecursive(s_i2c_mutex, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }
 
 void oled_ui_start_task(oled_ui_ctx_t *ctx)
