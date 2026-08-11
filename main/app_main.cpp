@@ -20,6 +20,9 @@
 
 #include "common_macros.h"
 #include "log_heap_numbers.h"
+#include "boot_diag.h"
+#include <driver/gpio.h>
+#include "boards/board_select.h"   /* BOARD_PIN_CHG_STAT (VBUS 분압) */
 
 #include <app_priv.h>
 #include <app_reset.h>
@@ -446,6 +449,56 @@ static int scmd_freq(int argc, char **argv){  /* freq [idx mhz] : set(+NVS저장
     printf("OK freq\n"); return 0;
 }
 static int scmd_reboot(int argc, char **argv){ (void)argc; (void)argv; printf("rebooting\n"); esp_restart(); return 0; }
+/* ★부팅 진단 조회 — "bd" 로 언제든 직전/보관된 실패 부팅 기록을 다시 찍는다.
+ *  부팅 직후 몇 초짜리 로그 창을 놓쳐도 되도록(실제로 놓쳐서 증거를 날렸다).
+ *  "bd clear" 로 보관 기록 삭제. */
+static int scmd_bd(int argc, char **argv){
+    if (argc >= 2 && !strcmp(argv[1], "clear")) { boot_diag_clear_fail(); printf("OK bd clear\n"); return 0; }
+    boot_diag_log_prev();
+    printf("OK bd\n");
+    return 0;
+}
+
+/* ★★2026-08-11 "USB 없이 배터리만 연결하면 부팅 중 멈춘다" 수정 — VBUS 존재 판정.
+ *
+ *  왜 필요한가 (boot_diag 로 확정한 근거):
+ *    실패 기록이 **app_main=8(콘솔 명령 등록 완료) + somfy_app=3/sub=10** 에서 멈췄다.
+ *    즉 두 태스크가 **동시에** 굳었고, 배터리는 4.0V 로 멀쩡했으며(최저치도 동일)
+ *    리셋사유는 항상 "전원투입"(브라운아웃/패닉/워치독 아님)이었다.
+ *    두 경로가 같이 멈추는 공통 자원은 **콘솔 출력**뿐이다.
+ *
+ *  기전:
+ *    `esp_matter::console::init()` 은 CHIP shell 을 **우선순위 5** 태스크로 띄운다
+ *    (somfy_app=4, oled_ui=3 보다 높다). 이 태스크의 RunMainLoop 는 프롬프트를
+ *    출력하는데, 보조 콘솔이 USB-Serial-JTAG 이라
+ *    `esp_rom_usb_serial_putc` → `usb_serial_device_tx_flush()` 가 **호스트를 기다린다**.
+ *    USB 가 없으면 이 대기가 길어지고, prio 5 가 아래 태스크를 굶겨 부팅이 끝나지 않는다.
+ *    USB 를 꽂으면 호스트가 FIFO 를 비워 즉시 끝나므로 증상이 사라진다 — 관측과 일치.
+ *
+ *  조치: **USB 가 실제로 꽂혀 있을 때만** CHIP shell 콘솔을 시작한다.
+ *    콘솔은 개발용이라 배터리 단독 동작에는 필요 없다(tx/sel/cyc/bd 도 USB 전용).
+ *
+ *  왜 usb_serial_jtag_is_connected() 가 아니라 VBUS 핀인가:
+ *    그 API 는 SOF 패킷 기반이라 부팅 ~1초 시점엔 열거가 안 끝나 false 가 나올 수 있다
+ *    (그러면 USB 로 개발할 때도 콘솔이 사라진다). VBUS 분압은 꽂는 즉시 HIGH 다. */
+static bool _usb_vbus_present(void)
+{
+#if defined(BOARD_PIN_CHG_STAT) && BOARD_CHG_STAT_ACTIVE_HIGH
+    gpio_config_t io = {};
+    io.pin_bit_mask = 1ULL << BOARD_PIN_CHG_STAT;
+    io.mode         = GPIO_MODE_INPUT;
+    io.pull_up_en   = GPIO_PULLUP_DISABLE;
+    /* 내부 풀다운을 켜면 안 된다: VBUS 분압(100k/150k, 출력임피던스 60k)을
+     * 3.0V → 1.29V 로 끌어내려 USB 를 LOW 로 오독한다(board_select.h 주석 참조). */
+    io.pull_down_en = BOARD_CHG_STAT_EXT_PULLDOWN ? GPIO_PULLDOWN_DISABLE
+                                                  : GPIO_PULLDOWN_ENABLE;
+    io.intr_type    = GPIO_INTR_DISABLE;
+    gpio_config(&io);
+    return gpio_get_level((gpio_num_t)BOARD_PIN_CHG_STAT) == 1;
+#else
+    return true;   /* VBUS 판정 수단이 없는 보드는 기존 동작 유지 */
+#endif
+}
 
 extern "C" void app_main()
 {
@@ -463,6 +516,12 @@ extern "C" void app_main()
 
     /* Initialize the ESP NVS layer */
     nvs_flash_init();
+
+    /* ★2026-08-11 부팅 단계 기록 시작 — "USB 없이 배터리만 연결하면 부팅 중 멈춘다"
+     *  진단용. USB 를 꽂는 순간 전원이 바뀌어 증상이 사라지므로 시리얼 로그를 볼 수
+     *  없다 → 전원이 끊겨도 남는 NVS 에 단계를 남기고, 다음 부팅에 읽어 찍는다.
+     *  (RTC 메모리는 배터리를 빼면 지워져 쓸 수 없다.) */
+    boot_diag_begin();   /* stage 는 begin() 이 APP_MAIN 으로 시작 */
 
     MEMORY_PROFILER_DUMP_HEAP_STAT("Bootup");
 
@@ -648,8 +707,10 @@ extern "C" void app_main()
 #endif
 
     /* Matter start */
+    boot_diag_stage(BOOT_S1_MATTER_START);
     err = esp_matter::start(app_event_cb);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+    boot_diag_stage(BOOT_S1_MATTER_OK);
 
     MEMORY_PROFILER_DUMP_HEAP_STAT("matter started");
 
@@ -664,6 +725,7 @@ extern "C" void app_main()
     /* 주변 애플리케이션(OLED/버튼/시계/메뉴)을 별도 태스크로 시작.
        내부에서 커미셔닝 완료까지 무거운 연속 태스크는 지연한다. */
     xTaskCreate(somfy_app_run, "somfy_app", 8192, NULL, 4, NULL);   /* composed 로 free 확보 → 전 보드 8192 통일(스택 안전 마진 회복) */
+    boot_diag_stage(BOOT_S1_APP_TASK);
 
     /* Phase 1: light 전용 기본값 설정 제거 (WindowCovering 사용) */
     /* app_driver_light_set_defaults(light_endpoint_id); */
@@ -674,6 +736,11 @@ extern "C" void app_main()
 #endif // CONFIG_ENABLE_ENCRYPTED_OTA
 
 #if CONFIG_ENABLE_CHIP_SHELL
+    boot_diag_stage(BOOT_S1_CONSOLE_ENTER);
+    const bool _usb_on = _usb_vbus_present();
+    ESP_LOGW(TAG, "[CONSOLE] VBUS=%d — CHIP shell %s", _usb_on ? 1 : 0,
+             _usb_on ? "시작" : "생략(배터리 단독 부팅 보호)");
+    if (_usb_on) {
     esp_matter::console::diagnostics_register_commands();
     esp_matter::console::wifi_register_commands();
     esp_matter::console::factoryreset_register_commands();
@@ -690,9 +757,14 @@ extern "C" void app_main()
       const esp_console_cmd_t frq={ .command="freq", .help="freq [idx mhz] 주파수 조회/설정", .hint=NULL, .func=&scmd_freq, .argtable=NULL };
       esp_console_cmd_register(&frq);
       const esp_console_cmd_t rbt={ .command="reboot", .help="재부팅(esp_restart)", .hint=NULL, .func=&scmd_reboot, .argtable=NULL };
-      esp_console_cmd_register(&rbt); }
+      esp_console_cmd_register(&rbt);
+      const esp_console_cmd_t bdc={ .command="bd", .help="부팅 진단 조회 (bd / bd clear)", .hint=NULL, .func=&scmd_bd, .argtable=NULL };
+      esp_console_cmd_register(&bdc); }
+    boot_diag_stage(BOOT_S1_CONSOLE_CMDS);
     esp_matter::console::init();
+    }   /* if (_usb_on) */
 #endif
+    boot_diag_stage(BOOT_S1_DONE);   /* app_main 끝까지 도달 */
 
     while (true) {
         MEMORY_PROFILER_DUMP_HEAP_STAT("Idle");

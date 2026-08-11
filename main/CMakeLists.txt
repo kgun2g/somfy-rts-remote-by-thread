@@ -45,7 +45,7 @@ idf_component_register(SRCS "app_main.cpp" "app_driver.cpp"
                             "cc1101.c" "somfy_rts.c" "blind_manager.c"
                             "matter_blinds_shim.cpp" "somfy_app.c"
                             "oled_ui.c" "button_handler.c" "thread_provision.c"
-                            "efuse_commissionable.cpp"
+                            "efuse_commissionable.cpp" "boot_diag.c"
                             ${_test_srcs}
                        PRIV_INCLUDE_DIRS  "." "boards" ${_test_incs})
 

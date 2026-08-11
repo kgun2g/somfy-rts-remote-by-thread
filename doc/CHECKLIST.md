@@ -30,7 +30,10 @@
 | OLED 일반 화면 (주파수/블라인드/버튼) | `oled_ui.c` `_render_normal()` | ✅ |
 | OLED 애니메이션 20fps | `oled_ui.c` FreeRTOS 태스크 50ms | ✅ |
 | 버튼 동작 중 5초 애니메이션 | `oled_ui.c` `_render_action()` | ✅ |
-| ~~화면보호기~~ **삭제됨**(2026-07) — 대신 유휴 후 패널 OFF | `somfy_config.h` `CFG_SCREEN_OFF_SEC`(기본 10초) | ✅ |
+| ~~화면보호기~~ **삭제됨**(2026-07) — 대신 유휴 후 패널 OFF | `somfy_config.h` `CFG_SCREEN_OFF_USB_SEC`(USB 5분) / `CFG_SCREEN_OFF_SEC`(배터리 10초) | ✅ |
+| 배터리 % 표시 평활 (중앙값 5주기 + EMA) — 송신 순간 전압강하 제거 | `somfy_app.c` `_bat_smooth_mv()` | ✅ |
+| USB 없이 배터리 단독 부팅 — CHIP shell 콘솔을 VBUS 있을 때만 시작 | `app_main.cpp` `_usb_vbus_present()` | ✅ |
+| 부팅 단계 NVS 기록(전원 끊겨도 보존) + `bd` 콘솔 조회 | `boot_diag.c` / `boot_diag.h` | ✅ |
 | 버튼·**진동** 조작 시 즉시 화면 복귀 | `oled_ui_wake()` / `_exit_screensaver()` | ✅ |
 | **OLED 비트뱅 I2C**(HW 페리페럴 고착 우회, GPIO 레지스터 직접 접근) | `oled_ui.c` `_bbo_write()` + `BOARD_OLED_BITBANG` | ✅ |
 | **dirty-page 전송 감축**(변경된 페이지만 전송, 실측 86% 절감) | `oled_ui.c` `s_shadow`/`_page_dirty()` | ✅ |

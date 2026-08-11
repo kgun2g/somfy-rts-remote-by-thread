@@ -2,7 +2,8 @@
 
 > 새 세션을 열고 **"HANDOFF.md 읽고 이어서 작업해줘"** 라고만 하면 된다.
 
-기준 커밋: `dbde636` (원격 `github.com/kgun2g/somfy-rts-remote-by-thread`, push 완료)
+기준: `main` 최신 커밋 (원격 `github.com/kgun2g/somfy-rts-remote-by-thread`)
+> 최근 변경 요약은 `git log` 의 커밋 메시지가 가장 상세하다.
 
 ---
 
@@ -61,6 +62,62 @@ float 창(3940~4010 mV) 밖이거나 USB 미연결이면 배터리 존재가 자
 **★창(5분)을 줄이지 말 것.** 충전 상승률 ≈9.3 mV/5분 vs 문턱 4 mV →
 3분 창은 2.8 mV 라 **충전 중인 배터리를 "미연결"로 오판**한다.
 검증표는 `sim/tools/bat_pct_display_sim.py` 및 `sim/tools/README_oled_sim.md` 부록.
+
+---
+
+## ✅ 완료 — 배터리 단독 부팅 멈춤 (2026-08-11)
+
+**증상**: USB 를 빼고 배터리만 연결하면 부팅 화면에서 멈추고 40초~1분마다 재부팅.
+USB 를 꽂으면 정상 — 그래서 시리얼 로그를 볼 수 없었다.
+
+**원인**: `esp_matter::console::init()` 이 CHIP shell 을 **우선순위 5** 태스크로 띄운다
+(`somfy_app`=4, `oled_ui`=3 보다 높다). 프롬프트 출력이 `esp_rom_usb_serial_putc` →
+`usb_serial_device_tx_flush()` 로 **USB 호스트를 기다리는데**, 호스트가 없으면 이 대기가
+길어져 prio 5 가 아래 태스크를 전부 굶긴다.
+
+**수정**: **VBUS(GPIO17)가 있을 때만** CHIP shell 을 시작(`app_main.cpp`
+`_usb_vbus_present()`). 콘솔은 개발용이고 `tx`/`sel`/`cyc`/`bd` 도 USB 전용이다.
+(`usb_serial_jtag_is_connected()` 는 SOF 기반이라 부팅 1초 시점에 false 가 나올 수 있어
+USB 개발 중에도 콘솔이 사라진다 — 그래서 VBUS 핀을 쓴다.)
+
+**진단 도구 — `boot_diag`** (`main/boot_diag.c`, 이번에 새로 만듦):
+전원이 끊겨도 남는 **NVS 부팅 단계 기록**. RTC RAM 은 배터리를 빼면 지워져 못 쓴다.
+- app_main 경로(`stage`)와 somfy_app 경로(`stage2`)를 **따로** 센다 — 두 태스크가 동시
+  진행하므로 단일 카운터로는 어느 쪽이 멈췄는지 구분 불가
+- 실패한 부팅은 별도 키(`fail`)에 **영구 보관** — 정상 부팅이 덮어쓰면 증거가 날아간다
+  (실제로 한 번 날렸다)
+- 콘솔 **`bd`** 로 언제든 조회, `bd clear` 로 삭제
+- 끄려면 `BOOT_DIAG_ENABLE 0` (부팅당 NVS 쓰기 ~17회)
+
+**탈락시킨 가설들**: 전원/브라운아웃(배터리 4.02 V, 최저치 동일 — 사그 0), Task WDT
+(5초라 주기 불일치), BAT_ADC 로직(해당 코드 미실행), I2C 스캔 NULL 핸들(`sub=10` 이라 미실행).
+
+> ⚠ 진단 중 브라운아웃 임계값을 2.51 V → **2.92 V**(`sdkconfig.xiao-c6`
+> `ESP_BROWNOUT_DET_LVL=4`)로 올렸고 **그대로 두었다**. 원인은 전원이 아니었지만,
+> 더 민감한 검출은 보호 측면에서 유리하다. 되돌리려면 그 두 줄을 `SEL_7`/`7` 로.
+
+---
+
+## ✅ 완료 — 배터리 % 흔들림 (2026-08-11)
+
+배터리 구동에서 81→82→**74**→84→81 % 로 튀었다. BLE 광고·RF 송신 순간 **실제로**
+전압이 떨어지는데(USB 는 레일이 단단해 안 보였다), OCV 곡선상 이 구간은 1 % ≈ 10 mV 다.
+
+표시 경로에만 **중앙값 5주기 + EMA(α=1/4)** 적용(`_bat_smooth_mv`). `_nobat_track` 에는
+**원본**을 준다(5분 창 30표본 통계라 평활하면 가정이 깨짐). 측정 주기·표본 수 불변.
+
+★**EMA 는 1/16 mV 단위로 누적**한다 — C 의 정수 나눗셈이 0 쪽으로 절단해 1 mV 단위로
+쓰면 차이 1~3 mV 에서 몫이 0 이 되어 EMA 가 고착된다.
+검증: `sim/tools/bat_pct_smooth_sim.py` (진폭 19→9 %p, 주기간 변동 4.09→0.38 %p).
+
+---
+
+## ✅ 완료 — 화면 OFF 시간 전원별 분리 (2026-08-11)
+
+| 전원 | 매크로 | 값 |
+|---|---|---|
+| USB | `CFG_SCREEN_OFF_USB_SEC` | **300초(5분)** |
+| 배터리 | `CFG_SCREEN_OFF_SEC` | 10초 |
 
 ---
 
@@ -137,12 +194,18 @@ dirty-page 감축(전송 75%↓) 이후 재발 주기가 늘었는지 `[OLEDMON]
   가드 안에 두면 `BOARD_OLED_BITBANG=0` 보드(H2)에서 컴파일/링크 에러(실제로 두 번 발생).
 - 빌드/플래시 후 **반드시 `error:` 카운트를 확인**할 것. 빌드 실패인데 "플래시 OK"로
   보고한 적 있음.
+- **`sdkconfig.defaults.*` 를 고쳐도 안 먹는다.** `build.ps1` 은 보드별 `sdkconfig.<board>`
+  를 실제 설정 파일로 쓰고, defaults 는 **최초 생성 때만** 씨앗으로 쓴다. 이미 만들어진
+  뒤에는 `sdkconfig.xiao-c6` 를 직접 고쳐야 한다(실제로 한 번 헛빌드했다).
+- **리셋 사유는 "그 부팅이 시작된 이유"** 지 "끝난 이유"가 아니다. 헷갈리면 오진한다.
 
 ---
 
 ## 배경 문서
 
 - `README.md` 「OLED 구동 방식 & 화면 정책」 — 비트뱅 전환 이유, dirty-page, 화면 정책, 진단 로그
-- `sim/tools/README_oled_sim.md` — 진단 시뮬레이터 3종 사용법과 한계
-- `doc/CHECKLIST.md` — 기능 구현 현황(화면보호기 삭제·충전측정 ⚠ 반영됨)
+- `sim/tools/README_oled_sim.md` — 진단 시뮬레이터 6종 사용법과 한계
+  (OLED I2C 3종 + 직렬화·채널잠금·배터리% 3종)
+- `doc/CHECKLIST.md` — 기능 구현 현황
+- `ISSUE_charge_adc_breaks_oled.md` — 배터리/충전 이슈 4건의 원인·근거·수정·검증 전문
 - 커밋 메시지 — 각 변경의 증상→원인→조치가 상세히 기록돼 있다(`git log`)

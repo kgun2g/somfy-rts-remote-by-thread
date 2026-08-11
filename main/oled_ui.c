@@ -1,4 +1,5 @@
 #include "oled_ui.h"
+#include "boot_diag.h"   /* 부팅 세부 진행도 — 배터리 부팅 멈춤 진단 */
 #include "ssd1306.h"     // esp-idf-ssd1306 라이브러리
 #include "font8x8_basic.h"
 #include "font5x7_basic.h"   // 72×40 화면용 narrow 5×7 폰트
@@ -725,10 +726,29 @@ static void _fb_apply_fade(uint8_t level) {
 
 
 /* I2C 버스 스캔 — 응답하는 주소를 로그로 덤프(OLED 미검출 진단용). */
+/* ★★2026-08-11 비트뱅 모드 대응 — "USB 없이 배터리만 연결하면 부팅 중 멈춤" 수정.
+ *  비트뱅 모드(xiao-c6)는 oled_ui_init 에서 `s_dev._i2c_bus_handle = NULL` 로 두고
+ *  HW I2C 버스를 **아예 만들지 않는다**. 그런데 이 스캔은 그 NULL 핸들로
+ *  `i2c_master_probe` 를 112번(0x08~0x77) 불렀다. IDF 가 NULL 을 막아 크래시는
+ *  안 나지만, 매번 ESP_RETURN_ON_FALSE 의 **에러 로그가 찍힌다 → 112줄**.
+ *
+ *  왜 이게 USB 없을 때만 치명적인가:
+ *    보조 콘솔이 USB-Serial-JTAG 이라(CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG),
+ *    `esp_rom_usb_serial_putc` 는 줄바꿈마다 `usb_serial_device_tx_flush()` 를 부른다.
+ *    USB 호스트가 없으면 이 ROM 함수가 대기하므로 **한 줄당 수십~수백 ms** 가 걸린다.
+ *    112줄이면 수십 초 → 부팅이 사실상 정지한다(관측: 40초~1분 뒤 재부팅).
+ *    USB 를 꽂으면 호스트가 FIFO 를 비워 즉시 끝나므로 증상이 사라진다.
+ *
+ *  → 비트뱅 모드에서는 **비트뱅 프로브**로 스캔한다(로그도 조용하다).
+ *    이 경로는 OLED 검출 실패 시에만 실행되므로 평소엔 영향이 없다. */
 static void _oled_i2c_scan(void) {
     char buf[80]; int n = 0; buf[0] = '\0';
     for (uint8_t a = 0x08; a <= 0x77; a++) {
+#if BOARD_OLED_BITBANG
+        if (_bbo_probe(a)) {
+#else
         if (i2c_master_probe(s_dev._i2c_bus_handle, a, 20) == ESP_OK) {
+#endif
             n += snprintf(buf + n, sizeof(buf) - n, "0x%02X ", a);
             if (n >= (int)sizeof(buf) - 6) break;
         }
@@ -2980,6 +3000,7 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
      *  다른 태스크(btn_handler)의 oled_ui_i2c_lock() 이 s_i2c_mutex==NULL 을 만나
      *  **무보호로 통과**했다. 보호 구멍을 없애려고 앞으로 당긴다. */
     if (!s_i2c_mutex) s_i2c_mutex = xSemaphoreCreateRecursiveMutex();
+    boot_diag_sub(1);   /* 뮤텍스 생성 완료 */
 
     /* esp-idf-ssd1306 라이브러리 초기화 — I2C 모드.
      * ESP32-C6-0.42 보드의 0.42" OLED는 IO1(SDA) / IO0(SCL)에
@@ -2988,6 +3009,7 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
     /* ★비트뱅 모드: HW I2C 버스를 아예 만들지 않는다(페리페럴 고착 회피).
      *  핀만 GPIO 로 확보하고 s_dev 의 주소/크기 필드만 채운다. */
     _bbo_init_pins();
+    boot_diag_sub(2);   /* 비트뱅 핀 설정 완료 */
     s_dev._address = BOARD_OLED_ADDR;
     s_dev._i2c_num = I2C_NUM_0;
     s_dev._i2c_bus_handle = NULL;
@@ -3004,14 +3026,19 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
      *  미연결 보드(예: 배선 전 XIAO)에서 ssd1306 init/flush 의 I2C NACK
      *  로그 스팸(50ms마다)을 막는다. 미검출이면 I2C 스캔으로 진단 로그를
      *  남기고 표시 비활성 + 5초마다 재검출(hot-plug). 검출되면 패널 init. */
+    boot_diag_sub(3);   /* 검출 시도 직전 */
     if (_oled_try_detect()) {
+        boot_diag_sub(10);  /* 검출 성공 → 패널 init 경로 */
         ESP_LOGI(TAG, "OLED init OK (캔버스 %d×%d, 회전=%d)",
                  OLED_WIDTH, OLED_HEIGHT, OLED_ROTATE_180);
     } else {
+        boot_diag_sub(4);   /* ★검출 실패 경로 진입 */
         s_oled_present = false; g_oled_present_mon = false; _shadow_invalidate();
         s_oled_last_probe_ms = _ms_now();
         ESP_LOGW(TAG, "OLED(0x3C/0x3D) 미검출 — 표시 비활성(5s마다 자동 재검출)");
+        boot_diag_sub(5);   /* 스캔 직전 — 여기서 멈추면 스캔이 범인 */
         _oled_i2c_scan();     /* 진단: 버스에 응답하는 주소 목록 */
+        boot_diag_sub(6);   /* 스캔 완료 */
         /* _oled_bitbang_diag() 비활성화(2026-07-19): 내부에서 라이브러리 i2c_master_init(400k)로
          * 버스를 재생성하는데, 위 저속 init 이 이미 포트0에 버스를 만들어 둬서 중복 생성 시
          * ESP_ERROR_CHECK 패닉이 난다. 진단 전용이므로 호출만 제거(함수는 보존). */

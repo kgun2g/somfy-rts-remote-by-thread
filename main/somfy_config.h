@@ -206,3 +206,11 @@
 #ifndef CFG_SCREEN_OFF_SEC
 #define CFG_SCREEN_OFF_SEC   10   /* 초. 예: 10=10초, 60=1분, 180=3분 */
 #endif
+/* ★2026-08-11 USB 연결 시에는 더 길게 (사용자 요청).
+ *  왜 나누나: 배터리 구동은 화면이 소비의 큰 몫이라 짧게 꺼야 하지만, USB 는 전원이
+ *  무제한이므로 작업 중 화면이 10초마다 꺼지면 불편하다. `usb_mode`(_is_usb_powered)
+ *  로 분기해 같은 유휴 로직에 서로 다른 문턱만 적용한다.
+ *  ※배터리값(CFG_SCREEN_OFF_SEC)은 그대로 10초 유지. */
+#ifndef CFG_SCREEN_OFF_USB_SEC
+#define CFG_SCREEN_OFF_USB_SEC  300   /* 초. USB 연결 시 5분 */
+#endif

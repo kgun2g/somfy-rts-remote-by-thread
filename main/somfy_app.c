@@ -25,6 +25,7 @@
 #include "esp_task_wdt.h"     /* Task WDT — 메인 루프 hang 자동 리부트 */
 #include "esp_attr.h"         /* RTC_NOINIT_ATTR — 리부트 살아남는 메모리 */
 #include "thread_provision.h"
+#include "boot_diag.h"        /* 부팅 단계 NVS 기록 — 배터리 부팅 멈춤 진단 */
 #include "esp_timer.h"
 /* WiFi 헤더 제거 — v3.0 Thread 전환.
  * esp_wifi 가 sdkconfig 에서 disabled 이므로 컴파일 단계에서 제외.
@@ -579,8 +580,8 @@ static void _time_edit_save(void) {
 #define CFG_CHG_ANIM_ENABLE 0
 #endif
 /* ★2026-07-23 화면 정책: 화면보호기(중간 애니메이션) **코드 삭제**.
- *  유휴 CFG_SCREEN_OFF_SEC(somfy_config.h) 초가 지나면 곧바로 패널 OFF.
- *  버튼/진동으로 즉시 복귀. 시간을 바꾸려면 CFG_SCREEN_OFF_SEC 만 수정. */
+ *  유휴 시간이 지나면 곧바로 패널 OFF(USB=CFG_SCREEN_OFF_USB_SEC,
+ *  배터리=CFG_SCREEN_OFF_SEC — somfy_config.h). 버튼/진동으로 즉시 복귀. */
 #define USB_DETECT_HOLD_MS    60000      /* 마지막 충전 감지 후 1분간 USB 모드 유지 */
 #define VIBRATION_HOLD_MS         5000   /* 진동 후 5초 sleep 차단 */
 static volatile int64_t s_last_activity_us = 0;
@@ -1911,6 +1912,53 @@ static uint8_t _bat_mv_to_pct(int mv) {
   return 100;
 }
 
+/* ─── 표시용 배터리 전압 평활 (2026-08-11) ──────────────────────────────────
+ *  증상: 배터리 구동으로 바꾸자 표시가 81→82→**74**→84→81→83→81→82 % 로 튀었다.
+ *
+ *  원인: USB 전원일 땐 레일이 단단해 전압이 거의 안 변했다. 배터리로 바꾸면 BLE 광고·
+ *  RF 송신 순간 **실제로** 전압이 떨어진다. 5초 주기 측정이 그 순간에 걸리면 한 점이
+ *  크게 낮게 찍힌다. OCV 곡선상 이 구간은 1% ≈ 10mV 라 100mV 만 흔들려도 10%p 가 움직인다.
+ *  `_read_bat_mv()` 의 8회 평균은 수십 us 안에 끝나 **같은 순간을 8번 재는 것**이라
+ *  ADC 노이즈만 줄일 뿐 부하 변동은 전혀 못 거른다(게다가 평균은 이상치에 끌려간다).
+ *
+ *  대책(표시 경로에만 적용):
+ *    1) **중앙값 5주기** — 송신 순간에 걸린 점을 통째로 버린다(평균과 달리 안 끌려감)
+ *    2) **EMA(α=1/4)** — 남은 흔들림을 시간축으로 눌러 표시가 안 튀게 한다
+ *
+ *  ★`_nobat_track` 에는 **원본 값**을 준다 — 그쪽은 5분 창 30표본 통계라 평활하면
+ *    "전압이 오르는가" 판정 가정이 깨진다. 측정 주기·표본 수도 그대로 둔다.
+ *
+ *  ★★EMA 를 **1/16 mV 단위**로 누적하는 이유: C 의 정수 나눗셈은 0 쪽으로 절단한다.
+ *    1mV 단위로 `ema += (med-ema)/4` 를 쓰면 차이가 1~3mV 일 때 몫이 0 이 되어
+ *    **EMA 가 영영 안 움직인다**(고착). 16배 해상도면 1mV 차이도 4/16mV 씩 수렴한다.
+ *    (sim/tools/bat_pct_smooth_sim.py 가 이 버그를 잡아냈다 — 파이썬 // 는 내림이라
+ *     그냥 옮겼으면 못 봤을 것이다.)
+ *
+ *  검증: 진폭 19%p→9%p, 주기간 변동 4.1→0.38%p, 송신 강하 이상치 미노출, 방전 추종 지연 2%p */
+#define BAT_DISP_WIN 5
+static int      s_bat_hist[BAT_DISP_WIN];
+static int      s_bat_hist_n = 0, s_bat_hist_i = 0;
+static int32_t  s_bat_ema_q4 = 0;         /* 1/16 mV 단위 */
+
+static int _bat_smooth_mv(int mv) {
+  s_bat_hist[s_bat_hist_i] = mv;
+  s_bat_hist_i = (s_bat_hist_i + 1) % BAT_DISP_WIN;
+  if (s_bat_hist_n < BAT_DISP_WIN) s_bat_hist_n++;
+
+  int t[BAT_DISP_WIN];
+  for (int i = 0; i < s_bat_hist_n; i++) t[i] = s_bat_hist[i];
+  for (int i = 1; i < s_bat_hist_n; i++) {          /* 삽입정렬(최대 5개) */
+    int v = t[i], j = i - 1;
+    while (j >= 0 && t[j] > v) { t[j + 1] = t[j]; j--; }
+    t[j + 1] = v;
+  }
+  int med = t[s_bat_hist_n / 2];
+
+  if (s_bat_ema_q4 == 0) s_bat_ema_q4 = med * 16;
+  else                   s_bat_ema_q4 += ((int32_t)med * 16 - s_bat_ema_q4) / 4;
+  return (int)(s_bat_ema_q4 / 16);
+}
+
 /* ─── 배터리 미연결 판정 (5분 창마다 주기 재판정) ─────────────────────────────
  *  XIAO 는 **배터리 감지 신호가 없다**(충전 status NCHG 는 온보드 LED 전용이라
  *  어떤 패드에도 안 나옴 — wiring_xiao-c6.md). 그런데 배터리를 빼도 충전 IC 가
@@ -2205,6 +2253,7 @@ void somfy_app_bc_btn_tick(void) {
 
 void somfy_app_run(void *arg) {
   (void)arg;
+  boot_diag_stage2(BOOT_S2_RUN_ENTRY);
   app_log_init();   /* 전역 로그 레벨 적용 (esp_log) */
   _crash_breadcrumb_init();
 #ifdef SOMFY_SELFTEST
@@ -2247,6 +2296,24 @@ void somfy_app_run(void *arg) {
 
   /* ── 0. RTC를 빌드(=PC) 시각으로 초기화 (SNTP 전 fallback) ── */
   _init_rtc_from_build_time();
+  boot_diag_stage2(BOOT_S2_RTC_INIT);
+
+  /* ★2026-08-11 배터리 ADC 를 **부팅 초반으로 앞당긴다**(원래는 버튼 init 뒤).
+   *  이유: "USB 없이 배터리만 연결하면 부팅 중 반복 재부팅" 진단에서, 실패 기록의
+   *  전압이 항상 -1(미측정)이었다. 첫 측정이 메인 루프(5초)라 그 전에 죽으면
+   *  전압 증거가 하나도 안 남는다. 여기서 재면 **붕괴 직전 전압**을 붙잡는다.
+   *  안전성: _read_bat_mv 가 쓰는 두 뮤텍스는 아직 NULL 이라 잠금을 건너뛴다
+   *  (btn_handler_get_i2c_mutex → NULL, oled_ui_i2c_trylock → true 반환). */
+#if BOARD_HAS_BAT_ADC
+  _bat_adc_init();
+  {
+    int _mv0 = _read_bat_mv();
+    if (_mv0 > 0) {
+      boot_diag_set_bat_mv(_mv0);
+      ESP_LOGW(TAG, "[BAT] 부팅 초기 전압 %dmV", _mv0);
+    }
+  }
+#endif
 
   /* ── 1~3. blind_manager/CC1101/Somfy 는 app_main.cpp 가 소유·초기화 완료.
    *  여기서 재초기화하지 않는다(공유 인스턴스 g_mgr/g_somfy/g_cc1101). */
@@ -2275,10 +2342,13 @@ void somfy_app_run(void *arg) {
   s_ui.chg_percent = BAT_PCT_UNKNOWN;
 #endif
 
+  boot_diag_stage2(BOOT_S2_OLED_ENTER);   /* ★여기서 멈추면 OLED init 이 범인 */
   oled_ui_init(&s_ui);                 /* SSD1306 1회 init (연속 X) */
+  boot_diag_stage2(BOOT_S2_OLED_DONE);
   btn_handler_init(_btn_event_cb, NULL); /* GPIO 설정 (연속 X) */
+  boot_diag_stage2(BOOT_S2_BTN_DONE);
 #if BOARD_HAS_BAT_ADC && !TEMP_NO_CHARGE
-  _bat_adc_init();                     /* 배터리 전압 ADC (실측 %) */
+  /* (_bat_adc_init 은 부팅 초반으로 이동 — 아래 RTC init 직후 주석 참조) */
 #endif
 
   /* ── 5. Thread/Matter 초기화 — ★ OLED/버튼 연속 태스크 시작 전, 깨끗하게 ──
@@ -2320,6 +2390,7 @@ void somfy_app_run(void *arg) {
   if (s_rf_queue == NULL) {
     s_rf_queue = xQueueCreate(RF_QUEUE_DEPTH, sizeof(rf_job_t));
   }
+  boot_diag_stage2(BOOT_S2_RF_DONE);
 
   /* 절전 타이머 초기화 (부팅 직후를 활동으로 기록) */
   _mark_activity();
@@ -2362,10 +2433,11 @@ void somfy_app_run(void *arg) {
   }
 
   /* ── 9. 메인 루프 ── */
+  boot_diag_stage2(BOOT_S2_MAIN_LOOP);
   ESP_LOGI(
       TAG,
-      "메인 루프 시작 (유휴 %d초 → 화면 OFF, 버튼/진동으로 복귀, 화면보호기 없음)",
-      CFG_SCREEN_OFF_SEC);
+      "메인 루프 시작 (유휴 → 화면 OFF: USB %d초 / 배터리 %d초, 버튼·진동으로 복귀)",
+      CFG_SCREEN_OFF_USB_SEC, CFG_SCREEN_OFF_SEC);
   /* Task WDT subscribe — 메인 루프가 N초 이상 안 돌면 자동 panic+리부트.
    *  silent hang(스크린세이버에서 wake 무반응 등) 자동 복구 + 다음 boot 시
    *  reset_reason=TASK_WDT 로 breadcrumb 와 함께 진단 가능. */
@@ -2551,6 +2623,7 @@ void somfy_app_run(void *arg) {
        * 튀지 않게). 미측정이므로 _nobat_track 에도 넣지 않는다(평균 오염 방지). */
       int _bat_mv = _read_bat_mv();
       if (_bat_mv > 0) {
+        boot_diag_set_bat_mv(_bat_mv);   /* 1회만 기록 — 부팅 시 전원 상태 증거 */
         _nobat_track(_bat_mv);
         /* ★2026-08-11 첫 판정 전 % 숨김 — 단, **애매한 구간에서만** 숨긴다.
          *  무배터리 float 창(3940~4010mV) 밖이면 배터리가 있다는 게 전압만으로
@@ -2563,7 +2636,7 @@ void somfy_app_run(void *arg) {
         if (!s_nobat_judged && _ambiguous)
           s_ui.chg_percent = BAT_PCT_UNKNOWN;          /* 표시측이 "--%" 로 렌더 */
         else
-          s_ui.chg_percent = s_nobat ? 0 : _bat_mv_to_pct(_bat_mv);
+          s_ui.chg_percent = s_nobat ? 0 : _bat_mv_to_pct(_bat_smooth_mv(_bat_mv));
       } else if (!s_bat_adc_ok) {
         s_ui.chg_percent = _estimate_battery_percent();  /* ADC 자체가 없는 경우만 */
       }
@@ -2652,9 +2725,13 @@ void somfy_app_run(void *arg) {
      *   1단계 활성 (idle < off)  : 정상 화면
      *   2단계 OFF  (idle >= off) : 패널 OFF (+배터리는 light sleep)
      *  중간의 "화면보호기 애니메이션" 단계는 **제거**했다(사용자 요청).
-     *  꺼지는 시간은 CFG_SCREEN_OFF_SEC(somfy_config.h) 하나로 설정한다.
+     *  꺼지는 시간은 somfy_config.h 의 CFG_SCREEN_OFF_USB_SEC(USB) /
+     *  CFG_SCREEN_OFF_SEC(배터리) 두 값으로 설정한다.
      *  깨우기: 버튼(_btn_event_cb) / 진동(아래 vibration 분기)이 담당. */
-    int64_t off_to_us = (int64_t)CFG_SCREEN_OFF_SEC * 1000000LL;
+    /* ★2026-08-11 USB/배터리 문턱 분리 — USB 는 전원이 무제한이라 길게(기본 5분),
+     *  배터리는 화면이 소비의 큰 몫이라 짧게(기본 10초). 값은 somfy_config.h 에서. */
+    int64_t off_to_us = (int64_t)(usb_mode ? CFG_SCREEN_OFF_USB_SEC
+                                           : CFG_SCREEN_OFF_SEC) * 1000000LL;
 
     if (inhibit) {
       /* 설정/페어링/충전 화면 — 화면 OFF 보류, 타이머 재시작 */
@@ -2690,6 +2767,25 @@ void somfy_app_run(void *arg) {
      *    · lockTO 가 0 이 아님      → 누군가 뮤텍스를 200ms 넘게 쥔다(원인 추적 필요)
      *  ★함정: "실패 0"만 보면 안 된다. OLED 미검출이면 flush 를 건너뛰어 전송도
      *    에러도 안 생긴다 → **present=1 과 전송 카운터 증가를 같이** 볼 것. */
+    /* ★부팅 성공 확정 — 메인 루프가 30초 살아 있으면 "정상 가동"으로 기록한다.
+     *  다음 부팅에서 이 값이 아니면 **직전 부팅이 그 단계에서 멈췄다**는 뜻. */
+    {
+      static bool _boot_ok_marked = false;
+      if (!_boot_ok_marked && esp_timer_get_time() > 30LL * 1000000LL) {
+        _boot_ok_marked = true;
+        boot_diag_stage2(BOOT_S2_RUNNING);
+      }
+      /* 직전 부팅 요약 재출력 — begin() 시점(부팅 ~100ms) 로그는 USB-JTAG 이
+       *  버려서 실제로 통째로 유실됐다. 5초·20초에 두 번 더 찍어 확실히 남긴다. */
+      static int _prev_logged = 0;
+      int64_t _up = esp_timer_get_time();
+      if ((_prev_logged == 0 && _up > 5LL * 1000000LL) ||
+          (_prev_logged == 1 && _up > 20LL * 1000000LL)) {
+        _prev_logged++;
+        boot_diag_log_prev();
+      }
+    }
+
     {
       extern volatile uint32_t g_bbo_tx_cnt, g_bbo_fail_cnt, g_page_skip, g_page_sent;
       extern volatile uint32_t g_bbo_lock_to_cnt;
