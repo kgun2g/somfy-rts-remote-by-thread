@@ -34,6 +34,13 @@ static void IRAM_ATTR _vibe_isr_handler(void *arg);
 /* 진동 ISR 카운터 / disable 플래그 — 정의는 아래 진동 섹션 */
 static volatile uint32_t s_vibe_isr_count;
 static volatile bool     s_vibe_isr_disabled_flag;
+/* ★2026-08-12 ISR → 태스크 즉시 통지용 핸들.
+ *  왜 필요한가: 진동 ISR 이 발사돼도 판정은 폴링 태스크가 하므로, 태스크가 다음
+ *  틱까지 자고 있으면 그만큼 늦어진다. 통지로 **즉시 깨워** 검출 지연을 폴링
+ *  주기에서 분리한다(= 나중에 유휴 폴링을 늦출 수 있게 하는 전제).
+ *  ※주의: 이것만으로 폴링이 없어지지는 않는다 — X160 은 가만히 둬도 chatter 로
+ *    ISR 이 계속 발사돼, 진짜 진동인지는 **HIGH duty-cycle 창**으로만 가릴 수 있다. */
+static TaskHandle_t      s_btn_task_h = NULL;
 
 /* ─── 디바운스 / 롱프레스 설정 ───────────────── */
 #define DEBOUNCE_MS CFG_BTN_DEBOUNCE_MS
@@ -579,8 +586,12 @@ static void _btn_task(void *pvParam) {
      *  이 태스크는 **깨우기 담당**이라 절전 대상이 아니다. 폴링을 늦추면 절전보다
      *  잃는 게 크다. 10ms 고정으로 되돌린다.
      *  ※절전은 이 태스크를 늦추는 대신, PCF ~INT 인터럽트 기반으로 바꾸는 것이
-     *    올바른 방향이다(현 HW 는 ~INT 가 불안정해 폴링을 쓰는 중). */
-    vTaskDelay(pdMS_TO_TICKS(10));
+     *    올바른 방향이다(현 HW 는 ~INT 가 불안정해 폴링을 쓰는 중).
+     *  ★2026-08-12 vTaskDelay → ulTaskNotifyTake: 진동 ISR 이 **즉시 깨울 수** 있게
+     *    한다. 타임아웃 10ms 는 그대로라 지금 동작·응답성은 이전과 동일하고,
+     *    다만 검출 지연이 폴링 주기에서 분리된다(유휴 폴링을 늦추기 위한 전제).
+     *    ※폴링 자체는 아직 늦추지 않는다 — ~INT 가 실제로 다 잡는지 측정 전이다. */
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
   }
 }
 
@@ -734,7 +745,7 @@ void btn_handler_init(btn_event_cb_t cb, void *user_data) {
 }
 
 void btn_handler_start_task(void) {
-  xTaskCreate(_btn_task, "btn_handler", 3072, NULL, 10, NULL);   /* composed 로 free 확보 → 전 보드 3072 통일 */
+  xTaskCreate(_btn_task, "btn_handler", 3072, NULL, 10, &s_btn_task_h);   /* composed 로 free 확보 → 전 보드 3072 통일 */
 }
 
 bool btn_is_pressed(btn_key_t key) {
@@ -784,6 +795,13 @@ static void IRAM_ATTR _vibe_isr_handler(void *arg) {
      *  (HAL 레이어, 항상 IRAM-safe). 폴링 태스크의 gpio_intr_enable 은 task
      *  context 라 flash 접근 OK — 그대로 둔다. */
     gpio_ll_intr_disable(&GPIO, VIBE_PIN);
+    /* ★폴링 태스크를 즉시 깨운다 — duty-cycle 창 측정을 곧바로 시작하게 해
+     *  검출 지연이 폴링 주기에 묶이지 않도록 한다. */
+    if (s_btn_task_h) {
+        BaseType_t hpw = pdFALSE;
+        vTaskNotifyGiveFromISR(s_btn_task_h, &hpw);
+        if (hpw) portYIELD_FROM_ISR();
+    }
     s_vibe_isr_disabled_flag = true;
     s_vibe_isr_count++;
 }
