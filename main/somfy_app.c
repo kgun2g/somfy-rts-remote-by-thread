@@ -1958,7 +1958,26 @@ static int _read_bat_mv(void) {
    *   **못 잡으면 이번 주기를 건너뛴다**(다음 주기에 읽으면 그만).
    *   lock 순서도 통일: btn → oled 로만 잡고, 실패 시 즉시 되돌려 데드락을 없앤다. */
   SemaphoreHandle_t _i2c_mtx = btn_handler_get_i2c_mutex();
-  bool _locked = (_i2c_mtx && xSemaphoreTake(_i2c_mtx, pdMS_TO_TICKS(20)) == pdTRUE);
+  /* ★타임아웃 20ms → 300ms. 버튼 태스크가 10ms 마다 이 뮤텍스를 쥐므로 20ms 로는
+   *  거의 매번 실패한다. 아래에서 실패 시 측정을 건너뛰도록 바꾸자 **영영 측정이 안 돼
+   *  화면에 "--%" 만 나왔다**(실사용 신고). 배터리 측정은 5초 주기라 300ms 를 기다려도
+   *  아무 문제 없다 — 넉넉히 기다려 확실히 잡는다. */
+  bool _locked = (_i2c_mtx && xSemaphoreTake(_i2c_mtx, pdMS_TO_TICKS(300)) == pdTRUE);
+  /* ★★2026-08-12 **버튼 뮤텍스를 못 잡으면 이번 주기를 건너뛴다.**
+   *
+   *  버그였다: 예전엔 _locked 가 false 여도 그대로 ADC 를 읽었다(OLED 락만 검사).
+   *  그런데 BAT_ADC(GPIO1)=ADC1_CH1 이고 PCF 비트뱅(GPIO6)=ADC1_CH6 으로 **같은 ADC1
+   *  유닛**이라, 버튼 비트뱅이 GP6 을 토글하는 동안 GP1 변환이 교란된다.
+   *  → 좌/우 버튼을 연타하면 버튼 태스크가 뮤텍스를 계속 쥐어 20ms 타임아웃이 나고,
+   *    오염된 값이 그대로 표시된다. 실측 신고: 연타 중 38→39→**40%** 로 **올라갔고**
+   *    (부하가 걸리면 내려가야 하므로 물리적으로 불가능), 재부팅 후 44→45→**37%** 로
+   *    널뛰었다. 교란은 방향성이 없어 위아래 아무 쪽으로나 튄다.
+   *
+   *  배터리 측정은 5초 주기 비긴급 작업이므로 **건너뛰는 게 옳다**(다음 주기에 읽으면
+   *  그만). 이 직렬화가 필요하다는 건 위 주석에 이미 있었는데 실패 경로가 빠져 있었다. */
+  if (_i2c_mtx && !_locked) {
+    return -1;                          /* 버튼 비트뱅 진행 중 → ADC1 교란 회피 */
+  }
   if (!oled_ui_i2c_trylock(30)) {      /* ★OLED flush 와도 직렬화(위 주석의 핵심 이유) */
     if (_locked) xSemaphoreGive(_i2c_mtx);
     return -1;                          /* 전송 중 → 이번 주기 건너뜀(무한 대기 X) */
@@ -2866,7 +2885,24 @@ void somfy_app_run(void *arg) {
          *    5분 뒤 0% 로 확정된다(그 전엔 "--%"). */
         const bool _ambiguous = (_bat_mv >= BAT_NOBAT_LO && _bat_mv <= BAT_NOBAT_HI &&
                                  _is_usb_powered());
-        if (!s_nobat_judged && _ambiguous)
+        /* ★★2026-08-12 숨김에 **상한**을 둔다.
+         *  버그였다: "판정 전 + 애매하면 숨김"에 시간 제한이 없어, 전압이 float
+         *  창(3940~4010mV) 안에 머물면 판정이 끝날 때까지 계속 "--%" 였다.
+         *  판정은 5분 창이 차야 나는데 재부팅하면 처음부터 다시라, 플래시·재부팅이
+         *  잦으면 **영영 숫자가 안 나온다**(실사용 신고: "충전률이 안 나온다").
+         *  → 부팅 후 BAT_HIDE_MAX_S 를 넘기면 판정 여부와 무관하게 실측 % 를 보여준다.
+         *    틀릴 수 있는 78% 를 잠깐 감추자는 장치였지, 영구히 감추자는 게 아니었다. */
+#ifndef BAT_HIDE_MAX_S
+/* ★2026-08-12 330초 → 45초 (사용자: "5분 30초는 너무 길다").
+ *  45초는 임의값이 아니라 **표시 평활의 중앙값 창이 채워지는 시간**이다
+ *  (BAT_DISP_WIN 9주기 × 측정주기 5초). 그 전에 보여주면 필터가 안 걸린 날값이
+ *  나오므로, 필터가 찬 직후를 하한으로 잡는다.
+ *  대가: 배터리가 없는데 float 창(3940~4010mV)에 걸린 경우, 판정(5분)이 날 때까지
+ *  최대 4분여 동안 78% 가 보인다. 아무것도 안 보이는 것보다는 낫다는 판단. */
+#define BAT_HIDE_MAX_S 45
+#endif
+        const bool _hide_window = (esp_timer_get_time() < (int64_t)BAT_HIDE_MAX_S * 1000000LL);
+        if (!s_nobat_judged && _ambiguous && _hide_window)
           s_ui.chg_percent = BAT_PCT_UNKNOWN;          /* 표시측이 "--%" 로 렌더 */
         else
           {
