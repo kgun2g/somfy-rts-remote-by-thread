@@ -572,7 +572,13 @@ static void _btn_task(void *pvParam) {
      *  폴링을 10ms → 30ms 로 늦춘다. 버튼 인식은 눌림이 보통 100ms 이상이라 30ms 로도
      *  놓치지 않고, PCF8574 비트뱅 I2C 호출이 1/3 로 줄어 CPU 유휴 시간이 늘어난다
      *  (light sleep 진입에 직접 기여). 화면이 켜지면 즉시 10ms 로 복귀한다. */
-    vTaskDelay(pdMS_TO_TICKS(oled_ui_is_panel_on() ? 10 : 30));
+    /* ★2026-08-12 화면 OFF 시 150ms — light sleep 이 실제로 잘 수 있게 한다.
+     *  이 태스크가 30ms 로 돌면 초당 33회 CPU 를 깨워 light sleep 구간이 30ms 를
+     *  못 넘긴다(진입·복귀 오버헤드에 절전이 다 깎임). 150ms 는 임의값이 아니라
+     *  이미 esp_sleep_enable_timer_wakeup(150000) 백스톱이 쓰는 값이다 —
+     *  설계가 이미 150ms 응답을 수용하고 있다. 버튼 누름은 보통 100ms 이상이라
+     *  놓치지 않는다. 화면이 켜지면 즉시 10ms 로 복귀한다. */
+    vTaskDelay(pdMS_TO_TICKS(oled_ui_is_panel_on() ? 10 : 150));
   }
 }
 

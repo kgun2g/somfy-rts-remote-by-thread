@@ -1536,6 +1536,12 @@ static void _sntp_sync_cb(struct timeval *tv) {
  *   즉 0=전속·절전없음(USB), 1=DFS만, 3=DFS+light sleep(배터리·등록완료) */
 static volatile int g_pm_state_applied = -1;
 
+/* time_update 태스크 핸들 — 화면이 켜질 때 즉시 깨우기 위해 보관(위 5분 대기 참조). */
+static TaskHandle_t s_time_task_h = NULL;
+static inline void _wake_time_task(void) {
+  if (s_time_task_h) xTaskNotifyGive(s_time_task_h);
+}
+
 static void _enable_pm_light_sleep(void) {
 #if CONFIG_PM_ENABLE
   /* ★★2026-08-11 재작성 — light sleep 을 **커미셔닝 완료 후에만** 켠다.
@@ -1739,7 +1745,7 @@ static void _start_app_tasks_once(void) {
    *  확보를 위해 time 태스크(스택 ~5KB)·SNTP 를 만들지 않는다. */
 #if !BOARD_DISABLE_TIME
   xTaskCreate(_time_persist_task, "time_persist",3072, NULL, 2, NULL);
-  xTaskCreate(_time_task,         "time_update", 2048, NULL, 3, NULL);
+  xTaskCreate(_time_task,         "time_update", 2048, NULL, 3, &s_time_task_h);
   _sntp_start_once();
 #endif
 
@@ -1857,7 +1863,12 @@ static void _time_task(void *pvParam) {
       s_ui.anim_frame++;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1000));   // 1 s 주기 (분 경계 감지)
+    /* ★2026-08-12 화면 OFF 시 5분 (사용자 지정) — 시계가 안 보이는데 1초마다
+     *  깨울 이유가 없다. 단순히 길게 자면 화면이 켜졌을 때 최대 5분 낡은 시각이
+     *  보이므로, **알림(notify)으로 즉시 깨어나게** 한다(_exit_sleep/_exit_screensaver
+     *  가 화면을 켜면서 통지). 그래서 5분을 자도 표시는 늦지 않는다. */
+    ulTaskNotifyTake(pdTRUE,
+                     pdMS_TO_TICKS(oled_ui_is_panel_on() ? 1000 : 300000));
   }
 }
 
@@ -2400,6 +2411,7 @@ static void _exit_sleep(const char *reason) {
     oled_ui_render_main_once(&s_ui);
   }
   oled_ui_set_display_on(true);
+  _wake_time_task();   /* 시계 태스크 즉시 깨움 — 5분 대기 중이어도 바로 갱신 */
   _mark_activity();
   ESP_LOGI(TAG, "절전 모드 해제 (%s)", reason ? reason : "");
 }
@@ -3165,6 +3177,9 @@ void somfy_app_run(void *arg) {
     /* ★ 메인 루프 1000→100ms — 진동/버튼 이벤트 응답 지연(최대 1초) 단축.
      *  나머지 작업(충전, OLED, 스크린세이버 타이머)도 10× 자주 돌지만 모두
      *  경량 폴링/상태머신이라 부담 없음. light sleep 도 vTaskDelay 동안 정상 진입. */
-    vTaskDelay(pdMS_TO_TICKS(100));
+    /* ★2026-08-12 화면 OFF 시 500ms — 화면이 꺼져 있으면 즉시 반응할 대상이 없다.
+     *  깨우기는 btn_handler(진동·버튼)가 담당하므로 여기서 자주 돌 이유가 없고,
+     *  깨어남 횟수를 줄여야 light sleep 이 의미 있는 길이로 잔다. */
+    vTaskDelay(pdMS_TO_TICKS(oled_ui_is_panel_on() ? 100 : 500));
   }
 }
