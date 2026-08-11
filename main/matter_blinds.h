@@ -115,6 +115,13 @@ const char *matter_blinds_get_qr_payload(void);
  *  여유를 두고 esp_restart 할 것(미커미셔닝 상태로 재부팅 → 자동 BLE 광고). */
 void matter_blinds_remove_all_fabrics(void);
 
+/* ★2026-08-11 무선(Thread+BLE) 게이팅 — 배터리 절약.
+ *  Thread 기기로 등록되지 않은 상태에서는 라디오가 할 일이 없으므로 꺼둔다.
+ *  설정 메뉴에서 페어링을 시작하면 자동으로 켜지고(open_commissioning_window 내부),
+ *  커미셔닝이 완료되면 계속 켜둔다. somfy_app 메인 루프가 주기적으로 상태를 맞춘다. */
+void matter_blinds_set_radio_enabled(bool on);
+bool matter_blinds_get_radio_enabled(void);
+
 /* ─── Matter OTA (Thread 무선 펌웨어 업데이트) ──────────────────────
  *  디바이스는 듀얼 OTA 파티션 + Matter OTA Requestor 가 활성이라, Matter OTA
  *  Provider 가 펌웨어(.ota 이미지, 현재 버전보다 높은 SoftwareVersion)를

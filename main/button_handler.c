@@ -568,7 +568,11 @@ static void _btn_task(void *pvParam) {
       }
     }
 
-    vTaskDelay(pdMS_TO_TICKS(10));
+    /* ★2026-08-11 배터리 절약(C안): 화면이 꺼져 있으면 사용자가 보고 있지 않으므로
+     *  폴링을 10ms → 30ms 로 늦춘다. 버튼 인식은 눌림이 보통 100ms 이상이라 30ms 로도
+     *  놓치지 않고, PCF8574 비트뱅 I2C 호출이 1/3 로 줄어 CPU 유휴 시간이 늘어난다
+     *  (light sleep 진입에 직접 기여). 화면이 켜지면 즉시 10ms 로 복귀한다. */
+    vTaskDelay(pdMS_TO_TICKS(oled_ui_is_panel_on() ? 10 : 30));
   }
 }
 

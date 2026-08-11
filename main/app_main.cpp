@@ -22,6 +22,7 @@
 #include "log_heap_numbers.h"
 #include "boot_diag.h"
 #include <driver/gpio.h>
+#include <esp_rom_sys.h>
 #include "boards/board_select.h"   /* BOARD_PIN_CHG_STAT (VBUS 분압) */
 
 #include <app_priv.h>
@@ -420,6 +421,9 @@ extern "C" void somfy_app_console_select(int n);
 extern "C" void somfy_app_console_cycle(int dir);
 extern "C" void somfy_app_console_setfreq(int idx, float mhz);
 extern "C" void somfy_app_console_printfreq(void);
+extern "C" void somfy_app_batlog_dump(void);
+extern "C" void somfy_app_batlog_clear(void);
+extern "C" void somfy_app_console_usbsim(int off);
 static int scmd_tx(int argc, char **argv){
     if(argc<2){ printf("usage: tx up|down|updown|myup|mydown|my|prog [hold_ms]\n"); return 0; }
     const char *a=argv[1]; int cmd=-1;
@@ -452,6 +456,21 @@ static int scmd_reboot(int argc, char **argv){ (void)argc; (void)argv; printf("r
 /* ★부팅 진단 조회 — "bd" 로 언제든 직전/보관된 실패 부팅 기록을 다시 찍는다.
  *  부팅 직후 몇 초짜리 로그 창을 놓쳐도 되도록(실제로 놓쳐서 증거를 날렸다).
  *  "bd clear" 로 보관 기록 삭제. */
+/* ★배터리 방전 기록 조회 — USB 없는 동안 NVS 에 쌓인 것을 꺼내 본다.
+ *  "bl" 덤프 / "bl clear" 삭제. */
+/* ★USB 를 물리적으로 뽑지 않고 배터리 모드 동작을 확인한다. "usbsim off" / "usbsim on". */
+static int scmd_usbsim(int argc, char **argv){
+    if (argc < 2) { printf("usage: usbsim off|on\n"); return 0; }
+    somfy_app_console_usbsim(!strcmp(argv[1], "off") ? 1 : 0);
+    printf("OK usbsim %s\n", argv[1]);
+    return 0;
+}
+static int scmd_bl(int argc, char **argv){
+    if (argc >= 2 && !strcmp(argv[1], "clear")) { somfy_app_batlog_clear(); printf("OK bl clear\n"); return 0; }
+    somfy_app_batlog_dump();
+    printf("OK bl\n");
+    return 0;
+}
 static int scmd_bd(int argc, char **argv){
     if (argc >= 2 && !strcmp(argv[1], "clear")) { boot_diag_clear_fail(); printf("OK bd clear\n"); return 0; }
     boot_diag_log_prev();
@@ -494,7 +513,17 @@ static bool _usb_vbus_present(void)
                                                   : GPIO_PULLDOWN_ENABLE;
     io.intr_type    = GPIO_INTR_DISABLE;
     gpio_config(&io);
-    return gpio_get_level((gpio_num_t)BOARD_PIN_CHG_STAT) == 1;
+    /* ★2026-08-12 다수결 판정 — 한 번만 읽으면 전원 투입 직후 분압이 채 안 올라온
+     *  순간에 걸려 USB 를 놓칠 수 있다(실제로 콘솔이 안 떠 진단이 막혔다).
+     *  10ms 간격 7회 중 과반이면 USB 로 본다. 애매하면 **켜는 쪽**으로 기울인다 —
+     *  콘솔이 없으면 아무것도 진단할 수 없고, 절전 손해는 미미하다. */
+    int hi = 0;
+    for (int i = 0; i < 7; i++) {
+        if (gpio_get_level((gpio_num_t)BOARD_PIN_CHG_STAT) == 1) hi++;
+        esp_rom_delay_us(10000);
+    }
+    ESP_LOGW(TAG, "[CONSOLE] VBUS 판정: %d/7 HIGH (GPIO%d)", hi, BOARD_PIN_CHG_STAT);
+    return hi >= 3;   /* 과반보다 느슨하게 — 켜는 쪽으로 기울임 */
 #else
     return true;   /* VBUS 판정 수단이 없는 보드는 기존 동작 유지 */
 #endif
@@ -759,7 +788,11 @@ extern "C" void app_main()
       const esp_console_cmd_t rbt={ .command="reboot", .help="재부팅(esp_restart)", .hint=NULL, .func=&scmd_reboot, .argtable=NULL };
       esp_console_cmd_register(&rbt);
       const esp_console_cmd_t bdc={ .command="bd", .help="부팅 진단 조회 (bd / bd clear)", .hint=NULL, .func=&scmd_bd, .argtable=NULL };
-      esp_console_cmd_register(&bdc); }
+      esp_console_cmd_register(&bdc);
+      const esp_console_cmd_t blc={ .command="bl", .help="배터리 방전 기록 조회 (bl / bl clear)", .hint=NULL, .func=&scmd_bl, .argtable=NULL };
+      esp_console_cmd_register(&blc);
+      const esp_console_cmd_t usc={ .command="usbsim", .help="배터리 모드 시뮬 (usbsim off|on)", .hint=NULL, .func=&scmd_usbsim, .argtable=NULL };
+      esp_console_cmd_register(&usc); }
     boot_diag_stage(BOOT_S1_CONSOLE_CMDS);
     esp_matter::console::init();
     }   /* if (_usb_on) */

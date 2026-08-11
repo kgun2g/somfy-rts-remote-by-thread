@@ -18,6 +18,8 @@
 #include <setup_payload/OnboardingCodesUtil.h>
 #include <lib/support/Span.h>
 #include <app/clusters/ota-requestor/OTARequestorInterface.h>
+#include <platform/ConnectivityManager.h>
+#include <platform/ThreadStackManager.h>
 #include <app-common/zap-generated/cluster-objects.h>
 #include "esp_app_desc.h"
 
@@ -131,8 +133,46 @@ static void _open_cw(intptr_t)
         ESP_LOGI(TAG, "BLE commissioning window 재오픈(15분)");
 }
 
+/* ── ★2026-08-11 무선 게이팅 (배터리 절약, 사용자 요청) ──────────────────────
+ *  왜: Thread 기기로 **등록되지 않은 상태**에서는 라디오가 할 일이 없는데도 계속 켜져
+ *  전류를 먹는다(측정 84mA 중 대부분이 무선). 등록 전에는 꺼두고, 사용자가 설정 메뉴에서
+ *  페어링을 시작할 때만 켜면 그동안의 소모가 사라진다.
+ *
+ *  구현 메모:
+ *   · 원시 OpenThread API(otThreadSetEnabled) 대신 **CHIP 매니저 API**를 쓴다.
+ *     CHIP 내부 상태와 어긋나지 않고, 커미셔닝 시 CHIP 이 자격증명을 주입하며
+ *     스스로 Thread 를 다시 켜는 흐름과도 충돌하지 않는다.
+ *   · fabric 조작과 마찬가지로 CHIP 스레드에서만 안전하므로 ScheduleWork 로 위임한다.
+ *   · BLE 광고도 같이 끈다(미등록 상태에서 15분간 광고하며 전류를 먹던 것). */
+static bool s_radio_on = true;      /* 부팅 직후는 스택이 켠 상태 */
+
+static void _radio_apply(intptr_t on)
+{
+    const bool en = (on != 0);
+    /* Thread: 자격증명이 없으면 어차피 attach 안 하지만, 라디오 자체를 내려야 절약된다. */
+    CHIP_ERROR err = chip::DeviceLayer::ThreadStackMgr().SetThreadEnabled(en);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "[RADIO] Thread %s 실패: %" CHIP_ERROR_FORMAT,
+                 en ? "ON" : "OFF", err.Format());
+    }
+    /* BLE 광고: 끄면 미등록 상태의 상시 광고 소모가 사라진다. */
+    chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(en);
+    ESP_LOGW(TAG, "[RADIO] 무선 %s (Thread+BLE)", en ? "ON" : "OFF");
+}
+
+extern "C" void matter_blinds_set_radio_enabled(bool on)
+{
+    if (s_radio_on == on) return;      /* 같은 상태면 무동작(로그·작업 폭주 방지) */
+    s_radio_on = on;
+    chip::DeviceLayer::PlatformMgr().ScheduleWork(_radio_apply, on ? 1 : 0);
+}
+
+extern "C" bool matter_blinds_get_radio_enabled(void) { return s_radio_on; }
+
 extern "C" const char *matter_blinds_open_commissioning_window(void)
 {
+    /* ★무선이 꺼져 있으면(미등록 절전 상태) 먼저 켠다 — 안 켜면 커미셔너가 못 찾는다. */
+    matter_blinds_set_radio_enabled(true);
     _compute_pair_code();
     chip::DeviceLayer::PlatformMgr().ScheduleWork(_open_cw, 0);
     ESP_LOGI(TAG, "Commissioning window 재오픈 요청 — 코드: %s", s_pair_code);

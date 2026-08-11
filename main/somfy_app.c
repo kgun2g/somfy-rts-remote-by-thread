@@ -593,12 +593,37 @@ static inline void _mark_activity(void) {
   s_last_activity_us = esp_timer_get_time();
 }
 
+/* ★2026-08-11 배터리 모드 시뮬레이션 — USB 를 물리적으로 뽑지 않고 로직만 검증한다.
+ *  PC 의 USB 포트는 소프트웨어로 5V 를 끊을 수 없어(장치를 비활성화해도 VBUS 는 살아
+ *  있다) 실제 방전 시험은 물리 분리가 필요하다. 하지만 **화면 10초 OFF·무선 게이팅·
+ *  BATLOG 주기·NVS 기록** 같은 동작은 전원과 무관하므로, 이 플래그로 "USB 없음"인 척
+ *  하면 콘솔을 살려둔 채 전 과정을 실시간으로 확인할 수 있다.
+ *  콘솔: `usbsim off`(배터리인 척) / `usbsim on`(해제).
+ *  ※실제 전류·전압 하강은 시뮬로 재현되지 않는다 — 그건 물리 분리로만 잴 수 있다. */
+static volatile bool s_usb_sim_off = false;
+
 /* USB 모드 여부 — 충전 중이거나 최근(USB_DETECT_HOLD_MS) 충전 감지됨 */
 static inline bool _is_usb_powered(void) {
+  if (s_usb_sim_off) return false;          /* 시뮬: 배터리 모드로 강제 */
   if (btn_handler_is_charging()) return true;
+#if BOARD_CHG_STAT_ACTIVE_HIGH
+  /* ★★2026-08-11 이 보드(xiao-c6/h2)는 **hold 를 쓰지 않는다**.
+   *
+   *  hold(60초)는 GNPE 용이다. 거기선 CHG_STAT 이 MCP73831 의 STAT 핀 **직결**이라
+   *  충전이 끝나면 핀이 토글해 USB/배터리 모드가 깜빡거린다 → 여운이 필요했다.
+   *
+   *  그런데 여기선 CHG_STAT 이 **VBUS 분압**이다(GPIO17 ← 5V 를 100k/150k).
+   *  꽂히면 HIGH, 빠지면 LOW 로 명확하고 흔들리지 않으므로 여운이 해롭기만 하다:
+   *    · 화면 OFF 가 10초 → 60초로 늦어짐 (사용자 신고: "분리해도 한참 켜져 있다")
+   *    · PM 절전(DFS/light sleep) 진입이 60초 지연 → 그동안 전속으로 소모
+   *    · [BATLOG] 방전 세션 기준점이 최대 60초 늦게 잡힘
+   *  → VBUS 를 그대로 믿는다. 분리 즉시 배터리 모드로 전환된다. */
+  return false;
+#else
   if (s_last_chg_active_us == 0) return false;
   int64_t ago = esp_timer_get_time() - s_last_chg_active_us;
   return (ago < (int64_t)USB_DETECT_HOLD_MS * 1000);
+#endif
 }
 
 /* ═══════════════════════════════════════════════
@@ -1497,7 +1522,7 @@ static void _sntp_sync_cb(struct timeval *tv) {
 }
 
 /* ═══════════════════════════════════════════════
-   PM 활성화 (idempotent, 1회만) — DFS 전용, light sleep 미사용
+   PM 설정 (idempotent) — DFS 는 항상, light sleep 은 **등록 완료 후에만**
    ──────────────────────────────────────────────
    ★ v3.6: Thread 가 RX_ON_WHEN_IDLE (항상 수신) 로 동작하므로 light sleep
      으로 라디오를 끄면 Matter 명령 수신이 끊긴다. 따라서 light_sleep_enable
@@ -1506,23 +1531,68 @@ static void _sntp_sync_cb(struct timeval *tv) {
    ★ 커미셔닝 완료 후 호출 (그 전엔 주파수 변동도 보수적으로 피함).
    peripheral init 가 모두 끝난 뒤여야 tickless idle 데드락이 없다.
 ═══════════════════════════════════════════════ */
+/* 마지막으로 **실제 적용된** PM 상태 코드 — 모니터 로그용.
+ *   -1 = 미설정 / bit0 = DFS(min 80MHz) / bit1 = light sleep
+ *   즉 0=전속·절전없음(USB), 1=DFS만, 3=DFS+light sleep(배터리·등록완료) */
+static volatile int g_pm_state_applied = -1;
+
 static void _enable_pm_light_sleep(void) {
 #if CONFIG_PM_ENABLE
-  static bool s_pm_enabled = false;
-  if (s_pm_enabled) return;
+  /* ★★2026-08-11 재작성 — light sleep 을 **커미셔닝 완료 후에만** 켠다.
+   *
+   *  왜 나눠야 하나(과거 실패 이력): Thread SED + auto light sleep 을 커미셔닝 도중에
+   *  켜면 Thread operational 단계(SRP 등록 + CASE 핸드셰이크)가 굶어 SmartThings
+   *  페어링이 **마지막에 실패**한다. 그래서 DFS(주파수 스케일링)는 항상 켜되
+   *  light sleep 만 등록 후로 미룬다.
+   *
+   *  또 FTD(rx-on) 구성에서는 라디오를 못 재우므로 light sleep 이 의미가 없다 →
+   *  MTD + ICD(Sleepy End Device) 일 때만 켠다.
+   *
+   *  ※이 함수는 메인 루프가 주기적으로 부른다. 상태가 바뀔 때만 재설정하고
+   *    로그는 **실제 설정값**을 찍는다(예전엔 문자열이 하드코딩돼 있어 light sleep 이
+   *    켜졌는지 로그로 알 수 없었다). */
+  const bool paired = matter_blinds_is_commissioning_complete();
+#if CONFIG_OPENTHREAD_MTD && CONFIG_ENABLE_ICD_SERVER
+  /* ★★2026-08-12 조건 완화 — 실측에서 절전 효과가 0 이었던 원인.
+   *  등록 완료만 조건으로 두니 **미등록 기기는 CPU 가 영영 안 자서** 무선을 꺼도
+   *  소모가 그대로였다(4.5시간에 100%→43%, 평균 89mA — 개선 전 84mA 와 동일).
+   *  커미셔닝 게이트를 넣은 이유는 "Thread operational 단계를 굶기면 페어링이
+   *  실패한다"였는데, **무선이 꺼져 있으면 굶길 대상 자체가 없다**.
+   *  → 등록 완료 **또는** 무선 OFF 이면 light sleep 을 켠다. */
+  const bool want_ls = paired || !matter_blinds_get_radio_enabled();
+#else
+  const bool want_ls = false;   /* rx-on Thread(FTD): 라디오 상시 ON 이라 무의미 */
+#endif
+  /* 현재 적용 상태. 모니터 로그가 읽어 실제 값을 보여준다(하드코딩 금지). */
+  /* ★★2026-08-11 USB 연결 중에는 DFS 를 끈다(min=max=160).
+   *
+   *  왜: DFS 가 80MHz 로 내리면 **USB-Serial-JTAG 가 죽는다**. 우리는 USB-JTAG 를
+   *  보조 ROM 콘솔로만 쓰고 드라이버를 설치하지 않아 PM 락을 잡지 않기 때문이다.
+   *  실제로 DFS 를 켠 직후 COM 포트가 목록에서 사라져 플래시조차 못 했다.
+   *  절전은 어차피 배터리 구동에서만 의미가 있으므로, USB 일 땐 전속으로 돌려
+   *  디버깅·플래시를 지키고 배터리일 때만 DFS·light sleep 을 건다. */
+  /* ★PM 만은 **물리 VBUS** 를 본다(시뮬 무시). 시뮬 중에 DFS 가 켜지면 USB-JTAG 가
+   *  죽어 관찰 자체가 불가능해지기 때문이다(실제로 겪은 문제). 시뮬은 "배터리 모드
+   *  로직"을 보려는 것이지 전력 자체를 재현하려는 게 아니다. */
+  const bool on_usb = btn_handler_is_charging();
+  const int  min_mhz = on_usb ? 160 : 80;
+  const bool ls      = want_ls && !on_usb;   /* USB 중엔 light sleep 도 불필요 */
+
+  static int s_pm_state = -1;   /* 적용된 상태 코드(아래 want 와 동일 규칙) */
+  const int want = (ls ? 2 : 0) + (min_mhz == 80 ? 1 : 0);
+  if (s_pm_state == want) return;
+
   esp_pm_config_t pm_cfg = {
-      .max_freq_mhz = 160,
-      .min_freq_mhz = 80,
-      .light_sleep_enable = false,  /* rx-on Thread: 라디오 항상 ON 유지 */
+      .max_freq_mhz       = 160,
+      .min_freq_mhz       = min_mhz,
+      .light_sleep_enable = ls,
   };
   esp_err_t pm_err = esp_pm_configure(&pm_cfg);
-  s_pm_enabled = (pm_err == ESP_OK);
-  ESP_LOGI(TAG,
-           "PM 활성화 (DFS only, light_sleep=off — rx-on Thread): "
-           "max=160 min=80 → %s",
-           esp_err_to_name(pm_err));
+  if (pm_err == ESP_OK) { s_pm_state = want; g_pm_state_applied = want; }
+  ESP_LOGW(TAG, "PM 설정: %dMHz~160MHz, light_sleep=%s (전원=%s, 등록=%d) → %s",
+           min_mhz, ls ? "ON" : "OFF", on_usb ? "USB" : "배터리",
+           paired ? 1 : 0, esp_err_to_name(pm_err));
 #else
-  /* 메인 루프가 매초 호출하므로 1회만 로그 (로그 폭주 방지) */
   static bool s_pm_warned = false;
   if (!s_pm_warned) {
     s_pm_warned = true;
@@ -1902,9 +1972,16 @@ static int _read_bat_mv(void) {
 }
 
 /* ── 만충 전압 (이 값 이상 = 100%) ────────────────────────────────────────
- *  ★2026-08-11 사용자 요청. 실기 만충 실측이 **4,128~4,132 mV** 로 이론값 4,200 mV
- *  보다 낮다(분압 저항 오차 + ADC 캘리브레이션 오차, 약 1.7%). 그대로 두면 만충인데도
- *  94% 에서 멈춰 "안 올라간다"로 보인다.
+ *  ★2026-08-11 실기 실측 기준. 이론값 4,200 mV 보다 낮은 이유는 분압 저항 오차 +
+ *  ADC 캘리브레이션 오차(약 2%)다.
+ *
+ *  ★★기준을 4,128 → 4,108 로 정정(2026-08-11 2차): 처음에 쓴 4,128~4,132 mV 는
+ *  **충전이 진행 중일 때(CV 구간)** 측정한 값이었다. 그때는 충전 전류가 내부저항을
+ *  지나며 단자 전압을 들뜨게 한다. 몇 시간 충전해 **전류가 끊긴 뒤** 안정된 실제
+ *  무부하 만충 전압은 **4,108 mV** 였고, OCV 곡선은 무부하 전압을 전제로 하므로
+ *  이 값이 맞다. (4,128 로 두면 만충인데도 97% 에서 멈춰 보인다 — 실제 신고 증상.)
+ *  ※XIAO 는 충전 IC 의 STAT 이 온보드 LED 전용이라 어떤 패드에도 안 나온다 →
+ *    "충전 완료 신호로 100% 표시" 같은 정석 방법을 쓸 수 없어 전압 기준으로 잡는다.
  *
  *  왜 곡선 전체를 스케일하지 않고 **상단만 압축**하나:
  *    전체를 곱하면(=게인 보정) 중·저 구간이 통째로 움직여, 오래 검증한 방전 곡선과
@@ -1914,7 +1991,7 @@ static int _read_bat_mv(void) {
  *
  *  기기·배터리마다 다르면 이 값만 바꾸면 된다(보드 헤더에서 먼저 정의해도 됨). */
 #ifndef BAT_FULL_MV
-#define BAT_FULL_MV 4128
+#define BAT_FULL_MV 4108
 #endif
 /* 원곡선 상단: 3980=80%, 4080=90%, 4150=96%, 4200=100%
  * → [3980..4200] 구간을 [3980..BAT_FULL_MV] 로 선형 압축(모양 보존). */
@@ -1960,6 +2037,126 @@ static uint8_t _bat_mv_to_pct(int mv) {
  *  같은 전압 흔들림이 더 큰 %p 로 보이므로 창을 5 → 9 로 늘린다.
  *  실측 비교(sim): 창5 진폭 11%p·변동 0.44%p / 창9 진폭 6%p·변동 0.20%p,
  *  추종 지연은 둘 다 1%p 로 동일 — 늘려도 손해가 없다. */
+/* ── ★2026-08-11 USB 분리 후 방전 기록 (사용자 요청) ────────────────────────
+ *  이 보드에는 **전류 센서(션트/게이지 IC)가 없다** — 잴 수 있는 건 배터리 전압뿐이다.
+ *  그래서 전류는 **전압 하강에서 역산**한다:
+ *      평균전류(mA) = 소모된 용량(mAh) / 경과시간(h)
+ *      소모된 용량   = (시작% - 현재%) × 배터리용량 / 100
+ *  OCV 곡선이 비선형이라 짧은 구간은 오차가 크지만, 세션 전체 평균으로 보면
+ *  "몇 mA 를 쓰고 있나 / 몇 시간 버티나"를 판단하기에 충분하다.
+ *  ※구간(직전 1분) 값도 같이 남긴다 — 화면 ON/OFF, 무선 ON/OFF 처럼 부하가 바뀌는
+ *    순간을 잡으려면 누적 평균만으로는 안 보이기 때문이다. */
+#ifndef BAT_CAPACITY_MAH
+#define BAT_CAPACITY_MAH 700     /* EASYLANDER 402560 3.7V 700mAh */
+#endif
+/* ── ★2026-08-11 방전 기록 **NVS 영속 저장** ────────────────────────────────
+ *  왜 NVS 인가: USB 를 뽑은 동안에는 시리얼 로그를 받을 호스트가 없어 전부 허공으로
+ *  나간다(실제로 첫 시도에서 기록이 통째로 사라졌다). 전원이 끊겨도 남는 플래시에
+ *  써야 나중에 USB 를 다시 꽂아 꺼내볼 수 있다.
+ *
+ *  기록 주기(사용자 지정, 임의로 바꾸지 말 것):
+ *    · USB 분리 직후 2분간 : 5초마다
+ *    · 그 이후            : 2분마다
+ *
+ *  구조: RAM 링버퍼에 쌓고 **매 샘플마다 통째로 NVS blob 1회 쓰기**.
+ *  샘플 6바이트 × 300 = 1.8KB — 2분 간격이면 약 10시간, 초반 5초 24건 포함.
+ *  꽉 차면 오래된 것부터 덮어써 최근 구간을 남긴다.
+ *  조회: 콘솔 `bl` (덤프) / `bl clear` (삭제). */
+#define BATLOG_MAX      300
+#define BATLOG_FAST_S   120     /* 이 시간까지는 빠른 주기 */
+#define BATLOG_FAST_IV  5       /* 빠른 주기(초) */
+#define BATLOG_SLOW_IV  120     /* 이후 주기(초) */
+
+typedef struct __attribute__((packed)) {
+  uint16_t t_s;      /* 세션 시작 후 경과 초 */
+  uint16_t mv;       /* 평활 전압 */
+  uint8_t  pct;      /* 표시 % */
+  uint8_t  flags;    /* bit0=무선ON bit1=화면ON bit2~3=PM상태 */
+} bat_sample_t;
+
+static bat_sample_t s_bl_buf[BATLOG_MAX];
+static uint16_t     s_bl_n = 0;     /* 저장된 개수(최대 BATLOG_MAX) */
+static uint16_t     s_bl_head = 0;  /* 다음 쓸 위치(링) */
+static uint32_t     s_bl_sess = 0;  /* 세션 번호(부팅/분리마다 증가) */
+
+static void _batlog_save(void) {
+  nvs_handle_t h;
+  if (nvs_open("batlog", NVS_READWRITE, &h) != ESP_OK) return;
+  nvs_set_u16(h, "n",    s_bl_n);
+  nvs_set_u16(h, "head", s_bl_head);
+  nvs_set_u32(h, "sess", s_bl_sess);
+  nvs_set_blob(h, "buf", s_bl_buf, sizeof(bat_sample_t) * BATLOG_MAX);
+  nvs_commit(h);
+  nvs_close(h);
+}
+
+static void _batlog_load(void) {
+  nvs_handle_t h;
+  if (nvs_open("batlog", NVS_READONLY, &h) != ESP_OK) return;
+  size_t len = sizeof(s_bl_buf);
+  if (nvs_get_blob(h, "buf", s_bl_buf, &len) != ESP_OK || len != sizeof(s_bl_buf)) {
+    memset(s_bl_buf, 0, sizeof(s_bl_buf)); s_bl_n = 0; s_bl_head = 0;
+  } else {
+    nvs_get_u16(h, "n", &s_bl_n);
+    nvs_get_u16(h, "head", &s_bl_head);
+    nvs_get_u32(h, "sess", &s_bl_sess);
+  }
+  nvs_close(h);
+}
+
+static void _batlog_reset(void) {
+  s_bl_n = 0; s_bl_head = 0; s_bl_sess++;
+  memset(s_bl_buf, 0, sizeof(s_bl_buf));
+  _batlog_save();
+}
+
+static void _batlog_add(int t_s, int mv, int pct, bool radio, bool panel, int pm) {
+  bat_sample_t *e = &s_bl_buf[s_bl_head];
+  e->t_s  = (uint16_t)(t_s > 65535 ? 65535 : t_s);
+  e->mv   = (uint16_t)mv;
+  e->pct  = (uint8_t)pct;
+  e->flags = (uint8_t)((radio ? 1 : 0) | (panel ? 2 : 0) |
+                       (((pm < 0 ? 0 : pm) & 3) << 2));
+  s_bl_head = (uint16_t)((s_bl_head + 1) % BATLOG_MAX);
+  if (s_bl_n < BATLOG_MAX) s_bl_n++;
+  _batlog_save();          /* ★샘플마다 즉시 영속화 — 전원이 끊겨도 남는다 */
+}
+
+/* 콘솔 `bl` — 저장된 방전 기록 전체를 출력. */
+void somfy_app_batlog_dump(void) {
+  ESP_LOGW(TAG, "[BATLOG] === 저장된 방전 기록: 세션 #%u, %u건 (용량 %dmAh) ===",
+           (unsigned)s_bl_sess, (unsigned)s_bl_n, BAT_CAPACITY_MAH);
+  if (s_bl_n == 0) { ESP_LOGW(TAG, "[BATLOG] (비어 있음)"); return; }
+  const uint16_t start = (s_bl_n < BATLOG_MAX) ? 0
+                       : (uint16_t)((s_bl_head + BATLOG_MAX - s_bl_n) % BATLOG_MAX);
+  int p0 = -1, t0 = 0;
+  for (uint16_t i = 0; i < s_bl_n; i++) {
+    const bat_sample_t *e = &s_bl_buf[(start + i) % BATLOG_MAX];
+    if (p0 < 0) { p0 = e->pct; t0 = e->t_s; }
+    const int dt = e->t_s - t0;
+    const int ma = (dt > 0) ? ((p0 - e->pct) * BAT_CAPACITY_MAH * 36) / (dt * 10) : 0;
+    ESP_LOGW(TAG, "BL %4u  +%5us  %4umV  %3u%%  avg%4dmA  radio=%d screen=%d pm=%d",
+             (unsigned)i, (unsigned)e->t_s, (unsigned)e->mv, (unsigned)e->pct, ma,
+             (e->flags & 1) ? 1 : 0, (e->flags & 2) ? 1 : 0, (e->flags >> 2) & 3);
+  }
+}
+void somfy_app_batlog_clear(void) { _batlog_reset(); ESP_LOGW(TAG, "[BATLOG] 기록 삭제됨"); }
+
+/* 콘솔 `usbsim off|on` — 배터리 모드 시뮬레이션 토글. */
+void somfy_app_console_usbsim(int off) {
+  s_usb_sim_off = (off != 0);
+  ESP_LOGW(TAG, "[USBSIM] %s — 이제 %s 모드로 동작한다 (PM 은 물리 VBUS 기준 유지)",
+           s_usb_sim_off ? "켬" : "끔", s_usb_sim_off ? "배터리" : "USB");
+}
+
+static int      s_bat_last_sm_mv = 0;   /* 최신 평활 전압(표시와 동일 값) */
+static int64_t  s_dis_t0_us      = 0;   /* 방전 세션 시작(USB 분리) 시각. 0=세션 없음 */
+static int      s_dis_mv0        = 0;   /* 세션 시작 전압 */
+static uint8_t  s_dis_pct0       = 0;   /* 세션 시작 % */
+static int64_t  s_dis_prev_us    = 0;   /* 직전 로그 시각(구간 계산용) */
+static int      s_dis_prev_mv    = 0;
+static uint8_t  s_dis_prev_pct   = 0;
+
 #define BAT_DISP_WIN 9
 static int      s_bat_hist[BAT_DISP_WIN];
 static int      s_bat_hist_n = 0, s_bat_hist_i = 0;
@@ -2416,6 +2613,7 @@ void somfy_app_run(void *arg) {
     s_rf_queue = xQueueCreate(RF_QUEUE_DEPTH, sizeof(rf_job_t));
   }
   boot_diag_stage2(BOOT_S2_RF_DONE);
+  _batlog_load();   /* 이전 방전 기록 복구 — USB 없이 쌓인 것을 나중에 조회 */
 
   /* 절전 타이머 초기화 (부팅 직후를 활동으로 기록) */
   _mark_activity();
@@ -2451,11 +2649,9 @@ void somfy_app_run(void *arg) {
    *     마지막에 실패하던 버그. 커미셔닝 완료(또는 기존 fabric)일 때만
    *     _enable_pm_light_sleep() 을 1회 호출. 미완료면 메인 루프에서
    *     완료 감지 후 활성화. */
-  if (matter_blinds_is_commissioning_complete()) {
-    _enable_pm_light_sleep();
-  } else {
-    ESP_LOGI(TAG, "커미셔닝 미완료 — PM light sleep 보류 (완료 후 자동 활성화)");
-  }
+  /* ★2026-08-11: 함수 자체가 "등록 전에는 DFS 만, 등록 후 light sleep" 을 판단하므로
+   *  조건 없이 부른다. 등록 완료는 메인 루프의 주기 호출이 감지해 자동 승격한다. */
+  _enable_pm_light_sleep();
 
   /* ── 9. 메인 루프 ── */
   boot_diag_stage2(BOOT_S2_MAIN_LOOP);
@@ -2663,6 +2859,7 @@ void somfy_app_run(void *arg) {
         else
           {
             int _sm = _bat_smooth_mv(_bat_mv);
+            s_bat_last_sm_mv = _sm;   /* 1분 방전 로거가 읽는다 */
             s_ui.chg_percent = s_nobat ? 0 : _bat_mv_to_pct(_sm);
             /* ★진단(2026-08-11): "% 가 한 값에 고정" 신고 대응. 원본/평활/표시%
              *  를 한 줄로 남겨 **평활이 붙잡는 것인지, 전압이 실제로 안 변하는지**
@@ -2804,6 +3001,111 @@ void somfy_app_run(void *arg) {
      *    · lockTO 가 0 이 아님      → 누군가 뮤텍스를 200ms 넘게 쥔다(원인 추적 필요)
      *  ★함정: "실패 0"만 보면 안 된다. OLED 미검출이면 flush 를 건너뛰어 전송도
      *    에러도 안 생긴다 → **present=1 과 전송 카운터 증가를 같이** 볼 것. */
+    /* ── ★2026-08-11 USB 분리 후 1분 주기 방전 로그 (사용자 요청) ────────────
+     *  USB 를 빼는 순간을 세션 시작으로 잡고, 1분마다 전압·%·추정전류를 남긴다.
+     *  ※세션 시작 검출은 _is_usb_powered() 의 60초 hold 창 때문에 최대 1분 늦을 수
+     *    있다(그 사이 값은 기준점에 포함된다) — 누적 평균에는 영향이 미미하다. */
+    {
+      static bool was_usb_pwr = true;
+      const bool now_usb = usb_mode;
+      if (was_usb_pwr && !now_usb && s_bat_last_sm_mv > 0) {
+        /* USB → 배터리 전환: 세션 시작 */
+        s_dis_t0_us    = now_us;
+        s_dis_mv0      = s_bat_last_sm_mv;
+        s_dis_pct0     = s_ui.chg_percent <= 100 ? s_ui.chg_percent : 0;
+        s_dis_prev_us  = now_us;
+        s_dis_prev_mv  = s_dis_mv0;
+        s_dis_prev_pct = s_dis_pct0;
+        ESP_LOGW(TAG, "[BATLOG] ★방전 시작 (USB 분리) — %dmV %d%% / 용량 %dmAh",
+                 s_dis_mv0, (int)s_dis_pct0, BAT_CAPACITY_MAH);
+        _batlog_reset();          /* 새 세션 → NVS 기록 초기화 */
+        _batlog_add(0, s_dis_mv0, s_dis_pct0,
+                    matter_blinds_get_radio_enabled(), oled_ui_is_panel_on(),
+                    g_pm_state_applied);
+      } else if (!was_usb_pwr && now_usb) {
+        ESP_LOGW(TAG, "[BATLOG] 방전 종료 (USB 연결)");
+        s_dis_t0_us = 0;
+      }
+      was_usb_pwr = now_usb;
+
+      /* ★기록 주기: 분리 직후 2분간은 5초, 그 뒤로는 2분마다 (사용자 지정).
+       *  왜 나누나: 분리 직후는 부하가 급변하는 구간(무선 OFF·화면 OFF 전환 등)이라
+       *  촘촘히 봐야 어디서 얼마나 떨어지는지 보인다. 안정되면 2분 간격으로 충분하고
+       *  로그도 조용해진다.
+       *  ※배터리 측정 자체가 5초 주기이므로 5초가 최소 간격이다(더 촘촘히 못 찍는다).
+       *    또 표시 평활이 중앙값 9주기(=45초)라 초반 값은 아직 수렴 중임에 유의. */
+      const int64_t _el_us  = now_us - s_dis_t0_us;
+      const int64_t _iv_us  = (_el_us < (int64_t)BATLOG_FAST_S * 1000000LL)
+                                ? (int64_t)BATLOG_FAST_IV * 1000000LL
+                                : (int64_t)BATLOG_SLOW_IV * 1000000LL;
+      if (!now_usb && s_dis_t0_us && s_bat_last_sm_mv > 0 &&
+          (now_us - s_dis_prev_us) >= _iv_us) {
+        const int mv   = s_bat_last_sm_mv;
+        const int pct  = (s_ui.chg_percent <= 100) ? s_ui.chg_percent : 0;
+        const int el_s = (int)((now_us - s_dis_t0_us) / 1000000);       /* 누적 초 */
+        const int sg_s = (int)((now_us - s_dis_prev_us) / 1000000);     /* 구간 초 */
+
+        /* 누적 평균 전류: 쓴 용량 / 경과시간. %p → mAh 는 용량 비례로 환산. */
+        const int d_pct_tot = (int)s_dis_pct0 - pct;
+        const int avg_ma    = (el_s > 0)
+            ? (d_pct_tot * BAT_CAPACITY_MAH * 36) / (el_s * 10)   /* ×3600/100 */
+            : 0;
+        /* 직전 1분 구간 전류 — 부하 변화(화면·무선 ON/OFF)를 잡는다. */
+        const int d_pct_seg = (int)s_dis_prev_pct - pct;
+        const int seg_ma    = (sg_s > 0)
+            ? (d_pct_seg * BAT_CAPACITY_MAH * 36) / (sg_s * 10)
+            : 0;
+        /* 남은 시간: 현재 %와 누적 평균 전류 기준(전류 0 이하면 산출 불가) */
+        const int rem_min = (avg_ma > 0)
+            ? (pct * BAT_CAPACITY_MAH * 60) / (100 * avg_ma) : -1;
+
+        ESP_LOGW(TAG, "[BATLOG] +%d초(%d분)  %dmV %d%%  (시작 %dmV %d%%, 누적 -%dmV -%d%%p)  "
+                      "평균 %dmA / 구간 %dmA  예상잔여 %d분  무선=%s 화면=%s PM=%d",
+                 el_s, el_s / 60, mv, pct, s_dis_mv0, (int)s_dis_pct0,
+                 s_dis_mv0 - mv, d_pct_tot, avg_ma, seg_ma, rem_min,
+                 matter_blinds_get_radio_enabled() ? "ON" : "OFF",
+                 oled_ui_is_panel_on() ? "ON" : "OFF", g_pm_state_applied);
+
+        /* ★NVS 에 즉시 영속화 — USB 없는 동안의 기록이 남아야 의미가 있다.
+         *  주기는 사용자가 지정한 그대로(초반 5초 / 이후 2분). */
+        _batlog_add(el_s, mv, pct,
+                    matter_blinds_get_radio_enabled(), oled_ui_is_panel_on(),
+                    g_pm_state_applied);
+
+        s_dis_prev_us  = now_us;
+        s_dis_prev_mv  = mv;
+        s_dis_prev_pct = (uint8_t)pct;
+      }
+    }
+
+    /* ── ★2026-08-11 무선 게이팅 (배터리 절약, 사용자 요청) ──────────────────
+     *  규칙:
+     *    · Thread 기기로 **등록됨**  → 무선 ON 유지 (재부팅 후에도 동일)
+     *    · **미등록** + 페어링 화면 아님 → 무선 OFF (라디오가 할 일이 없다)
+     *    · 페어링 화면 진입          → ON (matter_blinds_open_commissioning_window 가 켬)
+     *  주기적으로 확인하는 이유: 커미셔닝 완료·fabric 삭제 같은 상태 변화를 이벤트 하나로
+     *  놓치면 무선이 잘못된 상태로 굳는다. 5초마다 맞추면 어떤 경로로 바뀌어도 수렴한다.
+     *  ※미등록 시 OFF 는 부팅 후 RADIO_GRACE_SEC 뒤에 적용한다 — 스택이 자리를 잡기 전에
+     *    끄면 초기화와 경합할 수 있고, 사용자가 부팅 직후 커미셔닝하려는 경우도 있다. */
+    {
+#ifndef RADIO_GRACE_SEC
+#define RADIO_GRACE_SEC 60      /* 부팅 후 이 시간 동안은 끄지 않는다 */
+#endif
+      static int64_t last_chk_us = 0;
+      if (now_us - last_chk_us >= 5LL * 1000000LL) {
+        last_chk_us = now_us;
+        const bool paired  = matter_blinds_is_commissioning_complete();
+        const bool pairing = (s_setup_screen == SETUP_MATTER_PAIR);
+        const bool booting = (now_us < (int64_t)RADIO_GRACE_SEC * 1000000LL);
+        const bool want    = paired || pairing || booting;
+        if (want != matter_blinds_get_radio_enabled()) {
+          ESP_LOGW(TAG, "[RADIO] %s — 등록=%d 페어링화면=%d 부팅유예=%d",
+                   want ? "켬" : "끔(미등록 절전)", paired, pairing, booting);
+          matter_blinds_set_radio_enabled(want);
+        }
+      }
+    }
+
     /* ★부팅 성공 확정 — 메인 루프가 30초 살아 있으면 "정상 가동"으로 기록한다.
      *  다음 부팅에서 이 값이 아니면 **직전 부팅이 그 단계에서 멈췄다**는 뜻. */
     {
@@ -2831,6 +3133,19 @@ void somfy_app_run(void *arg) {
       int64_t nu = esp_timer_get_time();
       if (nu - last_rep_us >= 60LL * 1000000LL) {
         last_rep_us = nu;
+        /* ★2026-08-11 전원 상태를 같이 남긴다.
+         *  PM 설정 로그는 부팅 초기에 1회만 찍혀 USB-JTAG 유실 구간에 사라진다
+         *  (실제로 캡처에서 통째로 안 보였다). 60초 주기 모니터에 실제 적용값을
+         *  실어 **언제 접속해도** 확인할 수 있게 한다. 값은 전부 실측 상태이며
+         *  문자열을 하드코딩하지 않는다. */
+        ESP_LOGW(TAG, "[PWR] light_sleep=%s (PM상태 %d)  무선=%s  등록=%d  화면=%s  "
+                      "VBUS=%d  유휴 %llds",
+                 (g_pm_state_applied >= 2) ? "ON" : "OFF", g_pm_state_applied,
+                 matter_blinds_get_radio_enabled() ? "ON" : "OFF",
+                 matter_blinds_is_commissioning_complete() ? 1 : 0,
+                 oled_ui_is_panel_on() ? "ON" : "OFF",
+                 btn_handler_is_charging() ? 1 : 0,
+                 (long long)((nu - s_last_activity_us) / 1000000));
         ESP_LOGW(TAG, "[OLEDMON] %llds  전송 %u / 실패 %u  페이지 보냄 %u / 건너뜀 %u  "
                       "lockTO %u  present=%d free=%uB",
                  nu / 1000000, (unsigned)g_bbo_tx_cnt, (unsigned)g_bbo_fail_cnt,

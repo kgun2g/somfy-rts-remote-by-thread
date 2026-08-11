@@ -193,6 +193,9 @@ typedef struct {
                                              // (1분 시 사용자 시계 사용 중 불편)
 #define OLED_ACTION_DISPLAY_MS      2500     // 액션 애니메이션 2.5초 후 NORMAL 복귀
 #define OLED_TASK_INTERVAL_MS       50       // 화면 업데이트 주기 (50ms = 20fps)
+/* ★2026-08-11 패널 OFF 시 주기 — 그려도 안 보이므로 느리게 돌아 CPU 를 재운다.
+ *  너무 길면 버튼/진동으로 깨울 때 첫 프레임이 늦어 보이므로 500ms 로 절충한다. */
+#define OLED_TASK_INTERVAL_OFF_MS  500
 #define OLED_CHG_ANIM_DISPLAY_MS    6000     // 충전 애니메이션 1회 재생 길이 6초
 
 /* ─── API ────────────────────────────────────── */
@@ -399,6 +402,8 @@ void oled_ui_show_charging(oled_ui_ctx_t *ctx, uint8_t percent);
  * @param on  true: 디스플레이 ON, false: 디스플레이 OFF (저전력)
  */
 void oled_ui_set_display_on(bool on);
+/* 패널이 켜져 있는가(배터리 절약 로직이 참조). */
+bool oled_ui_is_panel_on(void);
 
 #ifdef __cplusplus
 }

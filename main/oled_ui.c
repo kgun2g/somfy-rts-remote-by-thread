@@ -49,6 +49,12 @@ static SemaphoreHandle_t s_i2c_mutex = NULL;
 
 /* OLED 존재 여부 — 미연결(예: 배선 전 보드) 시 flush 를 건너뛰어 I2C NACK
  * 로그 스팸(50ms마다)을 막는다. 미검출이면 5초마다 자동 재검출(hot-plug 지원). */
+/* ★2026-08-11 패널 ON/OFF 상태 미러 — 배터리 절약(C안).
+ *  패널이 꺼져 있으면 렌더링 결과가 보이지 않는데도 20fps 로 프레임을 그리고 있었다.
+ *  이 플래그로 _ui_task 가 렌더·flush 를 건너뛰고 주기도 늘린다. */
+static volatile bool s_panel_on = true;
+bool oled_ui_is_panel_on(void) { return s_panel_on; }
+
 static bool     s_oled_present = false;
 static uint32_t s_oled_last_probe_ms = 0;
 /* ★2026-07-24 모니터용 검출상태 미러 — **비트뱅 가드 밖**에 두어야 한다.
@@ -2866,7 +2872,11 @@ static void _ui_task(void *pvParam)
             case OLED_STATE_TIME_EDIT:   _render_time_edit(ctx);   break;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(OLED_TASK_INTERVAL_MS));
+        /* ★패널이 꺼져 있으면 그려도 안 보인다 → 주기를 늘려 CPU 를 재운다.
+         *  (렌더 자체는 위에서 이미 dirty-page 로 전송을 안 하지만, 20fps 로 깨어나는
+         *   것만으로도 light sleep 진입을 방해한다 — 배터리 모드에서 특히 손해.) */
+        vTaskDelay(pdMS_TO_TICKS(s_panel_on ? OLED_TASK_INTERVAL_MS
+                                            : OLED_TASK_INTERVAL_OFF_MS));
     }
 }
 
@@ -3167,6 +3177,7 @@ void oled_ui_set_display_on(bool on)
      *   0xAF = Display ON
      * I2C 패널이 응답 못해도(전원 OFF 상태 등) 호출은 안전 — _oled_send_cmds
      * 가 i2c_master_transmit 의 timeout 으로 fail 후 반환. */
+    s_panel_on = on;               /* 미검출이어도 논리 상태는 갱신(태스크가 참조) */
     if (!s_oled_present) return;   /* 미검출 시 NACK 로그 방지 */
     uint8_t cmd = on ? 0xAF : 0xAE;
     _oled_send_cmds(&cmd, 1);

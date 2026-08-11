@@ -16,3 +16,29 @@ CONFIG_OFFSETX=0
 # CONFIG_FLIP is not set
 CONFIG_BLE_DEVICE_NAME_PREFIX="MATTER-"
 CONFIG_CHIP_PROJECT_CONFIG="main/CHIPProjectConfig.h"
+
+# ── ★2026-08-11 배터리 수명 개선 (사용자 요청 A+B) ─────────────────────────
+#   측정: 배터리 단독 84mA → 700mAh 로 약 8시간. 원인 두 가지가 지배했다.
+#     · CONFIG_OPENTHREAD_FTD  : Full Thread Device 는 다른 노드를 중계해야 해서
+#                                802.15.4 수신부를 **끌 수 없다**(~70mA).
+#     · CONFIG_PM_ENABLE 미설정 : light sleep·주파수 스케일링이 전부 꺼져 CPU 가
+#                                160MHz 로 상시 동작.
+#   조치:
+#     · MTD(Minimal Thread Device) + Matter ICD 서버 → **Sleepy End Device**.
+#       폴링 사이에 라디오를 끈다. 리모컨은 중계 역할이 필요 없어 기능 손해가 없다.
+#       대가: 앱(SmartThings) 명령이 폴링 주기만큼 지연된다(버튼 조작은 즉시).
+#     · PM_ENABLE + tickless idle → CPU 도 유휴 시 잠든다.
+#   ★주의: 커미셔닝 도중에는 light sleep 을 켜면 안 된다(Thread operational 단계를
+#     굶겨 페어링이 마지막에 실패한 이력) → somfy_app.c 가 커미셔닝 완료 후에만
+#     _enable_pm_light_sleep() 을 부르는 게이트를 이미 갖고 있다. 그대로 둘 것.
+# CONFIG_OPENTHREAD_FTD is not set
+CONFIG_OPENTHREAD_MTD=y
+CONFIG_ENABLE_ICD_SERVER=y
+# ★ICD 서버만 켜면 링크가 깨진다 — 클러스터 구현(ZAP 생성 콜백)이 빌드에서 빠져
+#   `undefined reference to MatterIcdManagementPluginServerInitCallback` 이 난다.
+#   esp-matter 는 클러스터를 CONFIG_SUPPORT_*_CLUSTER 로 개별 선택하므로 같이 켜야 한다.
+CONFIG_SUPPORT_ICD_MANAGEMENT_CLUSTER=y
+CONFIG_ICD_SLOW_POLL_INTERVAL_MS=7000
+CONFIG_ICD_FAST_POLL_INTERVAL_MS=200
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
