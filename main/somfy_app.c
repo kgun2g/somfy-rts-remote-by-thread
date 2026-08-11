@@ -1896,14 +1896,35 @@ static int _read_bat_mv(void) {
   }
   int _vbat = mv * (BOARD_BAT_DIV_TOP + BOARD_BAT_DIV_BOT) / BOARD_BAT_DIV_BOT;
   static int _bdbg = 0;
-  if ((_bdbg++ & 15) == 0)
+  if ((_bdbg++ % 12) == 0)     /* 60초마다(5초 주기 × 12) — 진단용 */
     ESP_LOGW(TAG, "[BAT?] raw=%d vadc=%dmV -> vbat=%dmV", raw, mv, _vbat);
   return _vbat;
 }
 
+/* ── 만충 전압 (이 값 이상 = 100%) ────────────────────────────────────────
+ *  ★2026-08-11 사용자 요청. 실기 만충 실측이 **4,128~4,132 mV** 로 이론값 4,200 mV
+ *  보다 낮다(분압 저항 오차 + ADC 캘리브레이션 오차, 약 1.7%). 그대로 두면 만충인데도
+ *  94% 에서 멈춰 "안 올라간다"로 보인다.
+ *
+ *  왜 곡선 전체를 스케일하지 않고 **상단만 압축**하나:
+ *    전체를 곱하면(=게인 보정) 중·저 구간이 통째로 움직여, 오래 검증한 방전 곡선과
+ *    무배터리 float 판정(3,940~4,010 mV 창, 3,970 mV = 78%)까지 흔들린다.
+ *    상단 3개 앵커만 원곡선 **모양을 유지한 채** 압축하면 만충 표시만 고쳐지고
+ *    나머지는 그대로다.
+ *
+ *  기기·배터리마다 다르면 이 값만 바꾸면 된다(보드 헤더에서 먼저 정의해도 됨). */
+#ifndef BAT_FULL_MV
+#define BAT_FULL_MV 4128
+#endif
+/* 원곡선 상단: 3980=80%, 4080=90%, 4150=96%, 4200=100%
+ * → [3980..4200] 구간을 [3980..BAT_FULL_MV] 로 선형 압축(모양 보존). */
+#define BAT_TOP_BASE 3980
+#define BAT_TOP_SCALE(v) (BAT_TOP_BASE + ((v) - BAT_TOP_BASE) *                           (BAT_FULL_MV - BAT_TOP_BASE) / (4200 - BAT_TOP_BASE))
+
 /* 단셀 Li-ion OCV-SoC 곡선(battery_charge_sim 과 동일 anchors) → % */
 static uint8_t _bat_mv_to_pct(int mv) {
-  static const int V[] = {3200,3450,3580,3680,3750,3850,3980,4080,4150,4200};
+  static const int V[] = {3200,3450,3580,3680,3750,3850, BAT_TOP_BASE,
+                          BAT_TOP_SCALE(4080), BAT_TOP_SCALE(4150), BAT_FULL_MV};
   static const int P[] = {   0,   5,  10,  20,  40,  60,  80,  90,  96, 100};
   if (mv <= V[0]) return 0;
   for (size_t i = 1; i < sizeof(V) / sizeof(V[0]); i++)
@@ -1935,7 +1956,11 @@ static uint8_t _bat_mv_to_pct(int mv) {
  *     그냥 옮겼으면 못 봤을 것이다.)
  *
  *  검증: 진폭 19%p→9%p, 주기간 변동 4.1→0.38%p, 송신 강하 이상치 미노출, 방전 추종 지연 2%p */
-#define BAT_DISP_WIN 5
+/* ★2026-08-11 만충 보정으로 곡선 상단이 압축되며 1% ≈ 10mV → 7.4mV 로 **가팔라졌다**.
+ *  같은 전압 흔들림이 더 큰 %p 로 보이므로 창을 5 → 9 로 늘린다.
+ *  실측 비교(sim): 창5 진폭 11%p·변동 0.44%p / 창9 진폭 6%p·변동 0.20%p,
+ *  추종 지연은 둘 다 1%p 로 동일 — 늘려도 손해가 없다. */
+#define BAT_DISP_WIN 9
 static int      s_bat_hist[BAT_DISP_WIN];
 static int      s_bat_hist_n = 0, s_bat_hist_i = 0;
 static int32_t  s_bat_ema_q4 = 0;         /* 1/16 mV 단위 */
@@ -2636,7 +2661,19 @@ void somfy_app_run(void *arg) {
         if (!s_nobat_judged && _ambiguous)
           s_ui.chg_percent = BAT_PCT_UNKNOWN;          /* 표시측이 "--%" 로 렌더 */
         else
-          s_ui.chg_percent = s_nobat ? 0 : _bat_mv_to_pct(_bat_smooth_mv(_bat_mv));
+          {
+            int _sm = _bat_smooth_mv(_bat_mv);
+            s_ui.chg_percent = s_nobat ? 0 : _bat_mv_to_pct(_sm);
+            /* ★진단(2026-08-11): "% 가 한 값에 고정" 신고 대응. 원본/평활/표시%
+             *  를 한 줄로 남겨 **평활이 붙잡는 것인지, 전압이 실제로 안 변하는지**
+             *  를 즉시 가른다. 원본이 움직이는데 평활이 안 움직이면 평활 문제,
+             *  둘 다 안 움직이면 전압(충전 CV 구간 등)이 진짜 평평한 것이다. */
+            static int _slog = 0;
+            if ((_slog++ % 12) == 0)   /* 60초마다 */
+              ESP_LOGW(TAG, "[BAT%%] 원본%dmV -> 평활%dmV -> %d%%  (nobat=%d, judged=%d)",
+                       _bat_mv, _sm, (int)s_ui.chg_percent, s_nobat ? 1 : 0,
+                       s_nobat_judged ? 1 : 0);
+          }
       } else if (!s_bat_adc_ok) {
         s_ui.chg_percent = _estimate_battery_percent();  /* ADC 자체가 없는 경우만 */
       }
