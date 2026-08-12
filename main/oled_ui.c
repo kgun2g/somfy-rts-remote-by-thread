@@ -14,6 +14,7 @@
 #include "soc/io_mux_reg.h"     //             IO_MUX 기능 선택 확인(진단)
 #include "soc/lp_aon_reg.h"     // 2026-07-17: LP_AON_GPIO_HOLD0_REG — 핀 hold(래치) 확인(진단)
 #include "esp_rom_sys.h"        // esp_rom_delay_us — 페이지 write 재시도 간 짧은 대기
+#include "esp_app_desc.h"       // ★2026-08-12 부팅 스플래시 버전 — PROJECT_VER 을 실행 중 바이너리에서 읽는다
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -2299,7 +2300,7 @@ static void _render_freq_edit(oled_ui_ctx_t *ctx)
     /* 편집 여부 + 조작 힌트 (SET=저장, STOP=취소→메뉴) */
     if (ctx->freq_edit_dirty)
         _fb_draw_string(0, 24, "*edited*");
-    _fb_draw_string(0, 32, "SET:ok X:esc");
+    _fb_draw_string(0, 32, "MY:ok SET:esc");
 
     _fb_flush();
 }
@@ -2439,7 +2440,7 @@ static void _render_time_edit(oled_ui_ctx_t *ctx)
     }
     _fb_hline(ux0, ux1, uy);
 
-    _fb_draw_string(0, 33, "SET:ok X:esc");
+    _fb_draw_string(0, 33, "MY:ok SET:esc");
     _fb_flush();
 }
 
@@ -2450,9 +2451,11 @@ static void _render_thread_reset(oled_ui_ctx_t *ctx)
     _fb_clear();
     _fb_draw_string(0, 0, "THREAD RST");
     _fb_hline(0, OLED_WIDTH - 1, 8);
-    _fb_draw_string(0, 12, "Hold SETUP");
+    /* ★2026-08-12 MY↔SETUP 기능 교환 — 실행은 MY 2초 hold(CFG_BTN_LONG_PRESS_MS),
+     *  취소는 SETUP 로 바뀌었다. 예전엔 SETUP 1초였는데 문구는 2s 라 틀렸었다. */
+    _fb_draw_string(0, 12, "Hold MY");
     _fb_draw_string(0, 21, "2s=execute");
-    _fb_draw_string(0, 30, "STOP:cancel");
+    _fb_draw_string(0, 30, "SET:cancel");
     _fb_flush();
 }
 
@@ -2483,11 +2486,11 @@ static void _render_fw_update(oled_ui_ctx_t *ctx)
     }
     _fb_draw_string(0, 22, st);
 
-    /* 하단 힌트: 진행 중이 아니면 SET=Check / STOP=back */
+    /* 하단 힌트: 진행 중이 아니면 MY=Check / SET=back (★2026-08-12 기능 교환) */
     if (ctx->fw_ota_state == 0 || ctx->fw_ota_state == 5) {
-        _fb_draw_string(0, 32, "SET:check");
+        _fb_draw_string(0, 32, "MY:check");
     } else {
-        _fb_draw_string(0, 32, "STOP:back");
+        _fb_draw_string(0, 32, "SET:back");
     }
     _fb_flush();
 }
@@ -2758,14 +2761,15 @@ static void _render_pairing(oled_ui_ctx_t *ctx)
         break;
 
     case OLED_PAIR_FAIL:
-        /* 실패 — STOP 복귀 전까지 유지. 오류 코드를 점멸 표시. */
+        /* 실패 — SETUP 복귀 전까지 유지. 오류 코드를 점멸 표시.
+         * ★2026-08-12 기능 교환으로 복귀 버튼이 STOP → SETUP 이 되었다. */
         _draw_center("MATTER PAIR", 0);
         _fb_hline(0, OLED_WIDTH - 1, 8);
         _draw_center("FAILED", 12);
         if (ctx->pair_err[0] && blink) {
             _draw_center(ctx->pair_err, 22);   /* 예: "ERR FS-NOC" 점멸 */
         }
-        _draw_center("STOP=back", 32);
+        _draw_center("SET=back", 32);
         break;
 
     case OLED_PAIR_ACTIVE: {
@@ -3069,12 +3073,25 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
 
     /* ── 시작 스플래시 (OLED 검출된 경우만 — 미연결 시 무의미한 지연 회피) ── */
     if (s_oled_present) {
+        /* ★2026-08-12 버전 표시를 **실행 중 바이너리에서** 읽는다.
+         *  버그였다: 세 renderer 모두 "V1.0" 문자열이 박혀 있어, CMakeLists 의
+         *  PROJECT_VER 을 3.5 로 올린 뒤에도 부팅 화면은 계속 1.0 을 보여줬다
+         *  (사용자 신고). esp_app_get_description()->version 은 FW Update 화면·
+         *  Matter OTA 가 쓰는 값과 **같은 소스**라 앞으로 자동으로 일치한다. */
+        char vstr[16];
+        {
+            const esp_app_desc_t *_d = esp_app_get_description();
+            /* ※`%.14s` 로 상한을 못박는다 — version 은 char[32] 라 그냥 `%s` 로 쓰면
+             *  -Wformat-truncation 이 에러로 잡힌다(이 프로젝트는 경고=에러).
+             *  화면에도 14글자면 넘치므로 자르는 게 맞다. */
+            snprintf(vstr, sizeof(vstr), "V%.14s", (_d && _d->version[0]) ? _d->version : "?");
+        }
 #if OLED_RENDER_128X64
         /* 128×64 네이티브 부팅 (고딕 + 로딩바) — 해상도 기준 선택 */
         _fb_clear();
         _pstr8_center(8,  "SOMFY");
         _pstr8_center(22, "BLIND CTRL");
-        _pstr8_center(36, "V1.0");
+        _pstr8_center(36, vstr);
         for (int w = 0; w <= 100; w += 5) {
             _pfill(14, 52, w, 4, true);
             _fb_flush();
@@ -3087,7 +3104,7 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
         _pstr8_center(24, "SOMFY");
         _pstr8_center(44, "BLIND");
         _pstr8_center(56, "CTRL");
-        _pstr8_center(78, "V1.0");
+        _pstr8_center(78, vstr);
         for (int w = 0; w <= 100; w += 5) {
             _pfill(7, 100, w / 2, 4, true);   /* 64px 폭 → bar 최대 50px */
             _fb_flush();
@@ -3100,8 +3117,13 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
         _fb_draw_string(4,  1,  "SOMFY");
         _fb_draw_string(4,  11, "BLIND");
         _fb_draw_string(4,  21, "CTRL");
-        /* 버전 표시 (작은 숫자로) */
-        _fb_draw_string(48, 31, "v1.0");
+        /* 버전 표시 (작은 숫자로). 우측 정렬 — 예전 x=48 은 72px 패널에서
+         * 4글자를 우측에 붙인 값(72-4*6)이라, 길이로 계산하면 그대로 재현되면서
+         * 버전 문자열이 길어져도 화면 밖으로 안 나간다. */
+        {
+            int _vx = (int)OLED_WIDTH - (int)strlen(vstr) * FONT_W;
+            _fb_draw_string(_vx < 0 ? 0 : _vx, 31, vstr);
+        }
         /* 하단 로딩바 애니메이션 */
         for (int i = 0; i <= OLED_WIDTH; i += 4) {
             _fb_hline(0, i, 38);

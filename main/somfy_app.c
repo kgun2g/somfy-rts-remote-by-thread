@@ -104,25 +104,38 @@ static oled_ui_ctx_t s_ui = {0};
    ──────────────────────────────────────────────
    메인 → SETUP 짧게 → SETUP_MENU
    (★ SETUP 15초 이상 hold → 화면 무관 강제 재부팅 — button_handler.c SETUP_REBOOT_HOLD_MS, 기기 멈춤 대비)
+   ★★2026-08-12 STOP(MY) ↔ SETUP 기능 교환 (사용자 요청) — 설정 화면 **전체**에 적용.
+      규칙: STOP(MY) = 확인/저장/실행,  SETUP = 취소/뒤로.
+      길이 문턱이 서로 다르다: SETUP_LONG=1초(button_handler.c),
+      ROT_CLICK long_press=2초(CFG_BTN_LONG_PRESS_MS). 교환하면 "길게" 의 실제
+      시간도 같이 바뀐다(예: Thread 리셋 실행 = SETUP 1초 → MY 2초).
    SETUP_MENU :
      UP/DOWN/tilt    : 커서 이동
-     STOP (any)      : 메인 복귀
-     SETUP 짧게      : 선택 항목 진입
+     STOP (any)      : 선택 항목 진입   (교환 전: 메인 복귀)
+     SETUP (any)     : 메인 복귀        (교환 전: 선택 항목 진입)
      PROG/SELECT     : 무시
    SETUP_FREQ_EDIT :
      tilt / UP / DOWN: freq ±0.01
-     STOP 짧게       : 스냅샷 값으로 초기화 (편집 유지)
-     STOP 길게       : 전체 취소 → 메인
-     SETUP 짧게      : 변경 폐기 후 SETUP_MENU 복귀
-     SETUP 길게      : 저장 후 메인 복귀 (좌측 상단 freq 갱신)
+     STOP (any)      : 저장 후 메인 복귀 (좌측 상단 freq 갱신)
+     SETUP (any)     : 변경 폐기 후 SETUP_MENU 복귀
+   SETUP_TIME_EDIT :
+     STOP (any)      : 저장
+     SETUP (any)     : 적용 안 함 → SETUP_MENU 복귀
    SETUP_MATTER_PAIR :
      진입 시 자동 commissioning window 오픈
-     STOP/SETUP 짧게 : SETUP_MENU 복귀
-     STOP 길게       : 메인 복귀
+     STOP 짧게       : 대기(WAITING) → 준비(READY) 확정
+     STOP 길게       : 무시
+     SETUP 짧게      : SETUP_MENU 복귀
+     SETUP 길게      : 메인 복귀
    SETUP_THREAD_RESET :
-     SETUP 길게      : thread_prov_erase + matter restart → THREAD_PROV
-     SETUP/STOP 짧게 : SETUP_MENU 복귀 (취소)
-     STOP 길게       : 메인 복귀
+     STOP 길게(2s)   : thread_prov_erase + matter restart → THREAD_PROV
+     STOP 짧게       : SETUP_MENU 복귀 (취소)
+     SETUP 짧게      : SETUP_MENU 복귀
+     SETUP 길게      : 메인 복귀
+   SETUP_FW_UPDATE :
+     STOP 짧게       : 수동 업데이트 확인 (QueryImage)
+     SETUP 짧게      : SETUP_MENU 복귀
+     SETUP 길게      : 메인 복귀
 ═══════════════════════════════════════════════ */
 typedef enum {
   SETUP_NONE = 0,        // 메인 화면 (설정 아님)
@@ -1037,7 +1050,96 @@ static void _freq_cursor_move(int dir) {
 }
 #endif
 
+/* 마지막으로 **실제 적용된** PM 상태 코드 — 모니터 로그용.
+ *   -1 = 미설정 / bit0 = DFS(min 80MHz) / bit1 = light sleep
+ *   즉 0=전속·절전없음(USB), 1=DFS만, 3=DFS+light sleep(배터리·등록완료) */
+static volatile int g_pm_state_applied = -1;
+
+static int      s_bat_last_sm_mv = 0;   /* 최신 평활 전압(표시와 동일 값) */
+static int      s_bat_last_raw_mv = 0;  /* 최신 원본 전압(평활 전) — 진단용 */
+/* ★2026-08-12 (A) 한 번의 측정 안에서 8표본이 얼마나 흩어졌는가(ADC 카운트).
+ *  8표본은 수십 us 안에 끝나 **같은 순간**을 재므로, 이 값은 순수 ADC 잡음이다.
+ *  → 측정 **간** 31mV 격차의 정체를 가르는 판별자:
+ *      좁음(2~4카운트)  = 그 순간 ADC 는 조용 → 격차는 **진짜 전압차**(부하/셀 임피던스)
+ *      넓음(15카운트≈31mV) = **ADC 교란**(ADC1 채널 간섭이 남아 있다)
+ *  배터리 구동 중엔 시리얼이 없으므로 NVS 방전기록에도 같이 넣는다. */
+static uint8_t  s_bat_last_spread = 0;
+static int64_t  s_bat_last_us = 0;      /* 마지막 측정 시각 — 진단용 */
+static int64_t  s_dis_t0_us      = 0;   /* 방전 세션 시작(USB 분리) 시각. 0=세션 없음 */
+static int      s_dis_mv0        = 0;   /* 세션 시작 전압 */
+static uint8_t  s_dis_pct0       = 0;   /* 세션 시작 % */
+static int64_t  s_dis_prev_us    = 0;   /* 직전 로그 시각(구간 계산용) */
+static int      s_dis_prev_mv    = 0;
+static uint8_t  s_dis_prev_pct   = 0;
+
+void somfy_app_batlog_button(int ev);   /* 아래 정의 — 방전 중 버튼 이벤트 NVS 기록 */
+
+/* 버튼 이벤트 → 방전 기록용 코드. 좌/우가 이번 조사 대상이라 우선 구분한다. */
+static int _btn_evt_blev(int t) {
+  switch (t) {
+#if BOARD_HAS_LR_BUTTONS
+    case BTN_EVT_LEFT_PRESS:   return 1;   /* BLEV_LEFT */
+    case BTN_EVT_RIGHT_PRESS:  return 2;   /* BLEV_RIGHT */
+#endif
+    case BTN_EVT_SELECT_PRESS: return 3;
+    case BTN_EVT_UP_PRESS:     return 4;
+    case BTN_EVT_DOWN_PRESS:   return 5;
+    case BTN_EVT_ROT_PRESS:    return 6;
+    case BTN_EVT_PROG_PRESS:   return 7;
+    default:                   return 0;   /* release 등은 기록 안 함 */
+  }
+}
+
+static const char *_btn_evt_name(int t) {
+  switch (t) {
+    case BTN_EVT_UP_PRESS:      return "UP↓";
+    case BTN_EVT_UP_RELEASE:    return "UP↑";
+    case BTN_EVT_DOWN_PRESS:    return "DN↓";
+    case BTN_EVT_DOWN_RELEASE:  return "DN↑";
+    case BTN_EVT_SELECT_PRESS:  return "SEL↓";
+    case BTN_EVT_PROG_PRESS:    return "PROG↓";
+    case BTN_EVT_PROG_RELEASE:  return "PROG↑";
+    case BTN_EVT_ROT_PRESS:     return "ROT↓";
+    case BTN_EVT_ROT_CLICK:     return "ROT클릭";
+    case BTN_EVT_ROT_CW:        return "ROT→";
+    case BTN_EVT_ROT_CCW:       return "ROT←";
+#if BOARD_HAS_LR_BUTTONS
+    case BTN_EVT_LEFT_PRESS:    return "LEFT↓";
+    case BTN_EVT_LEFT_RELEASE:  return "LEFT↑";
+    case BTN_EVT_RIGHT_PRESS:   return "RIGHT↓";
+    case BTN_EVT_RIGHT_RELEASE: return "RIGHT↑";
+#endif
+    default:                    return "기타";
+  }
+}
+
 static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
+  /* ★2026-08-12 진단 로그 — "버튼을 누르면 배터리 %가 올라간다"의 원인 추적용.
+   *  누른 버튼·그 시점의 전압(원본/평활)·표시%·화면상태·경과를 한 줄로 남긴다.
+   *  ※여기서 ADC 를 직접 읽지 않는다: 이 콜백은 btn_task 컨텍스트라 _read_bat_mv 가
+   *    쓰는 버튼 뮤텍스를 이미 쥐고 있을 수 있어 데드락/실패가 난다.
+   *    대신 **마지막 주기 측정값**과 그 경과시간을 찍어, 5초 주기 로그와 시간순으로
+   *    맞춰 보면 "누름 → 다음 측정에서 전압이 어떻게 변했나"가 그대로 드러난다.
+   *  진단이 끝나면 이 블록을 지우거나 로그레벨을 낮출 것. */
+  {
+    const int64_t _n = esp_timer_get_time();
+    ESP_LOGW(TAG, "[BTNDBG] %-7s hold=%lums | 원본%dmV 평활%dmV 표시%d%% (측정후 %lldms) "
+                  "| 화면=%s 유휴%llds 무선=%s PM=%d | up=%llds",
+             _btn_evt_name((int)evt->type), (unsigned long)evt->hold_ms,
+             s_bat_last_raw_mv, s_bat_last_sm_mv,
+             (int)s_ui.chg_percent,
+             s_bat_last_us ? (_n - s_bat_last_us) / 1000 : -1,
+             oled_ui_is_panel_on() ? "ON" : "OFF",
+             (long long)((_n - s_last_activity_us) / 1000000),
+             matter_blinds_get_radio_enabled() ? "ON" : "OFF",
+             g_pm_state_applied, (long long)(_n / 1000000));
+    /* ★USB 분리 상태(방전 세션)면 NVS 에도 남긴다 — 그때는 시리얼을 받을 호스트가
+     *  없어 로그가 허공으로 나가기 때문. 누름(press) 만 기록해 링을 아끼고,
+     *  실제 플래시 쓰기는 _batlog_flush_if_due 가 2초 단위로 합친다. */
+    const int _blev = _btn_evt_blev((int)evt->type);
+    if (_blev) somfy_app_batlog_button(_blev);
+  }
+
   /* 모든 버튼 이벤트는 활동으로 기록 → 절전/화면보호기 타이머 리셋 */
   _mark_activity();
 
@@ -1312,7 +1414,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
 
   /* ── 로터리 클릭 (정지) ───────────────────────
    *   메인 화면           : STOP/MY 송신
-   *   설정 메뉴 화면      : 메인 복귀 (전체 종료)
+   *   설정 메뉴 화면      : 선택 항목 진입 (★2026-08-12 SETUP 과 교환)
    *   주파수 편집        : 짧게 → 스냅샷 리셋, 길게 (≥2s) → 메인 복귀
    *   Matter pair / Thread reset: 짧게 → 메뉴, 길게 → 메인 */
   /* ── 로터리 버튼(STOP/MY) 누름 ─────────────────
@@ -1352,31 +1454,55 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
       break;
     }
 
-    /* 설정 메뉴 화면: STOP (어느 길이든) → 메인 복귀 */
+    /* ★2026-08-12 설정 메뉴 화면에서 STOP(MY) ↔ SETUP 기능 교환 (사용자 요청).
+     *  STOP (어느 길이든) → 선택 항목 진입  (이전: 메인 복귀)
+     *  ※하위 화면(편집/페어링/리셋)의 STOP 은 그대로 취소/복귀다 — 교환은
+     *    **메뉴 화면에서만** 이다. */
     if (s_setup_screen == SETUP_MENU_SCR) {
-      _setup_exit_to_main("STOP @ menu");
+      _setup_activate_menu_item();
       break;
     }
 
-    /* v3.9: 편집 화면 STOP = 취소 후 메뉴 복귀 (길이 무관).
-     *   - FREQ_EDIT : 변경 폐기(스냅샷 복원) 후 메뉴
-     *   - TIME_EDIT : 적용 안 함 → 메뉴
-     *   - MATTER_PAIR/THREAD_RESET: 길게→메인, 짧게→메뉴 (기존 유지) */
-    if (s_setup_screen == SETUP_FREQ_EDIT) {
-      _freq_edit_back_to_menu_discard();
-    } else if (s_setup_screen == SETUP_TIME_EDIT) {
-      _setup_back_to_menu("time edit 취소");
-    } else if (long_press) {
-      _setup_exit_to_main("STOP 길게 — 전체 취소");
-    } else {
-      _setup_back_to_menu("STOP 짧게");
+    /* ★2026-08-12 하위 화면도 STOP(MY) ↔ SETUP 기능 교환 (사용자 요청).
+     *  STOP(MY) 이 **확인/저장/실행** 을 맡는다 — 아래는 전부 예전 SETUP 의 동작이다.
+     *  ※길이 문턱이 서로 다르다: SETUP_LONG=1초, ROT_CLICK long_press=2초
+     *    (CFG_BTN_LONG_PRESS_MS). 즉 Thread 리셋 실행은 "SETUP 1초"에서
+     *    "MY 2초"로 바뀐다 — 화면 문구 "2s=execute" 와는 오히려 맞아떨어진다. */
+    switch (s_setup_screen) {
+      case SETUP_FREQ_EDIT:            /* 예전 SETUP 짧게/길게 = 저장 */
+        _freq_edit_save();
+        break;
+      case SETUP_TIME_EDIT:            /* 예전 SETUP 짧게/길게 = 저장 */
+        _time_edit_save();
+        break;
+      case SETUP_MATTER_PAIR:
+        /* 예전 SETUP 짧게 = "대기(WAITING)" → "준비(READY)" 확정.
+         * 예전 SETUP 길게는 무시였으므로 여기서도 길게는 무시한다. */
+        if (!long_press) {
+          s_pair_ready = true;
+          ESP_LOGI(TAG, "[SETUP] 페어링 준비(READY) 확정 (MY)");
+        }
+        break;
+      case SETUP_THREAD_RESET:
+        if (long_press) _setup_execute_thread_reset();   /* 예전 SETUP 길게 = 실행 */
+        else            _setup_back_to_menu("MY 짧게");  /* 예전 SETUP 짧게 = 메뉴 복귀 */
+        break;
+      case SETUP_FW_UPDATE:
+        /* 예전 SETUP 짧게 = 수동 업데이트 확인. 길게는 무시였다. */
+        if (!long_press) {
+          if (matter_ota_trigger_check()) ESP_LOGI(TAG, "[FW] 업데이트 확인 트리거 (MY)");
+          else                            ESP_LOGW(TAG, "[FW] 업데이트 확인 트리거 실패");
+        }
+        break;
+      default:
+        break;
     }
     break;
   }
 
   /* ── SW6 SETUP 짧은 누름 ──────────────────────
    *   메인 화면              : 설정 메뉴 진입
-   *   설정 메뉴 화면         : 선택 항목 진입
+   *   설정 메뉴 화면         : 메인 복귀 (★2026-08-12 STOP 과 교환)
    *   하위 화면 (편집/페어링/리셋) : 메뉴 복귀 (변경 폐기) */
   case BTN_EVT_SETUP_SHORT:
     switch (s_setup_screen) {
@@ -1384,53 +1510,45 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
         _setup_enter_menu_from_main();
         break;
       case SETUP_MENU_SCR:
-        _setup_activate_menu_item();
+        /* ★2026-08-12 STOP(MY) 와 기능 교환 (사용자 요청) — 이전: 선택 항목 진입 */
+        _setup_exit_to_main("SETUP @ menu");
         break;
-      case SETUP_FREQ_EDIT:        /* v3.9: SET 짧게 = 저장 */
-        _freq_edit_save();
+      /* ★2026-08-12 이하 전부 예전 STOP(MY) **짧게** 의 동작이다 (기능 교환).
+       *  SETUP 은 이제 **취소/뒤로** 전담이다. */
+      case SETUP_FREQ_EDIT:        /* 예전 STOP = 변경 폐기 후 메뉴 */
+        _freq_edit_back_to_menu_discard();
         break;
-      case SETUP_TIME_EDIT:        /* v3.9: SET 짧게 = 저장 */
-        _time_edit_save();
+      case SETUP_TIME_EDIT:        /* 예전 STOP = 적용 안 함 → 메뉴 */
+        _setup_back_to_menu("time edit 취소");
         break;
       case SETUP_MATTER_PAIR:
-        /* 페어링 화면에서 SETUP = "대기(WAITING)" → "준비(READY)" 확정.
-         *  실제 phase 전환은 메인 루프 페어링 드라이버가 s_pair_ready
-         *  기준으로 처리(점멸 READY). 화면 이탈은 STOP 버튼. */
-        s_pair_ready = true;
-        ESP_LOGI(TAG, "[SETUP] 페어링 준비(READY) 확정");
-        break;
       case SETUP_THREAD_RESET:
+      case SETUP_FW_UPDATE:        /* 예전 STOP 짧게 = 메뉴 복귀 */
         _setup_back_to_menu("SETUP 짧게");
-        break;
-      case SETUP_FW_UPDATE:
-        /* SET = 수동 업데이트 확인 (기본 OTA Provider 에 QueryImage). */
-        if (matter_ota_trigger_check()) {
-          ESP_LOGI(TAG, "[FW] 업데이트 확인 트리거");
-        } else {
-          ESP_LOGW(TAG, "[FW] 업데이트 확인 트리거 실패");
-        }
         break;
     }
     break;
 
-  /* ── SW6 SETUP 2초 롱프레스 ──────────────────
-   *   주파수 편집 화면     : freq 저장 + 메인 복귀
-   *   Thread 리셋 화면     : 리셋 실행 + THREAD_PROV 표시
-   *   메인 / 메뉴 / Matter : 무시 (Matter pair 는 진입만으로 자동 시작) */
+  /* ── SW6 SETUP 롱프레스(1초) ──────────────────
+   *  ★2026-08-12 기능 교환 — 이하 전부 예전 STOP(MY) **길게** 의 동작이다.
+   *   편집 화면(freq/time) : 예전 STOP 은 길이 무관 취소였으므로 길게도 취소
+   *   그 외 하위 화면      : 전체 취소 → 메인 복귀
+   *   메인 화면            : 무시 (메뉴 진입은 SETUP 짧게 그대로) */
   case BTN_EVT_SETUP_LONG:
     switch (s_setup_screen) {
       case SETUP_FREQ_EDIT:
-        _freq_edit_save();
+        _freq_edit_back_to_menu_discard();
         break;
-      case SETUP_TIME_EDIT:        /* 길게 SET 도 저장(일관성) */
-        _time_edit_save();
+      case SETUP_TIME_EDIT:
+        _setup_back_to_menu("time edit 취소");
         break;
-      case SETUP_THREAD_RESET:
-        _setup_execute_thread_reset();
-        break;
-      case SETUP_NONE:
       case SETUP_MENU_SCR:
       case SETUP_MATTER_PAIR:
+      case SETUP_THREAD_RESET:
+      case SETUP_FW_UPDATE:
+        _setup_exit_to_main("SETUP 길게 — 전체 취소");
+        break;
+      case SETUP_NONE:
       default:
         ESP_LOGI(TAG, "[SETUP] SETUP_LONG @ screen=%d — 무시", s_setup_screen);
         break;
@@ -1531,10 +1649,6 @@ static void _sntp_sync_cb(struct timeval *tv) {
    ★ 커미셔닝 완료 후 호출 (그 전엔 주파수 변동도 보수적으로 피함).
    peripheral init 가 모두 끝난 뒤여야 tickless idle 데드락이 없다.
 ═══════════════════════════════════════════════ */
-/* 마지막으로 **실제 적용된** PM 상태 코드 — 모니터 로그용.
- *   -1 = 미설정 / bit0 = DFS(min 80MHz) / bit1 = light sleep
- *   즉 0=전속·절전없음(USB), 1=DFS만, 3=DFS+light sleep(배터리·등록완료) */
-static volatile int g_pm_state_applied = -1;
 
 /* time_update 태스크 핸들 — 화면이 켜질 때 즉시 깨우기 위해 보관(위 5분 대기 참조). */
 static TaskHandle_t s_time_task_h = NULL;
@@ -1924,6 +2038,13 @@ static void _bat_adc_init(void) {
            BOARD_BAT_DIV_TOP + BOARD_BAT_DIV_BOT, BOARD_BAT_DIV_BOT);
 }
 
+/* ★2026-08-12 진단 모드: 배터리 로그 주기(측정 몇 회마다 1줄).
+ *  1 = 매 측정(5초). 버튼 연타 구간의 전압 추이를 보려면 촘촘해야 한다.
+ *  진단이 끝나면 12(=60초)로 되돌릴 것. */
+#ifndef BAT_DBG_EVERY
+#define BAT_DBG_EVERY 1
+#endif
+
 /* BAT 단자 전압(mV). 실패 시 -1 (8회 평균). */
 static int _read_bat_mv(void) {
   if (!s_bat_adc_ok) return -1;
@@ -1982,11 +2103,20 @@ static int _read_bat_mv(void) {
     if (_locked) xSemaphoreGive(_i2c_mtx);
     return -1;                          /* 전송 중 → 이번 주기 건너뜀(무한 대기 X) */
   }
+  int _rmin = 4096, _rmax = -1;             /* ★A: 같은 측정 안의 표본 산포 */
   for (int i = 0; i < 8; i++)
-    if (adc_oneshot_read(s_bat_adc, s_bat_ch, &raw) == ESP_OK) { sum += raw; n++; }
+    if (adc_oneshot_read(s_bat_adc, s_bat_ch, &raw) == ESP_OK) {
+      sum += raw; n++;
+      if (raw < _rmin) _rmin = raw;
+      if (raw > _rmax) _rmax = raw;
+    }
   oled_ui_i2c_unlock();
   if (_locked) xSemaphoreGive(_i2c_mtx);
   if (n == 0) return -1;
+  {
+    const int _d = _rmax - _rmin;
+    s_bat_last_spread = (uint8_t)(_d > 255 ? 255 : _d);
+  }
   raw = sum / n;
   int mv;
   if (s_bat_cali) {
@@ -1996,8 +2126,14 @@ static int _read_bat_mv(void) {
   }
   int _vbat = mv * (BOARD_BAT_DIV_TOP + BOARD_BAT_DIV_BOT) / BOARD_BAT_DIV_BOT;
   static int _bdbg = 0;
-  if ((_bdbg++ % 12) == 0)     /* 60초마다(5초 주기 × 12) — 진단용 */
-    ESP_LOGW(TAG, "[BAT?] raw=%d vadc=%dmV -> vbat=%dmV", raw, mv, _vbat);
+  if ((_bdbg++ % BAT_DBG_EVERY) == 0) {  /* ★진단 중: 매 측정(5초) */
+    /* 산포를 배터리 전압 기준 mV 로 환산. 나눗셈 순서 주의 — `*(TOP+BOT)` 를 먼저
+     * 하면 int32 가 넘친다(4095*3100*200 = 2.5e9). BOT 로 먼저 나눈다. */
+    const int _sp_mv = (int)s_bat_last_spread * 3100 / BOARD_BAT_DIV_BOT
+                       * (BOARD_BAT_DIV_TOP + BOARD_BAT_DIV_BOT) / 4095;
+    ESP_LOGW(TAG, "[BAT?] raw=%d vadc=%dmV -> vbat=%dmV  표본산포=%d카운트(%dmV) n=%d",
+             raw, mv, _vbat, (int)s_bat_last_spread, _sp_mv, n);
+  }
   return _vbat;
 }
 
@@ -2096,13 +2232,33 @@ static uint8_t _bat_mv_to_pct(int mv) {
 #define BATLOG_FAST_S   120     /* 이 시간까지는 빠른 주기 */
 #define BATLOG_FAST_IV  5       /* 빠른 주기(초) */
 #define BATLOG_SLOW_IV  120     /* 이후 주기(초) */
+/* 버튼 이벤트 코드(flags 상위 4비트). 0 은 주기측정이므로 1부터. */
+#define BLEV_NONE   0
+#define BLEV_LEFT   1
+#define BLEV_RIGHT  2
+#define BLEV_SELECT 3
+#define BLEV_UP     4
+#define BLEV_DOWN   5
+#define BLEV_ROT    6
+#define BLEV_PROG   7
+#define BLEV_OTHER  8
+/* ★NVS 쓰기 합치기: 버튼 연타 중 누름마다 1.8KB blob 을 쓰면 플래시 마모가 크고
+ *  쓰기(10~20ms)가 버튼 태스크를 붙잡는다. RAM 링에는 **즉시** 넣고, NVS 는
+ *  BATLOG_FLUSH_MS 마다 한 번만 쓴다. 전원이 갑자기 끊기면 최대 그만큼 잃지만,
+ *  이 진단의 실패 모드는 정전이 아니라 "USB 재연결 후 조회" 라 문제없다. */
+#define BATLOG_FLUSH_MS 2000
 
 typedef struct __attribute__((packed)) {
   uint16_t t_s;      /* 세션 시작 후 경과 초 */
   uint16_t mv;       /* 평활 전압 */
   uint8_t  pct;      /* 표시 % */
-  uint8_t  flags;    /* bit0=무선ON bit1=화면ON bit2~3=PM상태 */
+  uint8_t  flags;    /* bit0=무선ON bit1=화면ON bit2~3=PM상태 bit4~7=이벤트코드
+                      *  이벤트코드 0=주기측정, 1~15=버튼(아래 BLEV_*) */
+  uint8_t  sp;       /* ★2026-08-12 (A) 직전 측정의 8표본 산포(ADC 카운트).
+                      *  배터리 구동 중엔 시리얼이 없으니 여기 실어 나른다. */
 } bat_sample_t;
+/* ※구조체가 6→7바이트로 바뀌었다. _batlog_load() 가 blob 길이를 검사하므로
+ *  예전 형식으로 저장된 기록은 자동 폐기된다(오해석 없음). */
 
 static bat_sample_t s_bl_buf[BATLOG_MAX];
 static uint16_t     s_bl_n = 0;     /* 저장된 개수(최대 BATLOG_MAX) */
@@ -2140,16 +2296,46 @@ static void _batlog_reset(void) {
   _batlog_save();
 }
 
-static void _batlog_add(int t_s, int mv, int pct, bool radio, bool panel, int pm) {
+static bool     s_bl_dirty = false;
+static int64_t  s_bl_last_save_us = 0;
+
+/* 주기적으로 호출 — 쌓인 게 있고 마지막 쓰기 후 충분히 지났으면 NVS 에 반영. */
+static void _batlog_flush_if_due(int64_t now_us, bool force) {
+  if (!s_bl_dirty) return;
+  if (!force && (now_us - s_bl_last_save_us) < (int64_t)BATLOG_FLUSH_MS * 1000) return;
+  _batlog_save();
+  s_bl_dirty = false;
+  s_bl_last_save_us = now_us;
+}
+
+static void _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int pm,
+                           int ev) {
   bat_sample_t *e = &s_bl_buf[s_bl_head];
   e->t_s  = (uint16_t)(t_s > 65535 ? 65535 : t_s);
   e->mv   = (uint16_t)mv;
   e->pct  = (uint8_t)pct;
   e->flags = (uint8_t)((radio ? 1 : 0) | (panel ? 2 : 0) |
-                       (((pm < 0 ? 0 : pm) & 3) << 2));
+                       (((pm < 0 ? 0 : pm) & 3) << 2) |
+                       (((ev < 0 ? 0 : ev) & 0x0F) << 4));
+  e->sp   = s_bat_last_spread;      /* ★A 직전 측정의 ADC 표본 산포 */
   s_bl_head = (uint16_t)((s_bl_head + 1) % BATLOG_MAX);
   if (s_bl_n < BATLOG_MAX) s_bl_n++;
-  _batlog_save();          /* ★샘플마다 즉시 영속화 — 전원이 끊겨도 남는다 */
+  s_bl_dirty = true;       /* NVS 반영은 _batlog_flush_if_due 가 합쳐서 한다 */
+}
+
+static void _batlog_add(int t_s, int mv, int pct, bool radio, bool panel, int pm) {
+  _batlog_add_ev(t_s, mv, pct, radio, panel, pm, BLEV_NONE);
+}
+
+/* 버튼 이벤트를 방전 기록에 남긴다(방전 세션 중에만). */
+void somfy_app_batlog_button(int ev) {
+  if (!s_dis_t0_us) return;                 /* USB 연결 중이면 기록 안 함 */
+  const int64_t now = esp_timer_get_time();
+  _batlog_add_ev((int)((now - s_dis_t0_us) / 1000000),
+                 s_bat_last_raw_mv,
+                 (s_ui.chg_percent <= 100) ? s_ui.chg_percent : 0,
+                 matter_blinds_get_radio_enabled(), oled_ui_is_panel_on(),
+                 g_pm_state_applied, ev);
 }
 
 /* 콘솔 `bl` — 저장된 방전 기록 전체를 출력. */
@@ -2165,9 +2351,17 @@ void somfy_app_batlog_dump(void) {
     if (p0 < 0) { p0 = e->pct; t0 = e->t_s; }
     const int dt = e->t_s - t0;
     const int ma = (dt > 0) ? ((p0 - e->pct) * BAT_CAPACITY_MAH * 36) / (dt * 10) : 0;
-    ESP_LOGW(TAG, "BL %4u  +%5us  %4umV  %3u%%  avg%4dmA  radio=%d screen=%d pm=%d",
+    static const char *EVN[] = {"주기","LEFT","RIGHT","SEL","UP","DOWN","ROT","PROG","기타",
+                                "?","?","?","?","?","?","?"};
+    /* ★A 산포를 배터리 전압 mV 로 환산(나눗셈 순서 = _read_bat_mv 와 동일) */
+    const int sp_mv = (int)e->sp * 3100 / BOARD_BAT_DIV_BOT
+                      * (BOARD_BAT_DIV_TOP + BOARD_BAT_DIV_BOT) / 4095;
+    ESP_LOGW(TAG, "BL %4u  +%5us  %4umV  %3u%%  avg%4dmA  radio=%d screen=%d pm=%d  "
+                  "산포%3d(%2dmV)  %s",
              (unsigned)i, (unsigned)e->t_s, (unsigned)e->mv, (unsigned)e->pct, ma,
-             (e->flags & 1) ? 1 : 0, (e->flags & 2) ? 1 : 0, (e->flags >> 2) & 3);
+             (e->flags & 1) ? 1 : 0, (e->flags & 2) ? 1 : 0, (e->flags >> 2) & 3,
+             (int)e->sp, sp_mv,
+             EVN[(e->flags >> 4) & 0x0F]);
   }
 }
 void somfy_app_batlog_clear(void) { _batlog_reset(); ESP_LOGW(TAG, "[BATLOG] 기록 삭제됨"); }
@@ -2179,20 +2373,36 @@ void somfy_app_console_usbsim(int off) {
            s_usb_sim_off ? "켬" : "끔", s_usb_sim_off ? "배터리" : "USB");
 }
 
-static int      s_bat_last_sm_mv = 0;   /* 최신 평활 전압(표시와 동일 값) */
-static int64_t  s_dis_t0_us      = 0;   /* 방전 세션 시작(USB 분리) 시각. 0=세션 없음 */
-static int      s_dis_mv0        = 0;   /* 세션 시작 전압 */
-static uint8_t  s_dis_pct0       = 0;   /* 세션 시작 % */
-static int64_t  s_dis_prev_us    = 0;   /* 직전 로그 시각(구간 계산용) */
-static int      s_dis_prev_mv    = 0;
-static uint8_t  s_dis_prev_pct   = 0;
 
 #define BAT_DISP_WIN 9
+/* ★2026-08-12 하한(B)·세션 기준점(C)을 걸기 전 필요한 최소 표본수.
+ *  중앙값이 이상치 2개를 버틸 수 있는 최소값 = 창의 절반+1 = 5 (=25초).
+ *  왜 1이 아닌가: 첫 표본 하나로 하한을 잡으면 그게 저전압 무리에 걸렸을 때
+ *  **세션 내내 5%p 낮게 고정**된다(sim/tools/bat_pct_monotone_sim.py [2][4] 가
+ *  실제로 이 결함을 잡아냈다). 대가는 분리 후 25초간 하한이 없다는 것뿐이다. */
+#define BAT_FLOOR_MIN_N (BAT_DISP_WIN / 2 + 1)
 static int      s_bat_hist[BAT_DISP_WIN];
 static int      s_bat_hist_n = 0, s_bat_hist_i = 0;
 static int32_t  s_bat_ema_q4 = 0;         /* 1/16 mV 단위 */
+static uint32_t s_bat_sm_seq = 0;         /* 평활 호출 횟수 — 세션 기준점 대기에 쓴다 */
+
+/* ★2026-08-12 평활 상태 초기화 — 전원이 바뀌면 이전 전압을 끌고 오면 안 된다.
+ *
+ *  버그였다: USB 를 빼는 순간의 평활값은 **충전 중 단자전압**(실측 4056mV)이지
+ *  배터리 OCV 가 아니다. 그대로 두면 중앙값 창 9개가 다 빠질 때까지(45초) + EMA
+ *  지연까지 **약 90초 동안 92% → 73% 로 흘러내렸다**. 그리고 방전 로거가 이 정착
+ *  기울기를 진짜 방전으로 착각해 평균 **302~819mA** 를 찍었다(700mAh 셀에서
+ *  물리적으로 불가능한 값 — 실측 NVS 세션 #16).
+ *  → 전환 시 창·EMA 를 비워 **다음 실측 1회로 재시드**한다(수렴 5초).
+ *  USB 재연결 때도 대칭으로 부른다(계단 크기가 같아 같은 지연이 생기므로). */
+static void _bat_smooth_reset(void) {
+  s_bat_hist_n = 0;
+  s_bat_hist_i = 0;
+  s_bat_ema_q4 = 0;
+}
 
 static int _bat_smooth_mv(int mv) {
+  s_bat_sm_seq++;
   s_bat_hist[s_bat_hist_i] = mv;
   s_bat_hist_i = (s_bat_hist_i + 1) % BAT_DISP_WIN;
   if (s_bat_hist_n < BAT_DISP_WIN) s_bat_hist_n++;
@@ -2210,6 +2420,26 @@ static int _bat_smooth_mv(int mv) {
   else                   s_bat_ema_q4 += ((int32_t)med * 16 - s_bat_ema_q4) / 4;
   return (int)(s_bat_ema_q4 / 16);
 }
+
+/* ★2026-08-12 배터리 구동 중 표시 % 단조 비증가 (하한) ─────────────────────
+ *
+ *  신고: USB 분리 후 좌/우 버튼을 누르는 동안 68 → 69 → 70 → 71 % 로 **올라갔다**.
+ *  방전 중 잔량이 느는 건 물리적으로 불가능하다.
+ *
+ *  원인(NVS 방전기록 세션 #16, 290건 실측): 배터리 구동일 때 원본 전압이 **두 무리**
+ *  로 갈라진다 — 3902~3924(9개, 평균 3913) / 3932~3958(11개, 평균 3944), 간격 31mV,
+ *  중간값이 거의 없다. 같은 기기가 USB 연결 중엔 4060~4068(±4mV = ADC 2카운트)로
+ *  미동도 없으므로 ADC 자체는 멀쩡하고 **배터리 구동일 때만** 갈라진다.
+ *  이 구간 OCV 기울기가 6.5mV/%p 라 31mV = 약 5%p.
+ *  중앙값-9 는 최근 9개 중 어느 무리가 5개를 넘느냐로 출력이 정해지므로, 비율이
+ *  서서히 바뀌면 출력이 31mV 씩 **툭 튀고**, EMA(α=1/4)가 그 계단을 부드럽게 따라가
+ *  **단조 상승**처럼 보인다(시뮬레이터로 69→74 재현, 신고와 같은 형태).
+ *
+ *  두 무리의 정체는 아직 미확정이다(→ _read_bat_mv 의 표본 편차 진단 참고).
+ *  다만 정체와 무관하게 **표시가 오르면 안 된다**는 건 확정이므로 하한을 건다.
+ *  USB 연결 중에는 충전이라 상승이 정상이므로 하한을 푼다.
+ *  검증: sim/tools/bat_pct_monotone_sim.py (5개 항목 전부 통과)
+ *  ※실제 선언은 BAT_PCT_UNKNOWN 정의 뒤(아래 _nobat 블록)에 있다. */
 
 /* ─── 배터리 미연결 판정 (5분 창마다 주기 재판정) ─────────────────────────────
  *  XIAO 는 **배터리 감지 신호가 없다**(충전 status NCHG 는 온보드 LED 전용이라
@@ -2244,6 +2474,9 @@ static bool    s_nobat         = false;   /* true = 배터리 미연결 → 0% �
  *    **진짜 충전 중인 배터리도 "안 오름"으로 오판**해 0% 로 표시된다(문턱 4mV). */
 static bool    s_nobat_judged   = false;
 #define BAT_PCT_UNKNOWN 255               /* >100 = 표시측이 "--%" 로 렌더 */
+/* ★2026-08-12 방전 중 표시 % 하한 (근거는 _bat_smooth_mv 위 주석 참고).
+ *  255 = 미설정. USB 연결 중에는 충전이므로 255 로 되돌려 상승을 허용한다. */
+static uint8_t s_pct_floor     = BAT_PCT_UNKNOWN;
 static int64_t s_nobat_t0_us   = 0;
 static int32_t s_nobat_sum1 = 0, s_nobat_sum2 = 0;   /* 전반/후반 전압 합 */
 static int16_t s_nobat_n1   = 0, s_nobat_n2   = 0;   /* 전반/후반 표본 수 */
@@ -2908,16 +3141,33 @@ void somfy_app_run(void *arg) {
           {
             int _sm = _bat_smooth_mv(_bat_mv);
             s_bat_last_sm_mv = _sm;   /* 1분 방전 로거가 읽는다 */
-            s_ui.chg_percent = s_nobat ? 0 : _bat_mv_to_pct(_sm);
+            s_bat_last_raw_mv = _bat_mv;
+            s_bat_last_us = now_us;
+            int _pct = s_nobat ? 0 : _bat_mv_to_pct(_sm);
+            /* ★★2026-08-12 (B) 방전 중 단조 비증가 — 잔량이 느는 건 불가능하다.
+             *  하한은 창이 BAT_FLOOR_MIN_N 개 찬 뒤부터 건다(첫 표본 하나로 잡으면
+             *  그게 저전압 무리에 걸렸을 때 세션 내내 5%p 낮게 고정된다). */
+            if (!_is_usb_powered()) {
+              if (s_bat_hist_n >= BAT_FLOOR_MIN_N) {
+                if (s_pct_floor <= 100 && _pct > (int)s_pct_floor) _pct = (int)s_pct_floor;
+                else                                              s_pct_floor = (uint8_t)_pct;
+              }
+            } else {
+              s_pct_floor = BAT_PCT_UNKNOWN;   /* 충전 중엔 상승이 정상 → 하한 해제 */
+            }
+            s_ui.chg_percent = (uint8_t)_pct;
             /* ★진단(2026-08-11): "% 가 한 값에 고정" 신고 대응. 원본/평활/표시%
              *  를 한 줄로 남겨 **평활이 붙잡는 것인지, 전압이 실제로 안 변하는지**
              *  를 즉시 가른다. 원본이 움직이는데 평활이 안 움직이면 평활 문제,
              *  둘 다 안 움직이면 전압(충전 CV 구간 등)이 진짜 평평한 것이다. */
             static int _slog = 0;
-            if ((_slog++ % 12) == 0)   /* 60초마다 */
-              ESP_LOGW(TAG, "[BAT%%] 원본%dmV -> 평활%dmV -> %d%%  (nobat=%d, judged=%d)",
+            if ((_slog++ % BAT_DBG_EVERY) == 0)   /* ★진단 중: 매 측정 */
+              ESP_LOGW(TAG, "[BAT%%] 원본%dmV -> 평활%dmV -> %d%%  (nobat=%d, judged=%d, "
+                            "하한=%d, 창%d/%d)",
                        _bat_mv, _sm, (int)s_ui.chg_percent, s_nobat ? 1 : 0,
-                       s_nobat_judged ? 1 : 0);
+                       s_nobat_judged ? 1 : 0,
+                       s_pct_floor <= 100 ? (int)s_pct_floor : -1,
+                       s_bat_hist_n, BAT_DISP_WIN);
           }
       } else if (!s_bat_adc_ok) {
         s_ui.chg_percent = _estimate_battery_percent();  /* ADC 자체가 없는 경우만 */
@@ -3054,27 +3304,52 @@ void somfy_app_run(void *arg) {
      *  ※세션 시작 검출은 _is_usb_powered() 의 60초 hold 창 때문에 최대 1분 늦을 수
      *    있다(그 사이 값은 기준점에 포함된다) — 누적 평균에는 영향이 미미하다. */
     {
-      static bool was_usb_pwr = true;
+      static bool     was_usb_pwr  = true;
+      static bool     dis_pending  = false;   /* 분리는 감지, 기준점은 아직 (★C) */
+      static uint32_t dis_seq0     = 0;       /* 분리 시점의 평활 호출 횟수 */
       const bool now_usb = usb_mode;
-      if (was_usb_pwr && !now_usb && s_bat_last_sm_mv > 0) {
-        /* USB → 배터리 전환: 세션 시작 */
+      if (was_usb_pwr && !now_usb) {
+        /* ★★2026-08-12 (C) USB → 배터리: **평활을 비우고 기준점은 미룬다.**
+         *  분리 순간의 평활값은 충전 중 단자전압(실측 4056mV)이지 배터리 OCV 가
+         *  아니다. 예전엔 그 값을 그대로 기준점으로 삼아, 이후 90초에 걸친 정착
+         *  (92%→73%)이 통째로 "방전"으로 계산돼 평균 302~819mA 가 찍혔다. */
+        _bat_smooth_reset();
+        dis_pending = true;
+        dis_seq0    = s_bat_sm_seq;
+        s_dis_t0_us = 0;                      /* 기준점 확정 전엔 세션 없음 */
+        ESP_LOGW(TAG, "[BATLOG] USB 분리 감지 — 평활 초기화, 배터리 실측 %d회로 기준점 잡는 중",
+                 BAT_FLOOR_MIN_N);
+      } else if (!was_usb_pwr && now_usb) {
+        ESP_LOGW(TAG, "[BATLOG] 방전 종료 (USB 연결)");
+        _batlog_flush_if_due(now_us, true);   /* 남은 것 즉시 저장 */
+        _bat_smooth_reset();                  /* ★C 대칭 — 배터리 전압을 충전 구간에 끌고 가지 않는다 */
+        s_pct_floor = BAT_PCT_UNKNOWN;        /* ★B 하한 해제(충전 중 상승 허용) */
+        dis_pending = false;
+        s_dis_t0_us = 0;
+      }
+      was_usb_pwr = now_usb;
+
+      /* ★C 기준점 확정 — **하한(B)이 걸리는 시점과 같이** 잡는다.
+       *  왜 첫 실측이 아닌가: 첫 표본은 중앙값이 안 걸린 날값이라, 그걸 기준으로
+       *  삼으면 워밍업 중 표시가 올라갈 때 누적 전류가 **음수**로 나온다.
+       *  같은 수렴값에서 기준점과 하한을 함께 잡으면 그 모순이 없다.
+       *  대가: 세션 시각(+0초)이 실제 분리보다 최대 25초 늦다. */
+      if (dis_pending && !now_usb && s_bat_sm_seq > dis_seq0 &&
+          s_bat_hist_n >= BAT_FLOOR_MIN_N && s_bat_last_sm_mv > 0) {
+        dis_pending    = false;
         s_dis_t0_us    = now_us;
         s_dis_mv0      = s_bat_last_sm_mv;
         s_dis_pct0     = s_ui.chg_percent <= 100 ? s_ui.chg_percent : 0;
         s_dis_prev_us  = now_us;
         s_dis_prev_mv  = s_dis_mv0;
         s_dis_prev_pct = s_dis_pct0;
-        ESP_LOGW(TAG, "[BATLOG] ★방전 시작 (USB 분리) — %dmV %d%% / 용량 %dmAh",
-                 s_dis_mv0, (int)s_dis_pct0, BAT_CAPACITY_MAH);
+        ESP_LOGW(TAG, "[BATLOG] ★방전 시작 — %dmV %d%% / 용량 %dmAh (실측 %d회로 수렴)",
+                 s_dis_mv0, (int)s_dis_pct0, BAT_CAPACITY_MAH, s_bat_hist_n);
         _batlog_reset();          /* 새 세션 → NVS 기록 초기화 */
         _batlog_add(0, s_dis_mv0, s_dis_pct0,
                     matter_blinds_get_radio_enabled(), oled_ui_is_panel_on(),
                     g_pm_state_applied);
-      } else if (!was_usb_pwr && now_usb) {
-        ESP_LOGW(TAG, "[BATLOG] 방전 종료 (USB 연결)");
-        s_dis_t0_us = 0;
       }
-      was_usb_pwr = now_usb;
 
       /* ★기록 주기: 분리 직후 2분간은 5초, 그 뒤로는 2분마다 (사용자 지정).
        *  왜 나누나: 분리 직후는 부하가 급변하는 구간(무선 OFF·화면 OFF 전환 등)이라
@@ -3086,6 +3361,7 @@ void somfy_app_run(void *arg) {
       const int64_t _iv_us  = (_el_us < (int64_t)BATLOG_FAST_S * 1000000LL)
                                 ? (int64_t)BATLOG_FAST_IV * 1000000LL
                                 : (int64_t)BATLOG_SLOW_IV * 1000000LL;
+      _batlog_flush_if_due(now_us, false);   /* 쌓인 기록을 2초 단위로 NVS 반영 */
       if (!now_usb && s_dis_t0_us && s_bat_last_sm_mv > 0 &&
           (now_us - s_dis_prev_us) >= _iv_us) {
         const int mv   = s_bat_last_sm_mv;

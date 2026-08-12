@@ -590,8 +590,8 @@ static void _btn_task(void *pvParam) {
      *  ★2026-08-12 vTaskDelay → ulTaskNotifyTake: 진동 ISR 이 **즉시 깨울 수** 있게
      *    한다. 타임아웃 10ms 는 그대로라 지금 동작·응답성은 이전과 동일하고,
      *    다만 검출 지연이 폴링 주기에서 분리된다(유휴 폴링을 늦추기 위한 전제).
-     *    ※폴링 자체는 아직 늦추지 않는다 — ~INT 가 실제로 다 잡는지 측정 전이다. */
-    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
+     *    ★2026-08-12 통지 폭풍(위 ISR 주석)으로 되돌림 → 단순 지연으로 복귀. */
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
@@ -795,13 +795,13 @@ static void IRAM_ATTR _vibe_isr_handler(void *arg) {
      *  (HAL 레이어, 항상 IRAM-safe). 폴링 태스크의 gpio_intr_enable 은 task
      *  context 라 flash 접근 OK — 그대로 둔다. */
     gpio_ll_intr_disable(&GPIO, VIBE_PIN);
-    /* ★폴링 태스크를 즉시 깨운다 — duty-cycle 창 측정을 곧바로 시작하게 해
-     *  검출 지연이 폴링 주기에 묶이지 않도록 한다. */
-    if (s_btn_task_h) {
-        BaseType_t hpw = pdFALSE;
-        vTaskNotifyGiveFromISR(s_btn_task_h, &hpw);
-        if (hpw) portYIELD_FROM_ISR();
-    }
+    /* ★★2026-08-12 되돌림 — ISR→태스크 통지를 넣었다가 뺀다.
+     *  이 기기의 VIBE 핀은 **HIGH 고정 고장** 상태인데도 ISR 은 초당 33회 계속
+     *  발사된다(실측 [VIBE-stat] ISR누적 3초당 +100). 통지를 걸면 그때마다 버튼
+     *  태스크를 깨워 **통지 폭풍**이 된다 — 절전에 해롭고 CPU 를 헛돌린다.
+     *  ISR 이 자기 인터럽트를 끄지만 폴링이 다시 켜므로 반복된다.
+     *  → 통지 없이 폴링이 duty-cycle 창으로 판정하는 원래 구조로 되돌린다.
+     *    (센서 배선을 고쳐 chatter 가 정상 범위가 된 뒤에 재검토할 것) */
     s_vibe_isr_disabled_flag = true;
     s_vibe_isr_count++;
 }
