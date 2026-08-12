@@ -39,6 +39,15 @@ CONFIG_ENABLE_ICD_SERVER=y
 #   esp-matter 는 클러스터를 CONFIG_SUPPORT_*_CLUSTER 로 개별 선택하므로 같이 켜야 한다.
 CONFIG_SUPPORT_ICD_MANAGEMENT_CLUSTER=y
 CONFIG_ICD_SLOW_POLL_INTERVAL_MS=7000
+# ★★2026-08-13 IdleModeDuration 2 -> 30 초.
+#  CHIP 은 구독 최대주기를 **이 값으로 협상**한다(ReadHandler.cpp:
+#  "synchronize the subscription report interval with the IdleModeDuration").
+#  esp-matter 기본값 2 여서 SmartThings 구독이 Min=0s/Max=2s 로 잡혔고,
+#  절전 기기가 2초마다 보고를 강요당해 light sleep 이 무의미해졌다
+#  (실측: IM:ReportData 가 2.02초 간격으로 무한 반복). 배터리로 돌리면
+#  그 약속을 못 지켜 허브가 offline 판정 → 실사용 신고와 일치.
+#  ※하향 링크 지연은 SLOW_POLL(7초)이 정하므로 이 값과 무관 — 명령 반응은 그대로다.
+CONFIG_ICD_IDLE_MODE_INTERVAL_SEC=30
 CONFIG_ICD_FAST_POLL_INTERVAL_MS=200
 CONFIG_PM_ENABLE=y
 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
