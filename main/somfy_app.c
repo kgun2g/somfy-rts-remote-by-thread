@@ -1889,6 +1889,28 @@ static void _start_app_tasks_once(void) {
  *    → SmartThings 없이도 버튼/OLED/RF 정상 동작. */
 #define APP_BOOT_PRE_DELAY_MS 5000    /* 부팅 후 백그라운드 페어링 감시 시작 지연 */
 #define APP_PAIR_WATCH_MS     12000   /* 페어링 감시 최대 시간(아무것도 없으면 종료) */
+#define APP_BOOT_TOTAL_MS     (APP_BOOT_PRE_DELAY_MS + APP_PAIR_WATCH_MS)
+
+/* ★2026-08-12 부팅 진행 바 (사용자 요청) ────────────────────────────────────
+ *  이 대기 구간(약 17초) 동안 예전에는 **메인 화면을 1회 그려놓고 방치**했다.
+ *  화면은 멀쩡한데 OLED 갱신·버튼 폴링 태스크가 아직 없어 아무것도 안 먹으니
+ *  "부팅 후 메인화면이 나타나고 한참 멈춰 있다" 로 보였다(실측 16.5초).
+ *  → 끝날 때까지 로고+진행 바를 계속 그려 **부팅 중임을 분명히** 한다.
+ *  ※진행률은 단조 증가만 시킨다: 활성 페어링이 감지되면 watch 가 12초로
+ *    되감기는데(아래 루프), 그대로 쓰면 바가 뒤로 가서 고장처럼 보인다.
+ *  ※95% 에서 멈춘다 — 실제 완료는 _start_app_tasks_once() 시점이다. 페어링이
+ *    끼어들어 감시가 연장되면 여기서 대기하는 게 정직하다. */
+static uint8_t s_boot_pct = 0;
+
+static void _boot_progress(int elapsed_ms) {
+  int p = (elapsed_ms * 95) / APP_BOOT_TOTAL_MS;
+  if (p < 0)  p = 0;
+  if (p > 95) p = 95;
+  if ((uint8_t)p < s_boot_pct) p = s_boot_pct;   /* 뒤로 가지 않게 */
+  s_boot_pct = (uint8_t)p;
+  oled_ui_show_booting(&s_ui, s_boot_pct);
+}
+
 static void _deferred_task_starter(void *pv) {
   (void)pv;
 
@@ -1900,10 +1922,11 @@ static void _deferred_task_starter(void *pv) {
     return;
   }
 
-  /* 1) 부팅 후 5초 대기. 메인 화면은 이미 1회 렌더됨. 무거운 연속
-   *    태스크는 아직 띄우지 않는다(802.15.4/SRP 타이밍 보호). */
+  /* 1) 부팅 후 5초 대기. 무거운 연속 태스크는 아직 띄우지 않는다
+   *    (802.15.4/SRP 타이밍 보호). 화면은 부팅 진행 바를 계속 갱신한다. */
   int pre = APP_BOOT_PRE_DELAY_MS;
   while (pre > 0 && !matter_blinds_is_commissioning_complete()) {
+    _boot_progress(APP_BOOT_PRE_DELAY_MS - pre);
     vTaskDelay(pdMS_TO_TICKS(500));
     pre -= 500;
   }
@@ -1917,6 +1940,7 @@ static void _deferred_task_starter(void *pv) {
              APP_PAIR_WATCH_MS);
   int watch = APP_PAIR_WATCH_MS;
   while (!matter_blinds_is_commissioning_complete()) {
+    _boot_progress(APP_BOOT_PRE_DELAY_MS + (APP_PAIR_WATCH_MS - watch));
     if (matter_blinds_is_pairing_in_progress()) {
       watch = APP_PAIR_WATCH_MS;            /* 활성 페어링 — 감시 유지 */
     } else {
@@ -1936,6 +1960,11 @@ static void _deferred_task_starter(void *pv) {
     oled_ui_set_matter_status(&s_ui, OLED_MT_CONNECTED,
                               thread_prov_get_parent_rssi());
   }
+  /* 바를 100% 로 채워 "부팅 완료" 를 한 프레임 보여준 뒤 메인으로 넘어간다.
+   * (95% 에서 멈춰 있다가 화면이 바뀌면 중간에 끊긴 것처럼 보인다) */
+  s_boot_pct = 100;
+  oled_ui_show_booting(&s_ui, 100);
+  vTaskDelay(pdMS_TO_TICKS(150));
   _start_app_tasks_once();
   vTaskDelete(NULL);
 }
@@ -2103,19 +2132,46 @@ static int _read_bat_mv(void) {
     if (_locked) xSemaphoreGive(_i2c_mtx);
     return -1;                          /* 전송 중 → 이번 주기 건너뜀(무한 대기 X) */
   }
+  int _s[8];
   int _rmin = 4096, _rmax = -1;             /* ★A: 같은 측정 안의 표본 산포 */
   for (int i = 0; i < 8; i++)
     if (adc_oneshot_read(s_bat_adc, s_bat_ch, &raw) == ESP_OK) {
-      sum += raw; n++;
+      _s[n++] = raw; sum += raw;
       if (raw < _rmin) _rmin = raw;
       if (raw > _rmax) _rmax = raw;
     }
   oled_ui_i2c_unlock();
   if (_locked) xSemaphoreGive(_i2c_mtx);
   if (n == 0) return -1;
+  /* 산포 진단값은 **전체 8표본**의 min/max 를 쓴다 — 절사한 값으로 재면 잡음
+   * 크기 자체를 못 본다(그걸 보려고 넣은 진단이다). */
   {
     const int _d = _rmax - _rmin;
     s_bat_last_spread = (uint8_t)(_d > 255 ? 255 : _d);
+  }
+  /* ★★2026-08-12 평균 → **25% 절사평균**(정렬 후 가운데 절반만 평균).
+   *
+   *  근거(실측): 8표본은 수십 us 안에 끝나 **같은 순간**을 재는데, 배터리 구동에서
+   *  그 안의 산포가 중앙값 36카운트(54mV), 64%가 30카운트 이상, 최대 115(174mV)였다
+   *  (USB 는 3~14카운트). 배터리가 수십 us 에 54mV 를 움직일 수는 없으므로 이건
+   *  **ADC 교란**이다. 그런데 단순 평균은 이상치 하나에 통째로 끌려간다 —
+   *  조용한 7표본 + 115카운트 튐 1개면 평균이 21mV(=3%p) 밀린다.
+   *  → 정렬해 양 끝을 버리고 가운데만 평균내면 그 밀림이 0 이 된다.
+   *  검증: sim/tools/bat_adc_trim_sim.py — 실측 산포 분포에 맞춘 모델에서
+   *        참값 대비 RMS 오차 7.2mV → 3.4mV (53% 감소).
+   *  ※표본 수 8 은 **그대로** 둔다 — _nobat_track 의 5분 창 통계 가정 유지.
+   *  ※이건 표시 안정화일 뿐 잡음을 없애지 못한다. 근본 해법은 HW:
+   *    BAT_ADC 분압(100k/100k = 소스 임피던스 50kΩ) 하단에 100nF. */
+  for (int i = 1; i < n; i++) {            /* 삽입정렬(최대 8개) */
+    int v = _s[i], j = i - 1;
+    while (j >= 0 && _s[j] > v) { _s[j + 1] = _s[j]; j--; }
+    _s[j + 1] = v;
+  }
+  if (n >= 4) {
+    const int lo = n / 4, hi = n - n / 4;  /* 가운데 절반 [lo, hi) */
+    sum = 0;
+    for (int i = lo; i < hi; i++) sum += _s[i];
+    n = hi - lo;
   }
   raw = sum / n;
   int mv;
@@ -2350,7 +2406,8 @@ void somfy_app_batlog_dump(void) {
     const bat_sample_t *e = &s_bl_buf[(start + i) % BATLOG_MAX];
     if (p0 < 0) { p0 = e->pct; t0 = e->t_s; }
     const int dt = e->t_s - t0;
-    const int ma = (dt > 0) ? ((p0 - e->pct) * BAT_CAPACITY_MAH * 36) / (dt * 10) : 0;
+    /* ★2026-08-12 분모의 `* 10` 제거 — 아래 [BATLOG] 쪽과 같은 버그였다. */
+    const int ma = (dt > 0) ? ((p0 - e->pct) * BAT_CAPACITY_MAH * 36) / dt : 0;
     static const char *EVN[] = {"주기","LEFT","RIGHT","SEL","UP","DOWN","ROT","PROG","기타",
                                 "?","?","?","?","?","?","?"};
     /* ★A 산포를 배터리 전압 mV 로 환산(나눗셈 순서 = _read_bat_mv 와 동일) */
@@ -2861,13 +2918,16 @@ void somfy_app_run(void *arg) {
     s_ui.state = OLED_STATE_NORMAL;
     _start_app_tasks_once();
   } else {
-    ESP_LOGI(TAG, "미페어링 — 메인 화면 즉시 표시 + 백그라운드 페어링 감시");
-    /* 페어링 화면 대신 메인을 1회 렌더(페어링됨 가정). 무거운 연속
-     *  태스크는 _deferred_task_starter 가 5초 후 12초 감시 뒤 시작
-     *  (커미셔닝 타이밍 보호 유지). */
+    ESP_LOGI(TAG, "미페어링 — 부팅 진행 화면 표시 + 백그라운드 페어링 감시");
+    /* ★2026-08-12 예전엔 여기서 **메인을 1회 렌더하고 방치**했다. 무거운 연속
+     *  태스크(OLED 갱신·버튼 폴링)는 _deferred_task_starter 가 5초+12초 뒤에야
+     *  띄우므로, 그 17초 동안 화면만 멀쩡하고 버튼이 안 먹어 "먹통" 으로 보였다
+     *  (사용자 신고, 실측 16.5초). → 부팅이 끝날 때까지 진행 바를 보여준다.
+     *  s_ui.state 는 NORMAL 그대로 둔다 — 나중에 _ui_task 가 뜨는 순간 바로
+     *  메인을 그리게 해 전환 깜빡임을 없앤다(부팅 화면은 직접 렌더라 무관). */
     s_ui.state = OLED_STATE_NORMAL;
     oled_ui_set_matter_status(&s_ui, OLED_MT_UNPAIRED, OLED_RSSI_INVALID);
-    oled_ui_render_main_once(&s_ui);
+    oled_ui_show_booting(&s_ui, 0);
     xTaskCreate(_deferred_task_starter, "defer_start", 3072, NULL, 4, NULL);
   }
 
@@ -3371,13 +3431,18 @@ void somfy_app_run(void *arg) {
 
         /* 누적 평균 전류: 쓴 용량 / 경과시간. %p → mAh 는 용량 비례로 환산. */
         const int d_pct_tot = (int)s_dis_pct0 - pct;
+        /* ★★2026-08-12 분모의 `* 10` 이 잘못이었다 — 표시가 정확히 10배 낮았다.
+         *   mA = 소모mAh / 시간 = (d_pct×용량/100) / (el_s/3600)
+         *      = d_pct × 용량 × 36 / el_s      ← `*10` 이 들어갈 자리가 없다.
+         *   실측 대조: 2.24시간에 73%→58%(-15%p), 700mAh → 47mA 인데 로그는 4mA.
+         *   `rem_min` 이 이 값을 쓰므로 예상 잔여시간도 10배 낙관적이었다. */
         const int avg_ma    = (el_s > 0)
-            ? (d_pct_tot * BAT_CAPACITY_MAH * 36) / (el_s * 10)   /* ×3600/100 */
+            ? (d_pct_tot * BAT_CAPACITY_MAH * 36) / el_s          /* ×3600/100 */
             : 0;
         /* 직전 1분 구간 전류 — 부하 변화(화면·무선 ON/OFF)를 잡는다. */
         const int d_pct_seg = (int)s_dis_prev_pct - pct;
         const int seg_ma    = (sg_s > 0)
-            ? (d_pct_seg * BAT_CAPACITY_MAH * 36) / (sg_s * 10)
+            ? (d_pct_seg * BAT_CAPACITY_MAH * 36) / sg_s          /* ★위와 같은 `*10` 제거 */
             : 0;
         /* 남은 시간: 현재 %와 누적 평균 전류 기준(전류 0 이하면 산출 불가) */
         const int rem_min = (avg_ma > 0)

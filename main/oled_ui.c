@@ -3005,6 +3005,10 @@ static void _oled_i2c_init_at(SSD1306_t *dev, int sda, int scl, uint32_t hz, uin
              sda, scl, (unsigned long)(hz / 1000), addr);
 }
 
+/* 실행 중 펌웨어 버전 문자열("V3.5"). oled_ui_init 의 스플래시가 1회 채우고,
+ * 부팅 진행 화면(oled_ui_show_booting)이 같은 값을 다시 그린다. */
+static char s_ver_str[16] = "V?";
+
 void oled_ui_init(oled_ui_ctx_t *ctx)
 {
     s_ctx = ctx;
@@ -3072,68 +3076,87 @@ void oled_ui_init(oled_ui_ctx_t *ctx)
     strncpy(ctx->time_str, "00:00", sizeof(ctx->time_str));
 
     /* ── 시작 스플래시 (OLED 검출된 경우만 — 미연결 시 무의미한 지연 회피) ── */
-    if (s_oled_present) {
+    if (s_oled_present) {   /* s_ver_str 은 아래에서 채운다 — 부팅 진행 화면도 같이 쓴다 */
         /* ★2026-08-12 버전 표시를 **실행 중 바이너리에서** 읽는다.
          *  버그였다: 세 renderer 모두 "V1.0" 문자열이 박혀 있어, CMakeLists 의
          *  PROJECT_VER 을 3.5 로 올린 뒤에도 부팅 화면은 계속 1.0 을 보여줬다
          *  (사용자 신고). esp_app_get_description()->version 은 FW Update 화면·
          *  Matter OTA 가 쓰는 값과 **같은 소스**라 앞으로 자동으로 일치한다. */
-        char vstr[16];
         {
             const esp_app_desc_t *_d = esp_app_get_description();
             /* ※`%.14s` 로 상한을 못박는다 — version 은 char[32] 라 그냥 `%s` 로 쓰면
              *  -Wformat-truncation 이 에러로 잡힌다(이 프로젝트는 경고=에러).
              *  화면에도 14글자면 넘치므로 자르는 게 맞다. */
-            snprintf(vstr, sizeof(vstr), "V%.14s", (_d && _d->version[0]) ? _d->version : "?");
+            snprintf(s_ver_str, sizeof(s_ver_str), "V%.14s",
+                     (_d && _d->version[0]) ? _d->version : "?");
         }
-#if OLED_RENDER_128X64
-        /* 128×64 네이티브 부팅 (고딕 + 로딩바) — 해상도 기준 선택 */
-        _fb_clear();
-        _pstr8_center(8,  "SOMFY");
-        _pstr8_center(22, "BLIND CTRL");
-        _pstr8_center(36, vstr);
-        for (int w = 0; w <= 100; w += 5) {
-            _pfill(14, 52, w, 4, true);
-            _fb_flush();
-            vTaskDelay(pdMS_TO_TICKS(15));
-        }
-        vTaskDelay(pdMS_TO_TICKS(600));
-#elif OLED_RENDER_64X128
-        /* 64×128 세로 부팅 (고딕 로고 세로 적층 + 로딩바) */
-        _fb_clear();
-        _pstr8_center(24, "SOMFY");
-        _pstr8_center(44, "BLIND");
-        _pstr8_center(56, "CTRL");
-        _pstr8_center(78, vstr);
-        for (int w = 0; w <= 100; w += 5) {
-            _pfill(7, 100, w / 2, 4, true);   /* 64px 폭 → bar 최대 50px */
-            _fb_flush();
-            vTaskDelay(pdMS_TO_TICKS(15));
-        }
-        vTaskDelay(pdMS_TO_TICKS(600));
-#else
-        _fb_clear();
-        /* 중앙 정렬 로고 */
-        _fb_draw_string(4,  1,  "SOMFY");
-        _fb_draw_string(4,  11, "BLIND");
-        _fb_draw_string(4,  21, "CTRL");
-        /* 버전 표시 (작은 숫자로). 우측 정렬 — 예전 x=48 은 72px 패널에서
-         * 4글자를 우측에 붙인 값(72-4*6)이라, 길이로 계산하면 그대로 재현되면서
-         * 버전 문자열이 길어져도 화면 밖으로 안 나간다. */
-        {
-            int _vx = (int)OLED_WIDTH - (int)strlen(vstr) * FONT_W;
-            _fb_draw_string(_vx < 0 ? 0 : _vx, 31, vstr);
-        }
-        /* 하단 로딩바 애니메이션 */
-        for (int i = 0; i <= OLED_WIDTH; i += 4) {
-            _fb_hline(0, i, 38);
-            _fb_hline(0, i, 39);
-            _fb_flush();
-            vTaskDelay(pdMS_TO_TICKS(20));
-        }
-        vTaskDelay(pdMS_TO_TICKS(800));
-#endif
+        /* ★★2026-08-12 스플래시 = **부팅 화면 0%** (사용자 신고: "부팅 초반 짧게
+         *  빠르게 로딩되고 다시 천천히 로딩된다").
+         *
+         *  버그였다: 예전 스플래시는 **자기 로딩바를 0→100 으로 쓸고**(300ms) 600ms
+         *  멈췄다. 그 뒤 부팅 진행 바가 다시 0 부터 17초에 걸쳐 차므로 **바가 두 번**
+         *  찼다. 진짜 진행률은 두 번째 것뿐이라 첫 번째는 거짓 신호였다.
+         *  → 스플래시를 같은 함수(oled_ui_show_booting)로 0% 만 그린다. 이제 바는
+         *    부팅 내내 **한 번만 단조 증가**한다. 배치가 어긋날 수도 없다(같은 코드).
+         *  덤: 쓸기 300ms + 대기 600ms = 약 0.9초 부팅이 빨라진다. 남긴 250ms 는
+         *      페어링된 기기(부팅 직후 메인 전환)에서 로고가 깜빡이고 마는 걸 막는
+         *      최소 시간이다. */
+        oled_ui_show_booting(ctx, 0);
+        vTaskDelay(pdMS_TO_TICKS(250));
     }
+}
+
+/* ═══════════════════════════════════════════════
+   부팅 진행 화면 (★2026-08-12 신규, 사용자 요청)
+   ──────────────────────────────────────────────
+   왜 필요한가: 미페어링 부팅에서는 앱 태스크(OLED 갱신·버튼 폴링)가 커미셔닝
+   타이밍 보호를 위해 약 17초 뒤에야 시작된다(somfy_app.c _deferred_task_starter).
+   그동안 예전에는 **메인 화면을 1회 그려놓고 방치**해서, 화면은 멀쩡한데 아무
+   버튼도 안 먹는 "먹통" 으로 보였다(사용자 신고: "메인화면이 나타나고 어느정도
+   멈추어 있다가 작동한다").
+   → 부팅이 끝날 때까지 로고 + 진행 바를 계속 보여주고, 끝나야 메인으로 넘어간다.
+
+   ※이 함수는 **직접 렌더**한다(상태머신 경유 X). 그 시점엔 _ui_task 가 아직
+     없으므로 상태를 바꿔봐야 아무도 안 그린다. 호출 주기는 0.5초(2fps)로,
+     보호 대상인 20fps OLED 태스크보다 한참 낮아 커미셔닝 타이밍에 영향이 없다.
+═══════════════════════════════════════════════ */
+void oled_ui_show_booting(oled_ui_ctx_t *ctx, uint8_t pct)
+{
+    (void)ctx;
+    if (!s_oled_present) return;
+    if (pct > 100) pct = 100;
+
+    /* ★2026-08-12 "LOADING..." 줄 제거 (사용자 요청: 화면이 좁아 겹쳐 보인다).
+     *  고딕 글리프가 9행이라 버전(36~44)과 LOADING(46~54) 사이가 1행뿐이었다.
+     *  진행 바만으로도 "부팅 중" 은 충분히 전달된다. 레이아웃은 스플래시와
+     *  완전히 동일하게 되돌려, 스플래시 → 부팅 화면 전환 시 로고가 안 움직인다. */
+    _fb_clear();
+#if OLED_RENDER_128X64
+    _pstr8_center(8,  "SOMFY");
+    _pstr8_center(22, "BLIND CTRL");
+    _pstr8_center(36, s_ver_str);
+    _pfill(14, 52, pct, 4, true);          /* 스플래시 바와 동일 위치·폭(최대 100px) */
+#elif OLED_RENDER_64X128
+    _pstr8_center(24, "SOMFY");
+    _pstr8_center(44, "BLIND");
+    _pstr8_center(56, "CTRL");
+    _pstr8_center(78, s_ver_str);
+    _pfill(7, 100, pct / 2, 4, true);      /* 64px 폭 → bar 최대 50px */
+#else
+    /* 72×40 — 스플래시와 동일 배치. 바만 진행률로 채운다. */
+    _fb_draw_string(4,  1,  "SOMFY");
+    _fb_draw_string(4,  11, "BLIND");
+    _fb_draw_string(4,  21, "CTRL");
+    {
+        int _vx = (int)OLED_WIDTH - (int)strlen(s_ver_str) * FONT_W;
+        _fb_draw_string(_vx < 0 ? 0 : _vx, 31, s_ver_str);
+    }
+    {
+        int _w = (int)OLED_WIDTH * pct / 100;
+        if (_w > 0) { _fb_hline(0, _w - 1, 38); _fb_hline(0, _w - 1, 39); }
+    }
+#endif
+    _fb_flush();
 }
 
 /* 공유 I2C 버스 핸들 노출 — BOARD_I2C_SHARED 보드에서 PCF8574 가 같은 버스 사용.

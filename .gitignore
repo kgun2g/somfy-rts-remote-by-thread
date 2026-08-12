@@ -34,3 +34,6 @@ managed_components/
 fp-info-cache
 _autosave-*
 *-backups/
+# Python 시뮬레이터 캐시 (sim/tools/*.py 를 모듈로 import 할 때 생김)
+__pycache__/
+*.pyc

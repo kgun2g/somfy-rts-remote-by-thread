@@ -313,6 +313,23 @@ void oled_ui_render_pairing_once(oled_ui_ctx_t *ctx, const char *pair_code,
  */
 void oled_ui_render_main_once(oled_ui_ctx_t *ctx);
 
+/**
+ * @brief 부팅 진행 화면을 1회 렌더 (로고 + 버전 + 진행 바).
+ *        배치는 시작 스플래시와 동일 — 전환 시 로고가 움직이지 않는다.
+ *
+ * ★2026-08-12 신규. 미페어링 부팅은 앱 태스크(OLED 갱신·버튼 폴링)가 커미셔닝
+ * 타이밍 보호 때문에 약 17초 뒤에 시작된다. 그동안 메인 화면을 그려두면 화면은
+ * 멀쩡한데 버튼이 안 먹어 "먹통" 으로 보인다 → 부팅이 끝날 때까지 이 화면을
+ * 보여주고, 끝나면 메인으로 전환한다.
+ *
+ * 상태머신을 거치지 않고 **직접 렌더**한다(_ui_task 가 아직 없으므로 상태만
+ * 바꿔서는 아무도 안 그린다). 0.5초 주기 호출을 전제로 한다 — 보호 대상인
+ * 20fps OLED 태스크보다 훨씬 낮아 커미셔닝 타이밍에 영향이 없다.
+ *
+ * @param pct 0~100 진행률. 뒤로 가지 않게(단조 증가) 호출측이 보장할 것.
+ */
+void oled_ui_show_booting(oled_ui_ctx_t *ctx, uint8_t pct);
+
 /* v2.x 호환 별칭 */
 static inline void oled_ui_set_wifi(oled_ui_ctx_t *ctx, bool connected) {
     oled_ui_set_thread(ctx, connected);
