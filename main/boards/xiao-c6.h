@@ -120,6 +120,12 @@
 #define BOARD_OLED_BITBANG     1
 #define BOARD_PIN_PCF_LP_SDA   6   // MTCK / LP_I2C_SDA (뒷면 패드, 비트뱅)
 #define BOARD_PIN_PCF_LP_SCL   7   // MTDO / LP_I2C_SCL (뒷면 패드, 비트뱅)
+
+/* ★2026-08-13 (③) LP 코어 폴링 위임 허용. GPIO6/7 = C6 LP_I2C 고정핀과 일치하므로
+ *  이 배선(뒷면 LP_I2C)으로 붙은 개체에서는 LP 코어가 PCF 폴링+로터리 디코딩을
+ *  맡을 수 있다. 앞면 공유 I2C(22/23)로 폴백된 개체는 런타임 판정에서 걸러져
+ *  **현행 HP 폴링 그대로** 동작한다(같은 펌웨어가 두 배선 모두 지원). */
+#define BOARD_PCF_LP_CORE      1
 #define BOARD_PIN_PCF_INT      2   // D2 (GPIO2, LP) ~INT (active-LOW, wake) — 공통
 
 /* ════════════════════════════════════════════════════════

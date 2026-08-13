@@ -3525,7 +3525,28 @@ void somfy_app_run(void *arg) {
       static bool     was_usb_pwr  = true;
       static bool     dis_pending  = false;   /* 분리는 감지, 기준점은 아직 (★C) */
       static uint32_t dis_seq0     = 0;       /* 분리 시점의 평활 호출 횟수 */
-      const bool now_usb = usb_mode;
+      /* ★★2026-08-13 USB→배터리 전환을 **2초 디바운스**한다.
+       *
+       *  버그였다: 전환을 한 번의 판독으로 확정해 `_batlog_reset()` 을 불렀다.
+       *  그런데 (a) 시리얼 포트를 열면 USB-JTAG 이 칩을 리셋시키고(부팅진단
+       *  "리셋사유=USB리셋(플래시/포트열기)", 누적 198회), (b) 재부팅 직후
+       *  `was_usb_pwr` 은 true 로 시작하는데 VBUS 판정이 안정되기 전 한 순간
+       *  false 로 읽히면 **"USB 분리"로 오인** → 새 세션 시작 → **직전 기록이
+       *  통째로 지워졌다**. 실사용에서 1시간짜리 방전 측정이 두 번 날아갔다
+       *  (세션 #22 → #25 → #27 로 실제 분리 횟수보다 많이 증가한 게 증거).
+       *  → 연속 USB_DROP_CONFIRM_MS 동안 배터리로 읽혀야 전환으로 인정한다.
+       *    실제 분리라면 2초 뒤에 시작해도 무해하다(기준점은 어차피 25초 뒤 확정). */
+#ifndef USB_DROP_CONFIRM_MS
+#define USB_DROP_CONFIRM_MS 2000
+#endif
+      static int64_t usb_low_since_us = 0;
+      if (usb_mode) {
+        usb_low_since_us = 0;
+      } else if (usb_low_since_us == 0) {
+        usb_low_since_us = now_us;
+      }
+      const bool now_usb = usb_mode ||
+          ((now_us - usb_low_since_us) < (int64_t)USB_DROP_CONFIRM_MS * 1000);
       if (was_usb_pwr && !now_usb) {
         /* ★★2026-08-12 (C) USB → 배터리: **평활을 비우고 기준점은 미룬다.**
          *  분리 순간의 평활값은 충전 중 단자전압(실측 4056mV)이지 배터리 OCV 가

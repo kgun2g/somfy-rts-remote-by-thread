@@ -48,6 +48,41 @@ idf_component_register(SRCS "app_main.cpp" "app_driver.cpp"
                             "efuse_commissionable.cpp" "boot_diag.c"
                             ${_test_srcs}
                        PRIV_INCLUDE_DIRS  "." "boards" ${_test_incs})
+# ※`REQUIRES ulp` 를 여기 넣지 말 것. `main` 은 원래 **모든 컴포넌트를 자동 의존**하는데
+#   REQUIRES 를 한 번이라도 명시하면 그 자동 동작이 꺼져 esp_matter 등이 통째로 끊긴다
+#   (실제로 "efuse_commissionable.h ... esp_matter is not in the requirements list" 로 실패).
+#   ulp 헤더도 자동 의존으로 이미 보인다.
+
+# ─── ★2026-08-13 (③) LP 코어 PCF8574 폴링 프로그램 ────────────────────────
+#   LP 코어가 PCF 를 폴링하고 로터리 쿼드러처까지 디코딩한다(main/lp_core/pcf_poll.c).
+#   HP 는 공유 RAM 만 읽으므로 I2C 비트뱅이 사라지고 깨우기 주기를 늘릴 수 있다.
+#
+#   ★보드별 분리 — LP_I2C 전용핀(C6 고정 6/7)에 PCF 가 물린 보드에서만 빌드한다.
+#     · xiao-c6 : BOARD_PCF_LP_CORE=1 → LP 프로그램 포함
+#     · esp32-h2: LP 코어/LP_I2C 자체가 없음 → 아예 빌드 안 함
+#     · 공유 I2C(22/23) 로 폴백된 개체 → 바이너리엔 있지만 런타임 판정에서 안 씀
+#   즉 이 블록이 빠져도 나머지 코드는 그대로 컴파일된다(button_handler.c 가
+#   BOARD_PCF_LP_CORE 로 가드).
+set(_lp_core_enabled 0)
+if(BOARD STREQUAL "xiao-c6")
+    set(_lp_core_enabled 1)
+endif()
+if(_lp_core_enabled AND CONFIG_ULP_COPROC_TYPE_LP_CORE)
+    set(ulp_app_name lp_core_${COMPONENT_NAME})
+    set(ulp_lp_core_sources "lp_core/pcf_poll.c")
+    # 아래 파일들이 자동 생성 헤더(${ulp_app_name}.h)를 include 한다.
+    set(ulp_exp_dep_srcs "button_handler.c")
+    ulp_embed_binary(${ulp_app_name} "${ulp_lp_core_sources}" "${ulp_exp_dep_srcs}")
+    # ★읽기 폭(PCF8574 1바이트 / PCF8575 2바이트)은 lp_core/pcf_lp_config.h 에 두고
+    #   LP·HP 가 **같이 include** 한다. 빌드 정의(-D)로는 못 넘긴다 —
+    #   ulp_embed_binary 의 타깃은 ExternalProject 라 target_compile_options 가
+    #   "non-compilable target type" 으로 실패한다(실제로 겪음).
+    #   어긋남은 button_handler.c 의 _Static_assert 가 빌드에서 잡는다.
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE SOMFY_LP_CORE_BUILT=1)
+    message(STATUS "LP core PCF poll program: enabled (${ulp_app_name})")
+else()
+    message(STATUS "LP core PCF poll program: disabled (board=${BOARD})")
+endif()
 
 # ─── 보드 선택 (-DBOARD=esp32-c6 등) ─────────────────────────
 #   build.ps1 가 cmake 호출 시 BOARD=<name> 캐시 변수 전달.

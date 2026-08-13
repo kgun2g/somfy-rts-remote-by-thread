@@ -120,6 +120,44 @@ static SemaphoreHandle_t s_i2c_mutex = NULL;
 #  define PCF_BB_SCL      ((gpio_num_t)BOARD_PIN_PCF_LP_SCL)
 #  define PCF_RD_SHARED   _pcf_read_shared   /* 폴백: 공유/LP 읽기 함수 이름 분리 */
 #  define PCF_RD_BB       _pcf_read_lp
+/* ═══════════════════════════════════════════════
+   ★★2026-08-13 (③) LP 코어 PCF 폴링 위임
+   ──────────────────────────────────────────────
+   HP 가 10ms 마다 비트뱅으로 PCF 를 읽던 것을 LP 코어로 넘긴다. LP 는 2ms 주기로
+   LP_I2C 읽기 + **로터리 쿼드러처 디코딩**까지 끝내고 공유 RAM 에 넣는다.
+   HP 는 I2C 를 아예 안 만지고 공유 RAM 만 읽으므로, 깨우기 주기를 늘릴 수 있다.
+
+   ★분리 원칙 (사용자 지시) — 세 조건이 다 맞을 때만 LP 경로:
+     (a) 보드가 허용        : BOARD_PCF_LP_CORE (xiao-c6=1, H2=0)
+     (b) 빌드에 포함        : SOMFY_LP_CORE_BUILT (CMakeLists 가 정의)
+     (c) 런타임 LP 버스 확정: s_pcf_bus == PCF_BUS_LP
+   하나라도 아니면 **현행 HP 비트뱅 폴링 그대로** 간다. 공유 I2C(22/23) 배선
+   개체와 H2 는 코드 경로가 전혀 안 바뀐다.
+
+   ★로터리를 LP 에서 푸는 이유: 디텐트 1개는 A/B 전이 2회가 수 ms 안에 끝난다.
+   "변화 있음"만 알리고 HP 가 깨어나 읽으면 이미 지나가 **방향을 알 수 없다**.
+   ② 가 정확히 이것 때문에 깨졌다(유휴 50ms 폴링 → 버튼·로터리 먹통).
+═══════════════════════════════════════════════ */
+#if BOARD_PCF_LP_CORE && defined(SOMFY_LP_CORE_BUILT)
+#  define SOMFY_LP_CORE_PATH 1
+#  include "ulp_lp_core.h"
+#  include "lp_core_i2c.h"
+#  include "lp_core_main.h"   /* ulp_embed_binary 자동 생성 (ulp_pcf_state 등) */
+#  include "lp_core/pcf_lp_config.h"   /* LP 와 공유하는 읽기 폭/비트 위치 */
+/* ★양쪽이 어긋나면 런타임에 조용히 틀린다(좌/우 버튼 실종). 빌드에서 잡는다. */
+_Static_assert(LP_PCF_NBYTES == PCF_NBYTES,
+               "LP/HP PCF read width mismatch (pcf_lp_config.h vs button_handler.h)");
+_Static_assert(LP_BIT_ROT_A == PCF8574_BIT_ROT_A && LP_BIT_ROT_B == PCF8574_BIT_ROT_B,
+               "LP/HP rotary bit position mismatch");
+extern const uint8_t lp_core_main_bin_start[] asm("_binary_lp_core_main_bin_start");
+extern const uint8_t lp_core_main_bin_end[]   asm("_binary_lp_core_main_bin_end");
+#else
+#  define SOMFY_LP_CORE_PATH 0
+#endif
+
+/* LP 경로가 실제로 가동 중인가 — 런타임 확정값. 0 이면 전부 현행 폴링. */
+static volatile bool s_lp_active = false;
+
 enum { PCF_BUS_LP = 0, PCF_BUS_SHARED = 1 };
 static volatile uint8_t s_pcf_bus = PCF_BUS_LP;   /* btn_handler_init 의 프로브로 확정 */
 #else
@@ -440,6 +478,16 @@ static bool _pcf_lp_probe(void) {
 
 /* 런타임 디스패치: LP 연결이면 비트뱅, 아니면 공유 HW I2C 읽기. */
 static pcf_state_t _pcf8574_read(void) {
+#if SOMFY_LP_CORE_PATH
+  /* ★③ LP 경로: I2C 를 HP 가 아예 안 만진다. LP 코어가 2ms 마다 읽어 공유 RAM 에
+   *  넣어둔 값을 그대로 쓴다 — 비트뱅(0.44ms/회)이 통째로 사라진다.
+   *  ※LP 가 아직 첫 읽기 전이면 0xFFFF 이므로 그때만 HP 가 직접 읽는다. */
+  if (s_lp_active && ulp_pcf_state != 0xFFFFFFFFu) {
+    /* ★PCF8575(2바이트) 는 좌/우 버튼이 상위 바이트(P10=bit8, P11=bit9)에 있다.
+     *  여기서 0xFF 로 자르면 좌/우가 통째로 사라진다(실사용 신고로 드러난 버그). */
+    return (pcf_state_t)ulp_pcf_state;
+  }
+#endif
   return (s_pcf_bus == PCF_BUS_LP) ? PCF_RD_BB() : PCF_RD_SHARED();
 }
 #endif /* BOARD_I2C_LP_FALLBACK */
@@ -608,6 +656,29 @@ static void _btn_task(void *pvParam) {
     bool rot_btn = (pcf >> PCF8574_BIT_ROT_BTN) & 1;
 
     uint8_t ab = ((rot_a ? 1 : 0) << 1) | (rot_b ? 1 : 0);
+#if SOMFY_LP_CORE_PATH
+    /* ★③ LP 경로: 쿼드러처는 **LP 코어가 이미 풀었다**. 여기서는 누적 디텐트만
+     *  꺼내 이벤트로 바꾼다(소비형 — 읽은 만큼 차감).
+     *  HP 가 다시 디코딩하면 안 된다: 폴링 주기가 느려 전이를 놓치므로 오히려 틀린다.
+     *  극성(_ROT_CW_ON_AB1)은 기존과 같은 규칙을 그대로 적용한다. */
+    if (s_lp_active) {
+      int32_t d = ulp_rot_delta;
+      if (d) {
+        ulp_rot_delta -= d;                     /* 소비 — LP 가 그 사이 더 넣어도 안전 */
+        int32_t n = (d < 0) ? -d : d;
+        if (n > 8) n = 8;                       /* 폭주 방어(한 번에 8디텐트까지) */
+        bool neg = (d < 0);
+        bool cw  = (neg == (_ROT_CW_ON_AB1 != 0));
+        for (int32_t k = 0; k < n; k++) {
+          if ((now - s_rot_last_ms) >= ROT_MIN_INTERVAL_MS) {
+            s_rot_last_ms = now;
+            _send_event(cw ? BTN_EVT_ROT_CW : BTN_EVT_ROT_CCW, 0);
+          }
+        }
+      }
+      s_rot_ab_raw = ab;                        /* HP 디코더 상태는 동기만 맞춰둔다 */
+    } else
+#endif
 #if BOARD_ROT_HALF_STEP
     /* ── EC05 등 하프스텝 엔코더 (11·00 양쪽 디텐트 = 2디텐트/사이클, 1디텐트=2스텝) ──
      *  4상 그레이코드 전이 LUT 누산. 바운스(왕복)는 +1/−1 로 상쇄돼 자동 제거
@@ -745,6 +816,19 @@ static void _btn_task(void *pvParam) {
      *    성립하지 않으므로 10ms 고정 폴링을 유지한다. 절전은 ①(tick 1000Hz)이
      *    폴링 **사이**에 재우는 것까지만 얻는다.
      *  ※깨우기 통계 카운터와 `~INT` ISR 등록은 진단용으로 남겨둔다(무해). */
+    /* ★★③ LP 경로에서는 HP 가 I2C 를 안 만지므로(공유 RAM 만 읽음) 주기를 늘려
+     *  깨우기를 줄인다. 로터리는 LP 가 이미 디코딩해 누적해 두므로 늦게 읽어도
+     *  **디텐트를 잃지 않는다** — ② 가 깨졌던 이유가 여기서 사라진다.
+     *  버튼은 눌림이 100ms 이상이라 25ms 주기로 충분하다(150ms 는 예전에 실패).
+     *  활동 중(눌린 상태)에는 롱프레스 평가를 위해 10ms 로 붙인다. */
+#if SOMFY_LP_CORE_PATH
+    if (s_lp_active) {
+      bool any_held = false;
+      for (int i = 0; i < BTN_COUNT; i++)
+        if (!s_btns[i].last_state) { any_held = true; break; }
+      vTaskDelay(pdMS_TO_TICKS(any_held ? BTN_ACTIVE_POLL_MS : 25));
+    } else
+#endif
     vTaskDelay(pdMS_TO_TICKS(BTN_ACTIVE_POLL_MS));
   }
 }
@@ -758,6 +842,47 @@ void btn_handler_wake_stats(uint32_t *int_cnt, uint32_t *vibe_cnt,
   if (vibe_cnt) *vibe_cnt = s_wake_vibe;
   if (tmo_cnt)  *tmo_cnt  = s_wake_tmo;
   if (idle_cnt) *idle_cnt = s_idle_enter;
+}
+
+/* ★★2026-08-13 (③) LP 코어 기동 — LP_I2C 배선이 확인된 개체에서만 호출된다.
+ *  실패하면 조용히 s_lp_active=false 로 두고 **현행 HP 폴링 그대로** 간다
+ *  (②에서 배운 것: 새 경로가 실패했을 때 입력이 죽으면 안 된다). */
+static void _lp_core_try_start(void)
+{
+#if SOMFY_LP_CORE_PATH
+  /* 1) LP_I2C 페리페럴 초기화 — LP 코어가 쓰기 전에 HP 가 설정해줘야 한다.
+   *    C6 는 SDA=GPIO6/SCL=GPIO7 고정이라 별도 핀 지정이 없다. */
+  const lp_core_i2c_cfg_t i2c_cfg = LP_CORE_I2C_DEFAULT_CONFIG();
+  esp_err_t e = lp_core_i2c_master_init(LP_I2C_NUM_0, &i2c_cfg);
+  if (e != ESP_OK) {
+    ESP_LOGW(TAG, "[LP] LP_I2C init 실패(%s) — HP 폴링 유지", esp_err_to_name(e));
+    return;
+  }
+  /* 2) LP 프로그램 적재 + 기동 */
+  e = ulp_lp_core_load_binary(lp_core_main_bin_start,
+                              (size_t)(lp_core_main_bin_end - lp_core_main_bin_start));
+  if (e != ESP_OK) {
+    ESP_LOGW(TAG, "[LP] 프로그램 적재 실패(%s) — HP 폴링 유지", esp_err_to_name(e));
+    return;
+  }
+  ulp_lp_core_cfg_t cfg = { .wakeup_source = ULP_LP_CORE_WAKEUP_SOURCE_HP_CPU };
+  e = ulp_lp_core_run(&cfg);
+  if (e != ESP_OK) {
+    ESP_LOGW(TAG, "[LP] 기동 실패(%s) — HP 폴링 유지", esp_err_to_name(e));
+    return;
+  }
+  /* 3) LP 가 실제로 폴링을 시작했는지 확인하고 나서 경로를 넘긴다.
+   *    확인 없이 넘기면 LP 가 죽어 있을 때 버튼이 통째로 먹통이 된다. */
+  uint32_t p0 = ulp_poll_cnt;
+  vTaskDelay(pdMS_TO_TICKS(50));
+  if (ulp_poll_cnt == p0) {
+    ESP_LOGW(TAG, "[LP] 기동했으나 폴링이 안 돈다(poll_cnt 고정) — HP 폴링 유지");
+    return;
+  }
+  s_lp_active = true;
+  ESP_LOGW(TAG, "[LP] ★LP 코어 PCF 폴링 가동 — 50ms 간 %u회 폴링, HP 비트뱅 중단",
+           (unsigned)(ulp_poll_cnt - p0));
+#endif
 }
 
 /* ─── 공개 API ───────────────────────────────── */
@@ -788,6 +913,9 @@ void btn_handler_init(btn_event_cb_t cb, void *user_data) {
     s_pcf_initialized = true;
     ESP_LOGI(TAG, "PCF8574 LP_I2C 연결 확인 (bit-bang IO%d/IO%d, addr=0x%02X) → LP 사용",
              PCF_BB_SDA, PCF_BB_SCL, PCF8574_I2C_ADDR);
+    /* ★★③ 여기서만 LP 코어를 띄운다 — LP_I2C 전용핀 배선이 확인된 개체.
+     *  공유 I2C 로 폴백된 개체(아래 else)와 H2 는 절대 이 경로를 타지 않는다. */
+    _lp_core_try_start();
   } else {
     ESP_LOGW(TAG, "PCF8574 LP_I2C(IO%d/IO%d) 무응답 → 공유 HW I2C(OLED 버스)로 자동 전환",
              PCF_BB_SDA, PCF_BB_SCL);

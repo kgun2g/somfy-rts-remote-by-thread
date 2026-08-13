@@ -119,6 +119,36 @@ See main/boards/ for available boards."
 #  endif
 #endif
 
+/* ── ★2026-08-13 (③) LP 코어로 PCF8574 폴링 위임 (절전) ────────────────────
+ *   0 (기본): 현행 그대로 — HP(메인 CPU) 가 10ms 마다 비트뱅으로 PCF 를 읽는다.
+ *   1       : LP_I2C 배선(뒷면 6/7)로 붙은 보드에서, **LP 코어**가 PCF 를 폴링하고
+ *             로터리 쿼드러처까지 디코딩해 공유 RAM 에 넣는다. HP 는 공유 RAM 만
+ *             읽으므로 I2C 비트뱅이 사라지고 깨우기 주기를 늘릴 수 있다.
+ *
+ *   ★왜 이 조건이 필요한가 — 세 가지가 다 맞아야 성립한다:
+ *     (a) SoC 가 LP 코어 + LP_I2C 지원 (C6/C5/P4. H2 는 **미지원**)
+ *     (b) PCF 가 **LP_I2C 전용핀**에 물려 있을 것 — C6 는 SDA=GPIO6/SCL=GPIO7 **고정**
+ *     (c) 런타임 프로브에서 LP 버스로 확정될 것(s_pcf_bus == PCF_BUS_LP)
+ *   → 공유 HW I2C(OLED 와 22/23 공유) 배선인 보드·경로는 **현행 폴링 그대로** 간다.
+ *     같은 펌웨어가 두 배선을 모두 지원하는 기존 설계를 깨지 않기 위함이다.
+ *
+ *   ※(c) 는 컴파일 시 알 수 없으므로 **런타임에 한 번 더** 판정한다
+ *     (button_handler.c). 여기서는 "이 보드가 시도해도 되는가"만 정한다. */
+#ifndef BOARD_PCF_LP_CORE
+#  define BOARD_PCF_LP_CORE      0
+#endif
+#if BOARD_PCF_LP_CORE
+#  if !defined(BOARD_PIN_PCF_LP_SDA) || !defined(BOARD_PIN_PCF_LP_SCL)
+#    error "BOARD_PCF_LP_CORE=1 requires BOARD_PIN_PCF_LP_SDA/SCL (LP_I2C 전용핀)."
+#  endif
+   /* C6 의 LP_I2C 는 SDA=6 / SCL=7 로 **하드웨어 고정**이다. 다른 핀이면 LP 코어가
+    * 그 선을 구동할 수 없으므로 빌드 단계에서 막는다(런타임에 조용히 실패하면
+    * 버튼이 죽는데 원인을 찾기 어렵다 — ② 에서 실제로 겪었다). */
+#  if (BOARD_PIN_PCF_LP_SDA != 6) || (BOARD_PIN_PCF_LP_SCL != 7)
+#    error "BOARD_PCF_LP_CORE=1: ESP32-C6 LP_I2C 는 SDA=GPIO6/SCL=GPIO7 고정입니다."
+#  endif
+#endif
+
 /* ── 배터리/충전 사양 기본값 ──────────────────────────────────────────
  *   충전량 시간추정(somfy_app.c::_estimate_battery_percent)의 완충시간을
  *   보드별 (용량 ÷ 충전전류)로 파생하기 위한 값. 보드가 안 주면 GNPE 기준

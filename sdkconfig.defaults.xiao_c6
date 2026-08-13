@@ -62,3 +62,15 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_ICD_FAST_POLL_INTERVAL_MS=200
 CONFIG_PM_ENABLE=y
 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+
+# ★★2026-08-13 (③) LP 코어로 PCF8574 폴링 위임 — 절전
+#  근거: 실측 57mA/12.3h 의 주범은 HP 가 10ms 마다 깨어나 PCF 를 비트뱅 I2C 로
+#  읽는 것(초당 100회). `~INT` 이벤트 구동(②)은 실측 불가 판정
+#  (버튼을 눌러도 선이 안 움직임 — 표본 290,023 / 전이 0회).
+#  → 폴링 주체를 LP 코어로 옮긴다. 로터리 쿼드러처도 LP 에서 디코딩한다
+#    (디텐트는 수 ms 안에 끝나 HP 가 깨어나서 읽으면 방향을 알 수 없다).
+#  ※LP_I2C 는 C6 에서 SDA=GPIO6/SCL=GPIO7 **고정**. 이 배선인 개체에서만 쓰이고,
+#    앞면 공유 I2C(22/23)로 폴백된 개체는 런타임 판정으로 걸러져 현행 폴링 유지.
+CONFIG_ULP_COPROC_ENABLED=y
+CONFIG_ULP_COPROC_TYPE_LP_CORE=y
+CONFIG_ULP_COPROC_RESERVE_MEM=4096
