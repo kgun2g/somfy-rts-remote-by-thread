@@ -173,6 +173,44 @@ int64_t btn_handler_last_vibration_us(void);
  */
 SemaphoreHandle_t btn_handler_get_i2c_mutex(void);
 
+/* ─── 진동센서 진단 (★2026-08-13 추가) ─────────────────────────────────────
+ *  전부 **자유 증가 카운터**다. somfy_app 이 주기적으로 두 시점의 차(델타)를 떠서
+ *  NVS 링에 남긴다 — 버튼 태스크(prio 10)에서 NVS 를 만지면 flash cache 정지가
+ *  ISR·비트뱅을 깨므로, 여기서는 카운터만 올리고 저장은 somfy_app(prio 4)이 한다.
+ *
+ *  읽는 법: 한 창에서 poll 이 N 이고 high 가 H 면
+ *    H == N  → 계속 HIGH (풀업 상태 그대로 = 접점 안 닫힘)
+ *    H == 0  → 계속 LOW  (접점 붙어있음 / GND 단락)
+ *    0<H<N   → **섞임 = 실제 접점 동작**(이게 나와야 진동이 잡힌다)
+ *  isr 은 에지 수 — 레벨이 안 변해도 이게 늘면 폴링보다 짧은 글리치가 있다는 뜻. */
+/**
+ * @brief ②(버스트 폴링) 깨우기 출처 통계 — `~INT` 가 실제로 쓸 만한지 판정용.
+ *
+ * 코드 주석에 "현 HW 는 ~INT 가 불안정" 이라는 경고가 있어, 믿지 말고 **재서**
+ * 판단한다. `int_cnt` 비율이 높으면 유휴 주기를 더 늘려도 되고, 0 에 가까우면
+ * `~INT` 가 죽은 것이라 안전망 주기가 곧 버튼 반응 지연이 된다.
+ */
+void btn_handler_wake_stats(uint32_t *int_cnt, uint32_t *vibe_cnt,
+                            uint32_t *tmo_cnt, uint32_t *idle_cnt);
+
+/**
+ * @brief `~INT`(PCF8574 인터럽트 선) 관찰 진단 요청 — 콘솔 `intdiag`.
+ *
+ * 폴링을 **멈춘 구간(A)** 과 **돌리는 구간(B)** 을 나눠 GPIO 레벨/전이를 센다.
+ * A 가 조용하고 B 만 시끄러우면 원인은 우리 자신의 I2C 폴링이고, 폴링을 멈추는
+ * ②(`~INT` 기반 버스트 폴링)가 성립한다. A 도 시끄러우면 배선/보드 문제다.
+ * 버튼을 **누른 채** 실행하면 A 구간에서 `~INT` 가 LOW 로 떨어지는지도 볼 수 있다.
+ *
+ * ※실제 관찰은 버튼 태스크가 수행하며, 그동안(약 4초) 버튼 입력이 멈춘다.
+ */
+void btn_handler_int_diag_request(void);
+
+uint32_t btn_handler_vibe_isr_count(void);   /**< ANY_EDGE ISR 발생 누적 */
+uint32_t btn_handler_vibe_poll_total(void);  /**< 진동핀 폴링 누적 */
+uint32_t btn_handler_vibe_high_total(void);  /**< 그중 HIGH 로 읽힌 누적 */
+int      btn_handler_vibe_level(void);       /**< 지금 핀 레벨(0/1) */
+bool     btn_handler_vibe_stuck(void);       /**< 고장(한쪽 고정) 판정 상태 */
+
 #ifdef __cplusplus
 }
 #endif

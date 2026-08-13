@@ -34,13 +34,61 @@ static void IRAM_ATTR _vibe_isr_handler(void *arg);
 /* 진동 ISR 카운터 / disable 플래그 — 정의는 아래 진동 섹션 */
 static volatile uint32_t s_vibe_isr_count;
 static volatile bool     s_vibe_isr_disabled_flag;
+/* 진동센서 고장(한쪽 고정) 판정. 정의는 _vibration_track 쪽이지만 ②의 ISR 통지
+ * 게이트가 앞서 참조하므로 선언을 여기로 올렸다. */
+static volatile bool     s_vibe_stuck = false;
+/* 버튼 폴링 태스크 핸들 — ②의 두 ISR(~INT·진동)이 여기로 통지하므로 앞에 둔다. */
+static TaskHandle_t      s_btn_task_h = NULL;
+
+/* ═══════════════════════════════════════════════
+   ★★2026-08-13 (②) PCF8574 `~INT` 기반 버스트 폴링
+   ──────────────────────────────────────────────
+   왜: 실측 57mA / 12.3h 의 원인은 Matter 가 아니라 **light sleep 미진입**이었다.
+   _btn_task 가 10ms(=1 tick @100Hz)마다 깨워 유휴가 문턱(3 tick)을 못 넘었다.
+   ①(tick 1000Hz)로 폴링 '사이'에 자게 만들었고, ②는 폴링 자체를 없앤다.
+
+   ★단순 이벤트 구동은 위험하다 — 10ms 주기에 네 가지가 얹혀 있다:
+     디바운스 20ms / 롱프레스(PROG 2s·SETUP 1s·재부팅 15s) / 로터리 쿼드러처 /
+     진동 듀티사이클. 전부 **연속 샘플링**을 전제로 한다.
+   → 그래서 "버스트 폴링": 활동 중에는 **기존과 똑같이 10ms** 로 돌고, 아무도 안
+     만질 때만 잔다. 사용자가 만지는 동안의 동작은 100% 그대로다.
+     (sim/tools/btn_int_wake_sim.py — 이벤트 12건 종류·순서·시각 완전 일치,
+      폴링 79% 감소 검증)
+
+   ★안전망을 반드시 남긴다: 코드 주석에 "현 HW 는 ~INT 가 불안정" 이라는 경고가
+     있었다. `~INT` 가 죽어도 BTN_IDLE_POLL_MS 마다 폴링하므로 버튼은 계속 먹는다.
+     실제로 `~INT` 가 쓸 만한지는 아래 카운터(인터럽트 깨움 vs 타임아웃 깨움)로
+     **측정해서** 판단한다 — 되면 유휴 주기를 더 늘릴 수 있다.                */
+#define BTN_ACTIVE_POLL_MS  10    /* 활동 중 — 기존과 동일 */
+#define BTN_IDLE_POLL_MS    50    /* 유휴 안전망. ~INT 가 죽어도 이 주기로는 반응 */
+#define BTN_ACTIVE_HOLD_MS 300    /* 마지막 활동 후 이 시간 조용하면 유휴로 */
+
+static volatile uint32_t s_wake_int   = 0;  /* ~INT ISR 로 깨어난 횟수 */
+static volatile uint32_t s_wake_vibe  = 0;  /* 진동 ISR 로 깨어난 횟수 */
+static volatile uint32_t s_wake_tmo   = 0;  /* 안전망 타임아웃으로 깨어난 횟수 */
+static volatile uint32_t s_idle_enter = 0;  /* 유휴 진입 횟수 */
+
+static void IRAM_ATTR _pcf_int_isr(void *arg) {
+  (void)arg;
+  /* PCF8574 `~INT` 는 입력이 바뀌면 LOW, **포트를 읽으면 해제**된다.
+   * 여기선 깨우기만 하고 해제는 태스크의 read 가 한다. */
+  s_wake_int++;
+  if (s_btn_task_h) {
+    BaseType_t hpw = pdFALSE;
+    vTaskNotifyGiveFromISR(s_btn_task_h, &hpw);
+    if (hpw) portYIELD_FROM_ISR();
+  }
+}
+/* ★2026-08-13 진동 진단 카운터 — 폴링 총 횟수와 그중 HIGH 였던 횟수(자유 증가).
+ *  somfy_app 이 주기적으로 **델타**를 떠서 NVS 링에 남긴다(btn 태스크는 NVS 미접촉). */
+static volatile uint32_t s_vibe_poll_total;
+static volatile uint32_t s_vibe_high_total;
 /* ★2026-08-12 ISR → 태스크 즉시 통지용 핸들.
  *  왜 필요한가: 진동 ISR 이 발사돼도 판정은 폴링 태스크가 하므로, 태스크가 다음
  *  틱까지 자고 있으면 그만큼 늦어진다. 통지로 **즉시 깨워** 검출 지연을 폴링
  *  주기에서 분리한다(= 나중에 유휴 폴링을 늦출 수 있게 하는 전제).
  *  ※주의: 이것만으로 폴링이 없어지지는 않는다 — X160 은 가만히 둬도 chatter 로
  *    ISR 이 계속 발사돼, 진짜 진동인지는 **HIGH duty-cycle 창**으로만 가릴 수 있다. */
-static TaskHandle_t      s_btn_task_h = NULL;
 
 /* ─── 디바운스 / 롱프레스 설정 ───────────────── */
 #define DEBOUNCE_MS CFG_BTN_DEBOUNCE_MS
@@ -400,6 +448,78 @@ static pcf_state_t _pcf8574_read(void) {
  * 모든 버튼이 PCF8574 로 이관되어 단일 read 로 8개 신호를 동시 획득.
  * VIBRATION/CHG_STAT 는 GPIO 직결로 별도 read.
  * ─────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════
+   ★2026-08-13 `~INT` 진단 (콘솔 `intdiag`)
+   ──────────────────────────────────────────────
+   가리려는 것: `~INT`(GPIO2) 가 **우리 폴링 때문에** 시끄러운가, 아니면 원래
+   시끄러운가. ② 시도에서 ISR 이 초당 약 4,500회 발사됐는데, 그 값이
+   비트뱅 I2C 트래픽(100 트랜잭션/초 × 약 44 에지)과 자릿수가 같았다.
+   회로도상 풀업(R3 10k → +3V3)은 정상이므로 "풀업 부족"은 아니다.
+
+   그래서 두 구간을 **나눠서** 잰다:
+     A) 폴링 정지 — PCF 를 안 읽는다. `~INT` 가 조용하면(전이 0, 계속 HIGH)
+        시끄러움의 원인은 **우리 자신의 I2C** 다 → ②는 폴링을 멈추면 성립한다.
+     B) 폴링 동작 — 10ms 마다 PCF 를 읽는다. 여기서만 전이가 폭증하면 A 의 결론이
+        확정된다.
+   또 A 구간에서 **버튼을 누른 채** 실행하면 `~INT` 가 LOW 로 떨어지는지 볼 수 있다
+   → 떨어지면 `~INT` 는 정상 동작하는 것이고, ②의 전제가 성립한다.
+
+   ※진단 중 약 4초간 버튼이 안 먹는다(폴링을 일부러 멈춘다). 콘솔 출력에 명시한다. */
+/* ★2026-08-13 구조 변경 — 사용자가 로그를 실시간으로 볼 수 없다.
+ *  "지금 누르세요/떼세요" 안내는 시리얼로 나가는데, 캡처는 내가 하고 사용자는
+ *  그 화면을 못 본다 → 타이밍을 맞출 방법이 없다.
+ *  → 안내로 동기화하지 말고 **관찰 구간을 길게** 두고, 그동안 사용자가 버튼을
+ *    반복해서 눌렀다 떼기만 하면 되게 한다. 전이가 1회라도 잡히면 `~INT` 는
+ *    입력에 반응하는 것이다(그게 알고 싶은 전부). */
+#define INTDIAG_WATCH_MS  15000   /* 폴링 정지 관찰 — 이 동안 버튼을 반복 조작 */
+#define INTDIAG_POLL_MS    2000   /* 비교용: 폴링 동작 구간 */
+#define INTDIAG_SAMPLE_US    50
+
+static volatile bool s_intdiag_req = false;
+
+void btn_handler_int_diag_request(void) { s_intdiag_req = true; }
+
+/* 한 구간 관찰. poll=true 면 10ms 마다 PCF 를 읽으면서(=평소처럼) 관찰한다. */
+static void _int_diag_phase(const char *name, bool poll, uint32_t dur_ms) {
+  uint32_t samples = 0, high = 0, edges = 0;
+  int prev = gpio_get_level(PCF8574_INT_PIN);
+  const int64_t t_end = esp_timer_get_time() + (int64_t)dur_ms * 1000;
+  int64_t next_poll = esp_timer_get_time();
+  while (esp_timer_get_time() < t_end) {
+    if (poll && esp_timer_get_time() >= next_poll) {
+      (void)_pcf8574_read();          /* 평소 폴링과 동일 — 이게 `~INT` 를 해제한다 */
+      next_poll += 10000;
+    }
+    int lv = gpio_get_level(PCF8574_INT_PIN);
+    samples++;
+    if (lv) high++;
+    if (lv != prev) { edges++; prev = lv; }
+    esp_rom_delay_us(INTDIAG_SAMPLE_US);
+    if ((samples & 0x3FF) == 0) esp_task_wdt_reset();   /* 4초 구간 — WDT 방어 */
+  }
+  const uint32_t pct = samples ? (100u * high) / samples : 0;
+  ESP_LOGW(TAG, "[INTDIAG] %-11s 표본 %u  HIGH %u%%  LOW %u%%  전이 %u회 (초당 %u)",
+           name, (unsigned)samples, (unsigned)pct, (unsigned)(100u - pct),
+           (unsigned)edges, (unsigned)(dur_ms ? edges * 1000u / dur_ms : 0));
+}
+
+static void _int_diag_run(void) {
+  ESP_LOGW(TAG, "[INTDIAG] ================================================");
+  ESP_LOGW(TAG, "[INTDIAG] `~INT`(IO%d) 관찰 — 지금부터 %d초간 **버튼을 여러 번",
+           PCF8574_INT_PIN, INTDIAG_WATCH_MS / 1000);
+  ESP_LOGW(TAG, "[INTDIAG] 눌렀다 떼기를 반복**해 주세요 (아무 버튼이나 OK).");
+  ESP_LOGW(TAG, "[INTDIAG] 이 구간에는 폴링을 멈추므로 버튼 기능 자체는 안 먹습니다 — 정상입니다.");
+  ESP_LOGW(TAG, "[INTDIAG] ================================================");
+
+  _int_diag_phase("A:폴링정지", false, INTDIAG_WATCH_MS);
+  _int_diag_phase("B:폴링동작", true,  INTDIAG_POLL_MS);
+
+  ESP_LOGW(TAG, "[INTDIAG] ---- 판독 ----");
+  ESP_LOGW(TAG, "[INTDIAG] A 의 전이 > 0  → `~INT` 가 입력에 반응한다 = ②(인터럽트 기반) **가능**");
+  ESP_LOGW(TAG, "[INTDIAG] A 의 전이 = 0  → 눌러도 선이 안 움직인다 = ② **불가**, 폴링 유지");
+  ESP_LOGW(TAG, "[INTDIAG]   (직전 정지 상태 기준선: HIGH 100%% / 전이 0회)");
+}
+
 static void _btn_task(void *pvParam) {
   /* Task WDT subscribe — bit-bang I2C 무한 대기 등 hang 자동 리부트.
    *  타임아웃은 sdkconfig 의 CONFIG_ESP_TASK_WDT_TIMEOUT_S (기본 5s).
@@ -412,6 +532,15 @@ static void _btn_task(void *pvParam) {
     esp_task_wdt_reset();
     somfy_app_bc_btn_tick();
     uint32_t now = _ms_now();
+
+    /* ★2026-08-13 `~INT` 진단 요청 처리 — **이 태스크 안에서** 돌린다.
+     *  폴링을 멈춘 채 관찰해야 하는데, 폴링 주체가 여기이므로 다른 태스크에서
+     *  하면 경합이 생긴다. 진단 중 약 4초간 버튼이 안 먹는다(의도된 동작). */
+    if (s_intdiag_req) {
+      s_intdiag_req = false;
+      _int_diag_run();
+      now = _ms_now();          /* 4초 지났으므로 시간 기준 갱신 */
+    }
 
     /* ══ 1. PCF8574 1-byte read = 모든 버튼 + 로터리 + SETUP ══
      *  버튼은 아래 per-button 20ms 디바운스(연속 2폴 이상 동일해야
@@ -547,6 +676,13 @@ static void _btn_task(void *pvParam) {
       int lvl = gpio_get_level(VIBE_PIN);
       _vibration_track(lvl == 1);
 
+      /* ★2026-08-13 진동 진단용 자유증가 카운터 (사용자 요청: NVS 기록).
+       *  여기서 NVS 를 만지지 않는다 — 이 태스크는 prio 10 이고, 위 include 주석대로
+       *  NVS write 중 flash cache 가 막히면 ISR/비트뱅이 깨진다. 카운터만 올리고
+       *  somfy_app(prio 4) 이 주기적으로 델타를 떠서 저장한다. */
+      s_vibe_poll_total++;
+      if (lvl == 1) s_vibe_high_total++;
+
       /* 진단 로그(3초 주기) — HIGH 샘플 비율 / ISR 누적 */
       static uint32_t s_vibe_isr_seen = 0;
       static int      s_vibe_high_cnt = 0;
@@ -591,8 +727,37 @@ static void _btn_task(void *pvParam) {
      *    한다. 타임아웃 10ms 는 그대로라 지금 동작·응답성은 이전과 동일하고,
      *    다만 검출 지연이 폴링 주기에서 분리된다(유휴 폴링을 늦추기 위한 전제).
      *    ★2026-08-12 통지 폭풍(위 ISR 주석)으로 되돌림 → 단순 지연으로 복귀. */
-    vTaskDelay(pdMS_TO_TICKS(10));
+
+    /* ══ 4. ★★2026-08-13 (②) 버스트 폴링 — **되돌림** ══
+     *  유휴 시 폴링을 10ms → BTN_IDLE_POLL_MS(50ms) 로 늦추는 구조를 넣었다가
+     *  **버튼이 작동하지 않아** 즉시 되돌렸다(사용자 신고). 실측 근거:
+     *    [BTNWAKE] 유휴진입 2392  깨움: ~INT 0 / 진동 67 / 타임아웃 2390 (~INT 0%)
+     *  = `~INT` 가 **한 번도 안 왔다**. 코드에 원래 있던 경고가 맞았다
+     *    ("현 HW 는 ~INT 가 불안정해 폴링을 쓰는 중").
+     *
+     *  ★왜 안전망 50ms 로도 안 됐나 — 로터리 때문으로 본다. 디텐트 1개는 A/B
+     *    전이 2회가 **수 ms 안에** 끝나는데, 50ms 폴링은 그 사이를 통째로 건너뛴다.
+     *    전이를 못 보면 쿼드러처 누산이 안 되고, 변화를 본 뒤에야 활성으로
+     *    올라가는 구조라 **이미 늦다**. 버튼도 짧은 탭이 두 폴 사이에 들어가면
+     *    사라진다(2026-08-12 에 30→150ms 로 늦췄다가 같은 이유로 되돌린 이력).
+     *
+     *  → ② 를 다시 하려면 **`~INT` 가 살아 있는 게 전제**다. 지금 HW 에서는
+     *    성립하지 않으므로 10ms 고정 폴링을 유지한다. 절전은 ①(tick 1000Hz)이
+     *    폴링 **사이**에 재우는 것까지만 얻는다.
+     *  ※깨우기 통계 카운터와 `~INT` ISR 등록은 진단용으로 남겨둔다(무해). */
+    vTaskDelay(pdMS_TO_TICKS(BTN_ACTIVE_POLL_MS));
   }
+}
+
+/* ②의 깨우기 출처 통계 — `~INT` 가 실제로 쓸 만한지 판정용.
+ *  int 비율이 높으면 유휴 주기를 더 늘려도 되고, 0 에 가까우면 `~INT` 가 죽은
+ *  것이므로 안전망 주기(BTN_IDLE_POLL_MS)가 곧 버튼 반응 지연이 된다. */
+void btn_handler_wake_stats(uint32_t *int_cnt, uint32_t *vibe_cnt,
+                            uint32_t *tmo_cnt, uint32_t *idle_cnt) {
+  if (int_cnt)  *int_cnt  = s_wake_int;
+  if (vibe_cnt) *vibe_cnt = s_wake_vibe;
+  if (tmo_cnt)  *tmo_cnt  = s_wake_tmo;
+  if (idle_cnt) *idle_cnt = s_idle_enter;
 }
 
 /* ─── 공개 API ───────────────────────────────── */
@@ -718,6 +883,32 @@ void btn_handler_init(btn_event_cb_t cb, void *user_data) {
     ESP_LOGI(TAG, "[VIBE] IO%d any-edge ISR 등록 완료", VIBE_PIN);
   }
 
+  /* ★★2026-08-13 (②) PCF8574 `~INT` ISR 등록 — **제거함. 다시 넣지 말 것.**
+   *
+   *  ┌ `~INT` 는 이 하드웨어에서 **쓸 수 없다**(콘솔 `intdiag` 실측 확정) ─────────┐
+   *  │  정지 상태        표본  38,765 → HIGH 100% / 전이 0회                      │
+   *  │  버튼 조작 중 15초 표본 290,023 → HIGH 100% / **전이 0회**                  │
+   *  │  폴링 동작 중     표본  33,198 → HIGH 100% / 전이 0회                      │
+   *  │  = 버튼을 눌러도 선이 전혀 안 움직인다.                                     │
+   *  │  회로도상 풀업(R3 10k → +3V3)은 **정상적으로 있다** → 풀업 추가는 해법 아님.│
+   *  │  PCF8574 가 `~INT` 를 구동 못 하는 상태(배선 미연결 또는 IC 출력 불량).     │
+   *  └────────────────────────────────────────────────────────────────────────────┘
+   *
+   *  버스트 폴링을 되돌린 뒤에도 버튼이 안 먹었고, 원인은 여기 남겨둔 ISR 이었다.
+   *  내가 "진단용으로 남겨둔다(무해)" 라고 판단한 게 틀렸다. 실측:
+   *      [BTNWAKE] 유휴진입 0  깨움: ~INT 540522 / 타임아웃 0
+   *      = 120초에 54만회 → **초당 약 4,500회 인터럽트 폭풍**
+   *  프리엠션과 portYIELD_FROM_ISR 이 prio 10 버튼 태스크를 짓밟아 입력이 죽었다.
+   *
+   *  4,500/s 는 이 태스크의 비트뱅 I2C 클럭 에지 수와 자릿수가 맞는다
+   *  (100 트랜잭션/초 × 약 44 에지). `~INT`(GPIO2) 가 실제로는 연결이 약하거나
+   *  떠 있어 **인접 I2C 배선의 크로스토크를 줍는 것**으로 본다.
+   *  → 원인 규명 전에는 ISR 을 걸지 않는다. `~INT` 를 쓰려면 먼저 배선과 풀업을
+   *    확인하고, 핀 레벨이 조용한지 **측정**한 뒤에 다시 검토할 것.
+   *  (진단 카운터·btn_handler_wake_stats 는 남겨둔다 — 등록이 없으니 전부 0.)      */
+  ESP_LOGI(TAG, "[BTN] ~INT IO%d ISR 미등록 — 10ms 고정 폴링 (HW ~INT 불안정: "
+                "실측 초당 4,500회 폭주)", PCF8574_INT_PIN);
+
   /* ── PCF8574 초기 read (~INT 래치 클리어 포함) ── */
   pcf_state_t pcf_init = _pcf8574_read();
   if (s_pcf_present) {
@@ -795,15 +986,19 @@ static void IRAM_ATTR _vibe_isr_handler(void *arg) {
      *  (HAL 레이어, 항상 IRAM-safe). 폴링 태스크의 gpio_intr_enable 은 task
      *  context 라 flash 접근 OK — 그대로 둔다. */
     gpio_ll_intr_disable(&GPIO, VIBE_PIN);
-    /* ★★2026-08-12 되돌림 — ISR→태스크 통지를 넣었다가 뺀다.
-     *  이 기기의 VIBE 핀은 **HIGH 고정 고장** 상태인데도 ISR 은 초당 33회 계속
-     *  발사된다(실측 [VIBE-stat] ISR누적 3초당 +100). 통지를 걸면 그때마다 버튼
-     *  태스크를 깨워 **통지 폭풍**이 된다 — 절전에 해롭고 CPU 를 헛돌린다.
-     *  ISR 이 자기 인터럽트를 끄지만 폴링이 다시 켜므로 반복된다.
-     *  → 통지 없이 폴링이 duty-cycle 창으로 판정하는 원래 구조로 되돌린다.
-     *    (센서 배선을 고쳐 chatter 가 정상 범위가 된 뒤에 재검토할 것) */
+    /* ★★2026-08-12 통지를 넣었다 뺐던 이력:
+     *  C6 의 VIBE 핀은 고장 상태인데도 ISR 이 **초당 33회** 발사된다(실측
+     *  [VIBE-stat] 3초당 +100). 통지를 걸면 버튼 태스크가 그만큼 깨어나
+     *  **통지 폭풍**이 되어 절전이 통째로 무효가 된다.
+     *  ★2026-08-13 (②) 다시 넣되 **고장 판정 시에는 안 깨운다**.
+     *   · 정상 센서(H2 실측: 평상시 LOW, 진동 시 순간 HIGH, ISR 0.3회/초)
+     *     → 유휴에서 즉시 깨어나 duty-cycle 판정을 돌릴 수 있다.
+     *   · 고장(C6: HIGH 고정 + 잡음 33회/초) → s_vibe_stuck=1 이라 통지 안 함.
+     *  이 게이트가 없으면 ② 의 절전이 C6 에서 0 이 된다. */
     s_vibe_isr_disabled_flag = true;
     s_vibe_isr_count++;
+    /* ★2026-08-13 ② 되돌림과 함께 통지도 뺀다 — 10ms 고정 폴링으로 복귀했으므로
+     *  깨울 대상이 없다. 통지를 남기면 H2(정상 센서)에서 헛깨움만 된다. */
 }
 
 bool btn_handler_is_vibrating(void) {
@@ -819,6 +1014,9 @@ int64_t btn_handler_last_vibration_us(void) { return s_last_vibration_us; }
 
 /* ISR 카운터 노출 — 디버그 로그용 */
 uint32_t btn_handler_vibe_isr_count(void) { return s_vibe_isr_count; }
+uint32_t btn_handler_vibe_poll_total(void) { return s_vibe_poll_total; }
+uint32_t btn_handler_vibe_high_total(void) { return s_vibe_high_total; }
+int      btn_handler_vibe_level(void) { return gpio_get_level(VIBE_PIN); }
 
 /* HIGH 샘플 누적 — 30폴(=300ms) 윈도우 안에 2개 이상 잡히면 즉시 발사
  *  (윈도우 종료까지 안 기다림 → 최저지연 ~20ms). X160 에서 가만≈0/30,
@@ -833,7 +1031,8 @@ uint32_t btn_handler_vibe_isr_count(void) { return s_vibe_isr_count; }
  *  → 최근 윈도우가 전부 HIGH(또는 전부 LOW)로 고정되면 배선/스위치 고장으로 보고
  *    진동 이벤트를 무시한다. 섞인 패턴이 돌아오면 자동으로 다시 인정한다. */
 #define VIBE_STUCK_WIN   200          /* 고장 판정 관찰 샘플 수 */
-static volatile bool s_vibe_stuck = false;
+/* ※s_vibe_stuck 선언은 파일 상단으로 옮겼다 — _vibe_isr_handler(②의 통지 게이트)가
+ *   여기보다 앞서 참조하기 때문이다. */
 bool btn_handler_vibe_stuck(void) { return s_vibe_stuck; }
 
 static void _vibration_track(bool high_now) {

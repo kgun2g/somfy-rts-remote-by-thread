@@ -48,6 +48,17 @@ CONFIG_ICD_SLOW_POLL_INTERVAL_MS=7000
 #  그 약속을 못 지켜 허브가 offline 판정 → 실사용 신고와 일치.
 #  ※하향 링크 지연은 SLOW_POLL(7초)이 정하므로 이 값과 무관 — 명령 반응은 그대로다.
 CONFIG_ICD_IDLE_MODE_INTERVAL_SEC=30
+
+# ★★2026-08-13 FreeRTOS tick 100 -> 1000 Hz (절전 ①)
+#  문제: light sleep 이 **한 번도 진입하지 않았다**(6.64h 실측 57mA).
+#    FREERTOS_IDLE_TIME_BEFORE_SLEEP=3 이고 HZ=100 이면 문턱이 3 tick = **30ms** 인데,
+#    btn_task 가 vTaskDelay(10ms)=**1 tick** 마다 깨워 유휴가 30ms 를 절대 못 넘었다.
+#    pm=3 은 "활성화됨"일 뿐 실제로 자고 있다는 뜻이 아니었다.
+#  HZ=1000 이면 문턱이 3ms 라 폴링 사이 ~9ms 를 잘 수 있다.
+#  ※문턱을 낮추는 대안은 불가 — FreeRTOS 자체 제약으로 최소값이 2다(Kconfig range 2..).
+#  ※RF 는 RMT 하드웨어가 심볼을 만들므로 무관. 단 프레임 간 대기가 vTaskDelay 라
+#    tick 해상도에 걸린다 → 프레임 주기가 +2~7ms 늘어난다(아래 주석 참고).
+CONFIG_FREERTOS_HZ=1000
 CONFIG_ICD_FAST_POLL_INTERVAL_MS=200
 CONFIG_PM_ENABLE=y
 CONFIG_FREERTOS_USE_TICKLESS_IDLE=y

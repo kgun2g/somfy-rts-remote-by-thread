@@ -424,6 +424,9 @@ extern "C" void somfy_app_console_printfreq(void);
 extern "C" void somfy_app_batlog_dump(void);
 extern "C" void somfy_app_batlog_clear(void);
 extern "C" void somfy_app_console_usbsim(int off);
+extern "C" void somfy_app_vibelog_dump(void);   /* ★2026-08-13 진동 진단 기록 */
+extern "C" void somfy_app_vibelog_clear(void);
+extern "C" void btn_handler_int_diag_request(void);  /* ★2026-08-13 `~INT` 관찰 진단 */
 static int scmd_tx(int argc, char **argv){
     if(argc<2){ printf("usage: tx up|down|updown|myup|mydown|my|prog [hold_ms]\n"); return 0; }
     const char *a=argv[1]; int cmd=-1;
@@ -469,6 +472,18 @@ static int scmd_bl(int argc, char **argv){
     if (argc >= 2 && !strcmp(argv[1], "clear")) { somfy_app_batlog_clear(); printf("OK bl clear\n"); return 0; }
     somfy_app_batlog_dump();
     printf("OK bl\n");
+    return 0;
+}
+static int scmd_intdiag(int argc, char **argv){
+    (void)argc; (void)argv;
+    btn_handler_int_diag_request();
+    printf("OK intdiag - 지금부터 15초간 버튼을 여러 번 눌렀다 떼세요 (그동안 버튼 기능은 멈춤)\n");
+    return 0;
+}
+static int scmd_vl(int argc, char **argv){
+    if (argc >= 2 && !strcmp(argv[1], "clear")) { somfy_app_vibelog_clear(); printf("OK vl clear\n"); return 0; }
+    somfy_app_vibelog_dump();
+    printf("OK vl\n");
     return 0;
 }
 static int scmd_bd(int argc, char **argv){
@@ -791,6 +806,10 @@ extern "C" void app_main()
       esp_console_cmd_register(&bdc);
       const esp_console_cmd_t blc={ .command="bl", .help="배터리 방전 기록 조회 (bl / bl clear)", .hint=NULL, .func=&scmd_bl, .argtable=NULL };
       esp_console_cmd_register(&blc);
+      const esp_console_cmd_t vlc={ .command="vl", .help="진동센서 진단 기록 조회 (vl / vl clear)", .hint=NULL, .func=&scmd_vl, .argtable=NULL };
+      esp_console_cmd_register(&vlc);
+      const esp_console_cmd_t idc={ .command="intdiag", .help="~INT 선 관찰 (15초간 버튼 반복 조작 필요)", .hint=NULL, .func=&scmd_intdiag, .argtable=NULL };
+      esp_console_cmd_register(&idc);
       const esp_console_cmd_t usc={ .command="usbsim", .help="배터리 모드 시뮬 (usbsim off|on)", .hint=NULL, .func=&scmd_usbsim, .argtable=NULL };
       esp_console_cmd_register(&usc); }
     boot_diag_stage(BOOT_S1_CONSOLE_CMDS);

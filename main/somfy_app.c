@@ -2438,6 +2438,148 @@ void somfy_app_batlog_dump(void) {
 }
 void somfy_app_batlog_clear(void) { _batlog_reset(); ESP_LOGW(TAG, "[BATLOG] 기록 삭제됨"); }
 
+/* ═══════════════════════════════════════════════
+   진동센서 진단 기록 (★2026-08-13 신규, 사용자 요청)
+   ──────────────────────────────────────────────
+   왜 NVS 인가: 배터리 구동 중엔 시리얼이 없어 `[VIBE-stat]` 을 볼 수 없다.
+   기기를 들고 흔들어 본 결과를 나중에 USB 를 꽂아 `vl` 로 확인하기 위함이다.
+
+   ★기록/판독 규칙 — 한 창(VIBELOG_WIN_S 초)의 폴링 N 회 중 HIGH 가 H 회일 때
+     H == N   계속 HIGH — 풀업 그대로(접점이 안 닫힘)
+     H == 0   계속 LOW  — 접점이 붙어 있음 / GND 단락
+     0<H<N    **섞임 = 실제 접점 동작** ← 흔들었을 때 이게 나와야 정상
+   isr 은 에지 수. 레벨이 안 변해도 늘어나면 폴링(10ms)보다 짧은 글리치가 있다는 뜻.
+
+   플래시 마모 대책: **섞인 창만** 남기고, 나머지는 VIBELOG_HB_S 마다 heartbeat
+   1건만 남긴다. 3초마다 전부 쓰면 하루 28,800건이라 링이 금세 덮인다.
+═══════════════════════════════════════════════ */
+#define VIBELOG_MAX    128        /* 링 크기(8바이트 × 128 = 1KB) */
+#define VIBELOG_WIN_S    3        /* 관측 창(초) — [VIBE-stat] 과 동일 */
+#define VIBELOG_HB_S    60        /* 활동이 없을 때 heartbeat 간격(초) */
+
+typedef struct __attribute__((packed)) {
+  uint16_t t_s;     /* 부팅 후 경과 초 */
+  uint16_t polls;   /* 이 창의 폴링 횟수 */
+  uint16_t high;    /* 그중 HIGH 로 읽힌 횟수 */
+  uint16_t isr;     /* 이 창의 ISR(에지) 증가분 — 65535 에서 포화 */
+} vibe_sample_t;
+
+static vibe_sample_t s_vl_buf[VIBELOG_MAX];
+static uint16_t      s_vl_n = 0, s_vl_head = 0;
+static bool          s_vl_dirty = false;
+static int64_t       s_vl_last_save_us = 0;
+
+static void _vibelog_save(void) {
+  nvs_handle_t h;
+  if (nvs_open("vibelog", NVS_READWRITE, &h) != ESP_OK) return;
+  nvs_set_u16(h, "n", s_vl_n);
+  nvs_set_u16(h, "head", s_vl_head);
+  nvs_set_blob(h, "buf", s_vl_buf, sizeof(s_vl_buf));
+  nvs_commit(h);
+  nvs_close(h);
+}
+
+static void _vibelog_load(void) {
+  nvs_handle_t h;
+  if (nvs_open("vibelog", NVS_READONLY, &h) != ESP_OK) return;
+  size_t len = sizeof(s_vl_buf);
+  if (nvs_get_blob(h, "buf", s_vl_buf, &len) != ESP_OK || len != sizeof(s_vl_buf)) {
+    memset(s_vl_buf, 0, sizeof(s_vl_buf)); s_vl_n = 0; s_vl_head = 0;
+  } else {
+    nvs_get_u16(h, "n", &s_vl_n);
+    nvs_get_u16(h, "head", &s_vl_head);
+  }
+  nvs_close(h);
+}
+
+static void _vibelog_add(int t_s, uint32_t polls, uint32_t high, uint32_t isr) {
+  vibe_sample_t *e = &s_vl_buf[s_vl_head];
+  e->t_s   = (uint16_t)(t_s > 65535 ? 65535 : t_s);
+  e->polls = (uint16_t)(polls > 65535 ? 65535 : polls);
+  e->high  = (uint16_t)(high  > 65535 ? 65535 : high);
+  e->isr   = (uint16_t)(isr   > 65535 ? 65535 : isr);
+  s_vl_head = (uint16_t)((s_vl_head + 1) % VIBELOG_MAX);
+  if (s_vl_n < VIBELOG_MAX) s_vl_n++;
+  s_vl_dirty = true;
+}
+
+/* 메인 루프에서 주기 호출. 카운터 델타를 떠서 필요할 때만 기록하고,
+ * NVS 쓰기는 10초에 한 번으로 합친다(버튼 태스크는 전혀 관여하지 않는다). */
+static void _vibelog_tick(int64_t now_us) {
+  static int64_t  win_us  = 0;      /* 창 시작 시각 */
+  static uint32_t p0 = 0, h0 = 0, i0 = 0;
+  static int64_t  last_rec_us = 0;
+
+  if (win_us == 0) {                /* 첫 호출 — 기준점만 잡는다 */
+    win_us = now_us;
+    p0 = btn_handler_vibe_poll_total();
+    h0 = btn_handler_vibe_high_total();
+    i0 = btn_handler_vibe_isr_count();
+    return;
+  }
+  if (now_us - win_us < (int64_t)VIBELOG_WIN_S * 1000000LL) goto flush;
+
+  {
+    const uint32_t p1 = btn_handler_vibe_poll_total();
+    const uint32_t h1 = btn_handler_vibe_high_total();
+    const uint32_t i1 = btn_handler_vibe_isr_count();
+    const uint32_t dp = p1 - p0, dh = h1 - h0, di = i1 - i0;
+    const bool mixed = (dp > 0 && dh > 0 && dh < dp);   /* ★실제 접점 동작 */
+    const bool hb    = (now_us - last_rec_us) >= (int64_t)VIBELOG_HB_S * 1000000LL;
+    if (mixed || hb) {
+      _vibelog_add((int)(now_us / 1000000), dp, dh, di);
+      last_rec_us = now_us;
+      if (mixed)
+        ESP_LOGW(TAG, "[VIBELOG] ★접점 동작 감지 — polls=%u high=%u isr=%u",
+                 (unsigned)dp, (unsigned)dh, (unsigned)di);
+    }
+    win_us = now_us; p0 = p1; h0 = h1; i0 = i1;
+  }
+
+flush:
+  if (s_vl_dirty && (now_us - s_vl_last_save_us) >= 10LL * 1000000LL) {
+    _vibelog_save();
+    s_vl_dirty = false;
+    s_vl_last_save_us = now_us;
+  }
+}
+
+/* 콘솔 `vl` — 저장된 진동 기록 출력. */
+void somfy_app_vibelog_dump(void) {
+  ESP_LOGW(TAG, "[VIBELOG] === 진동 기록 %u건 (창 %d초, heartbeat %d초) ===",
+           (unsigned)s_vl_n, VIBELOG_WIN_S, VIBELOG_HB_S);
+  ESP_LOGW(TAG, "[VIBELOG] 현재: 레벨=%d 고장판정=%d  누적 poll=%u high=%u isr=%u",
+           btn_handler_vibe_level(), btn_handler_vibe_stuck() ? 1 : 0,
+           (unsigned)btn_handler_vibe_poll_total(),
+           (unsigned)btn_handler_vibe_high_total(),
+           (unsigned)btn_handler_vibe_isr_count());
+  if (s_vl_n == 0) { ESP_LOGW(TAG, "[VIBELOG] (비어 있음)"); return; }
+  const uint16_t start = (s_vl_n < VIBELOG_MAX) ? 0
+                       : (uint16_t)((s_vl_head + VIBELOG_MAX - s_vl_n) % VIBELOG_MAX);
+  int mixed_cnt = 0;
+  for (uint16_t i = 0; i < s_vl_n; i++) {
+    const vibe_sample_t *e = &s_vl_buf[(start + i) % VIBELOG_MAX];
+    const bool mixed = (e->polls > 0 && e->high > 0 && e->high < e->polls);
+    if (mixed) mixed_cnt++;
+    ESP_LOGW(TAG, "VL %3u  %6us  poll=%4u high=%4u isr=%5u  %s",
+             (unsigned)i, (unsigned)e->t_s, (unsigned)e->polls,
+             (unsigned)e->high, (unsigned)e->isr,
+             mixed                      ? "★섞임(접점 동작)"
+             : (e->high == 0)           ? "계속 LOW(접점 붙음/GND 단락)"
+             : (e->high == e->polls)    ? "계속 HIGH(접점 안 닫힘)"
+                                        : "-");
+  }
+  ESP_LOGW(TAG, "[VIBELOG] 섞인 창 %d/%u — 0 이면 센서가 한 번도 동작하지 않은 것",
+           mixed_cnt, (unsigned)s_vl_n);
+}
+
+void somfy_app_vibelog_clear(void) {
+  s_vl_n = 0; s_vl_head = 0;
+  memset(s_vl_buf, 0, sizeof(s_vl_buf));
+  _vibelog_save();
+  ESP_LOGW(TAG, "[VIBELOG] 기록 삭제됨");
+}
+
 /* 콘솔 `usbsim off|on` — 배터리 모드 시뮬레이션 토글. */
 void somfy_app_console_usbsim(int off) {
   s_usb_sim_off = (off != 0);
@@ -2953,6 +3095,7 @@ void somfy_app_run(void *arg) {
   }
   boot_diag_stage2(BOOT_S2_RF_DONE);
   _batlog_load();   /* 이전 방전 기록 복구 — USB 없이 쌓인 것을 나중에 조회 */
+  _vibelog_load();  /* ★2026-08-13 진동 진단 기록 복구 (콘솔 `vl`) */
 
   /* 절전 타이머 초기화 (부팅 직후를 활동으로 기록) */
   _mark_activity();
@@ -3437,6 +3580,7 @@ void somfy_app_run(void *arg) {
                                 ? (int64_t)BATLOG_FAST_IV * 1000000LL
                                 : (int64_t)BATLOG_SLOW_IV * 1000000LL;
       _batlog_flush_if_due(now_us, false);   /* 쌓인 기록을 2초 단위로 NVS 반영 */
+      _vibelog_tick(now_us);                 /* ★진동 진단 기록(창 3초, NVS 는 10초 합침) */
       if (!now_usb && s_dis_t0_us && s_bat_last_sm_mv > 0 &&
           (now_us - s_dis_prev_us) >= _iv_us) {
         const int mv   = s_bat_last_sm_mv;
@@ -3550,6 +3694,18 @@ void somfy_app_run(void *arg) {
                  oled_ui_is_panel_on() ? "ON" : "OFF",
                  btn_handler_is_charging() ? 1 : 0,
                  (long long)((nu - s_last_activity_us) / 1000000));
+        /* ★2026-08-13 (②) 버스트 폴링 깨우기 출처 — `~INT` 가 실제로 쓸 만한지 판정.
+         *  int 이 0 에 가까우면 `~INT` 가 죽은 것이고, 그러면 안전망 주기
+         *  (BTN_IDLE_POLL_MS)가 곧 버튼 반응 지연이 된다. 코드 주석에 "현 HW 는
+         *  ~INT 가 불안정" 이라는 경고가 있어 믿지 않고 **재서** 판단한다. */
+        {
+          uint32_t wi = 0, wv = 0, wt = 0, wid = 0;
+          btn_handler_wake_stats(&wi, &wv, &wt, &wid);
+          ESP_LOGW(TAG, "[BTNWAKE] 유휴진입 %u  깨움: ~INT %u / 진동 %u / 타임아웃 %u"
+                        "   (~INT 비율 %u%%)",
+                   (unsigned)wid, (unsigned)wi, (unsigned)wv, (unsigned)wt,
+                   (unsigned)((wi + wv + wt) ? (100u * wi) / (wi + wv + wt) : 0));
+        }
         ESP_LOGW(TAG, "[OLEDMON] %llds  전송 %u / 실패 %u  페이지 보냄 %u / 건너뜀 %u  "
                       "lockTO %u  present=%d free=%uB",
                  nu / 1000000, (unsigned)g_bbo_tx_cnt, (unsigned)g_bbo_fail_cnt,
