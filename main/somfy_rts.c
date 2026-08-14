@@ -355,11 +355,26 @@ void somfy_rts_send(somfy_rts_t *ctx, somfy_blind_t *blind,
      *   첫 프레임 : wake 펄스 + HW sync 9 cycle
      *   반복 프레임: wake 없음 + HW sync 6 cycle (~143ms / frame)
      *  hold_ms 상한은 반복 frame 시간(143ms) 기준으로 환산. */
-    /* PROG 는 모터 등록 모드 — 시추오 실측상 일반보다 2배 길고 HW sync 많음
-     *  (span 307k vs 174k, HWsync 34 vs 23). 모터가 강한 PROG 로 채널+ALL 그룹을
-     *  등록하는 듯 → PROG 만 frame 2배 + 첫 HW sync 강화(17). 일반은 그대로. */
-    bool is_prog = (cmd == SOMFY_CMD_PROG);
-    int min_loops = is_prog ? SOMFY_REPEAT_COUNT * 2 : SOMFY_REPEAT_COUNT;
+    /* ★★2026-08-13 PROG 특수처리 **제거**. 근거 없는 추측이었다.
+     *
+     *  제거한 것: `min_loops = SOMFY_REPEAT_COUNT * 2` 와 첫 프레임 `hw_sync = 17`.
+     *  근거로 적혀 있던 "시추오 실측상 PROG 는 일반보다 2배 길고 HW sync 많음
+     *  (span 307k vs 174k, HWsync 34 vs 23)" 은 **실측 데이터를 잘못 읽은 것**이다.
+     *
+     *  실제 캡처 전수 측정 (D:\RTL_SDR\sdrsharp-x64\somfy_rts_447,
+     *  분석 스크립트 plugin-Rtl433-for-SdrSharp-master/scripts):
+     *    송신 길이 중앙값 — up/down/my/prog/tilt 전부 **350~400ms 동일**
+     *    HW sync 개수(3_42.1dB, 첫 burst)
+     *        up   31,28,29,24   down 36,36,36,36
+     *        my   28,30,28      prog 29,34,29      ← PROG 가 down 보다 오히려 적다
+     *  즉 PROG 는 다른 버튼과 다르지 않다. 위 "2배" 는 **일부러 길게 누른 캡처**를
+     *  PROG 고유 특성으로 오독하고, HW sync 도 PROG 최대값(34)과 타 버튼 최소값(23)을
+     *  골라 비교한 결과였다. (사용자가 짧게/길게 구분용으로 긴 누름을 섞어 넣어둔 것)
+     *  분석 문서에도 정품 구조가 "HW sync 12회(첫 프레임)/6회(재전송), 버튼 구분 없음"
+     *  으로 이미 적혀 있었다.
+     *
+     *  길게 누르면 길게 나가는 동작은 그대로다 — 그건 hold_ms(PROG=15000ms)가 한다. */
+    int min_loops = SOMFY_REPEAT_COUNT;
     int max_loops = min_loops + (int)(hold_ms / 143);
     for (int i = 0; i < max_loops; i++) {
         if (i >= min_loops && abortable && somfy_rts_abort) {
@@ -368,8 +383,10 @@ void somfy_rts_send(somfy_rts_t *ctx, somfy_blind_t *blind,
         }
         bool first = (i == 0);
         /* 첫 frame 12 cycles → cpt_synchro_hw==12 → 80-bit 식별 (ESPSomfy 수신
-         *  분석값). 반복은 6 cycles. */
-        int hw_sync = first ? (is_prog ? 17 : 12) : 6;
+         *  분석값). 반복은 6 cycles. **버튼 종류와 무관** — 정품 캡처 분석 문서의
+         *  "HW sync 12회(첫 프레임)/6회(재전송)" 와 일치한다.
+         *  (PROG 만 17 로 올렸던 특수처리는 오독이라 제거 — 위 주석 참조) */
+        int hw_sync = first ? 12 : 6;
         _transmit_frame(ctx, frame, hw_sync, first);
     }
 

@@ -474,6 +474,14 @@ static int scmd_bl(int argc, char **argv){
     printf("OK bl\n");
     return 0;
 }
+extern "C" void somfy_app_intpd_test(void);
+/* `~INT` 풀다운 진단 — PCF측 고장 vs GPIO2 배선단선 을 가른다(somfy_app.c 주석 참조) */
+static int scmd_intpd(int argc, char **argv){
+    (void)argc; (void)argv;
+    somfy_app_intpd_test();
+    printf("OK intpd\n");
+    return 0;
+}
 static int scmd_intdiag(int argc, char **argv){
     (void)argc; (void)argv;
     btn_handler_int_diag_request();
@@ -810,6 +818,8 @@ extern "C" void app_main()
       esp_console_cmd_register(&vlc);
       const esp_console_cmd_t idc={ .command="intdiag", .help="~INT 선 관찰 (15초간 버튼 반복 조작 필요)", .hint=NULL, .func=&scmd_intdiag, .argtable=NULL };
       esp_console_cmd_register(&idc);
+      const esp_console_cmd_t ipd={ .command="intpd", .help="~INT 풀다운 진단 (고장 위치 판별)", .hint=NULL, .func=&scmd_intpd, .argtable=NULL };
+      esp_console_cmd_register(&ipd);
       const esp_console_cmd_t usc={ .command="usbsim", .help="배터리 모드 시뮬 (usbsim off|on)", .hint=NULL, .func=&scmd_usbsim, .argtable=NULL };
       esp_console_cmd_register(&usc); }
     boot_diag_stage(BOOT_S1_CONSOLE_CMDS);

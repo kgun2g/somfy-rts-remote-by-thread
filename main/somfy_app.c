@@ -754,6 +754,19 @@ static inline void _ch_lock_touch(void) {          /* RF 발생 버튼 눌릴 �
  *
  *  실측 시뮬: 누름 3초일 때 기존은 3.0~7.2초(4.2초간) 채널변경이 열려 있었다. */
 static volatile bool s_rf_tx_busy = false;   /* _do_rf_send 진행 중 */
+static volatile somfy_command_t s_rf_tx_cmd = 0;  /* 진행 중 job 의 cmd (0=없음) */
+
+/* 같은 cmd 가 **이미 송신 중**인가.
+ *  ★2026-08-13 필수 안전장치. PRESS 송신이 abortable+hold_ms=15s 로 바뀌면서,
+ *  연타(탭→탭) 때 이전 job 이 아직 살아 있는 상태에서 새 PRESS 가
+ *  `somfy_rts_abort=false` 로 중단요청을 해제한다. 여기서 job 을 하나 더 넣으면
+ *  이전 job 이 abort 를 못 만나 **max_loops(15.3초)까지 폭주**하고 새 job 은 그
+ *  뒤에 줄서서 뗀 뒤에 나간다. 같은 cmd 면 새로 넣지 않고 진행 중인 job 을
+ *  그대로 이어 쓰는 것이 맞다(사용자 입장에선 계속 눌린 것과 동일).
+ *  sim/tools/hold_gap_sim.py 케이스 ⑦(연타 3회)에서 확인. */
+static inline bool _rf_same_cmd_inflight(somfy_command_t cmd) {
+  return s_rf_tx_busy && s_rf_tx_cmd == cmd;
+}
 
 static inline void _ch_lock_release(void) {  /* RF 발생 버튼 뗄 때 — 뗀 시각 기준 연장 */
   int64_t until = esp_timer_get_time() + (int64_t)OLED_ACTION_DISPLAY_MS * 1000;
@@ -795,7 +808,9 @@ static void _do_rf_send(const rf_job_t *job)
 {
   oled_ui_set_rf_tx(true);
   s_rf_tx_busy = true;          /* ★채널변경 잠금용 — _ch_locked() 가 참조 */
+  s_rf_tx_cmd  = job->cmd;      /* ★중복 job 방지용 — _rf_same_cmd_inflight() 참조 */
   _do_rf_send_inner(job);
+  s_rf_tx_cmd  = 0;
   s_rf_tx_busy = false;
   oled_ui_set_rf_tx(false);
 }
@@ -932,31 +947,99 @@ static void _send_command_tilt(somfy_command_t cmd) {
   _send_command_ex(cmd, 0, false, false);   /* 3-frame 단발 burst */
 }
 
-/* ═══ 버튼 지속 누름 → 신호 연속 발생 태스크 (과거 _hold_repeat_task 복원) ═══════════
- *  세션 첫 누름(s_action_press_us) 뒤 HOLD_REPEAT_START_MS 이상 유지되면, s_held_* 조합으로
- *  판정한 커맨드(단일/combo)를 CFG_BTN_HOLD_REPEAT_MS 마다 재송신한다. 버튼을 떼면 _btn_event_cb
- *  가 s_action_press_us=0 로 게이트를 닫아 반복이 멈춘다(콤보 중 한 버튼만 떼면 나머지로 계속). */
+/* 버튼 PRESS 전용 — 정품처럼 **뗄 때까지 연속 송신**한다.
+ *  hold_ms=CFG_BTN_MAX_HOLD_MS + abortable → 뗌(somfy_rts_abort)에서 종료.
+ *  같은 cmd 가 이미 송신 중이면 새 job 을 만들지 않는다(연타 시 폭주/유출 방지 —
+ *  _rf_same_cmd_inflight 주석 참조). */
+static void _send_command_press(somfy_command_t cmd) {
+  if (_rf_same_cmd_inflight(cmd)) return;    /* 진행 중 job 을 그대로 이어 쓴다 */
+  _send_command_ex(cmd, CFG_BTN_MAX_HOLD_MS, true, false);
+}
+
+/* 현재 눌린 조합 → 커맨드 */
+static inline somfy_command_t _held_combo_cmd(void) {
+  if (s_held_up && s_held_down)  return SOMFY_CMD_UP_DOWN;
+  if (s_held_up && s_held_rot)   return SOMFY_CMD_MY_UP;
+  if (s_held_down && s_held_rot) return SOMFY_CMD_MY_DOWN;
+  if (s_held_up)                 return SOMFY_CMD_UP;
+  if (s_held_down)               return SOMFY_CMD_DOWN;
+  if (s_held_rot)                return SOMFY_CMD_MY;
+  return (somfy_command_t)0;
+}
+
+/* ═══ 버튼 지속 누름 → 신호 **연속** 발생 태스크 ═════════════════════════════════
+ *
+ *  ★★2026-08-13 전면 개편 — "첫 신호 뒤 0.5초 텀" 제거 (사용자 신고).
+ *
+ *  [실측 근거] 정품 SDR 캡처 전수 분석
+ *      데이터 D:\RTL_SDR\sdrsharp-x64\somfy_rts_447 (755개), 분석 scratchpad/hold_pattern.py
+ *      ON 길이가 330ms(짧은 탭) → 400 → 700 → 900 → **1360ms** 로 **끊김 없이 한 덩어리**.
+ *      간격이 보이는 캡처(340[1390]340)는 뗐다 다시 누른 **별개 누름**이다.
+ *      ⇒ 정품은 누르고 있는 동안 계속 쏜다. 조각내지 않는다.
+ *
+ *  [기존 구조의 결함] PRESS 가 hold_ms=0(=3프레임 429ms, 중단불가)만 쏘고 멈춘 뒤,
+ *      이 태스크가 HOLD_REPEAT_START_MS(500ms) 게이트를 지나서야 500ms 주기로 재개했다.
+ *      게다가 이 태스크는 누름과 **위상이 맞지 않는 자유주행** 500ms 태스크다.
+ *      sim/tools/hold_gap_sim.py 위상 0~499ms 스윕 결과 → 최악 공백 **561ms**.
+ *      사용자가 말한 "0.5초 텀"이 바로 이것.
+ *
+ *  [새 구조]
+ *    (1) PRESS 가 abortable + hold_ms=CFG_BTN_MAX_HOLD_MS 로 **뗄 때까지 스스로 연속 송신**.
+ *        뗌 = somfy_rts_abort=true → 프레임 경계에서 종료. (정품과 동일)
+ *    (2) 이 태스크에 남은 역할은 **조합 변경(UP+DOWN 진입/이탈 등)뿐**이다.
+ *        같은 조합이 유지되는 동안은 아무것도 하지 않는다 — 주기 재송신을 없앴다.
+ *        (주기 재송신을 남기면 같은 명령 job 이 이중으로 쌓이고, RF worker 가 직렬이라
+ *         뗀 뒤에 뒤늦게 나가는 유출이 된다.)
+ *
+ *  [★함정 — 반드시 지킬 것] somfy_rts.c 의 abort 검사는 **프레임 경계에서 1번뿐**이고
+ *      프레임은 ≈143ms 다. 그래서 `abort=true; delay(20); abort=false;` 같은 **짧은 펄스는
+ *      그냥 놓친다** → 이전 job 이 안 죽고 max_loops(15.3초)까지 살아버린다.
+ *      그러므로 abort 는 **레벨로 계속 세워둔 채**, 진행 중 job 이 **실제로 끝난 것을
+ *      확인한 뒤에야**(s_rf_tx_busy=false && 큐 빔) 해제하고 새 조합을 넣는다.
+ *      대기 중에만 COMBO_SWITCH_POLL_MS 로 촘촘히 보고, 평상시 주기는 그대로 둔다
+ *      (유휴 wakeup 빈도=소비전류를 건드리지 않기 위해).
+ *
+ *  검증: sim/tools/hold_gap_sim.py — 케이스 ①~⑩ + 위상 스윕 전부 공백 0. */
+#define COMBO_SWITCH_POLL_MS 20   /* 조합 전환 **대기 중에만** 쓰는 촘촘한 주기 */
+static volatile somfy_command_t s_combo_pending = 0;  /* 전환 대기 중(0=없음) */
+
 static void _hold_repeat_task(void *pvParam) {
   while (1) {
-    int64_t press_us = s_action_press_us;
-    bool held = (s_held_up || s_held_down || s_held_rot);
-    if (press_us != 0 && held && s_ui.state == OLED_STATE_ACTION && s_ui.action_active
-        && (esp_timer_get_time() - press_us) / 1000 >= HOLD_REPEAT_START_MS) {
-      somfy_command_t cmd;
-      if      (s_held_up && s_held_down)  cmd = SOMFY_CMD_UP_DOWN;
-      else if (s_held_up && s_held_rot)   cmd = SOMFY_CMD_MY_UP;
-      else if (s_held_down && s_held_rot) cmd = SOMFY_CMD_MY_DOWN;
-      else if (s_held_up)                 cmd = SOMFY_CMD_UP;
-      else if (s_held_down)               cmd = SOMFY_CMD_DOWN;
-      else                                cmd = SOMFY_CMD_MY;   /* s_held_rot */
-      /* ★정품 매칭: 같은 cmd 유지 중엔 롤링코드 고정(keep), 콤보 진입/이탈로 cmd 가
-       *  바뀌면 새 코드. 정품은 한 누름=한 코드 반복이다. */
-      bool keep = (cmd == s_last_sent_cmd);
-      s_last_sent_cmd = cmd;
-      somfy_rts_abort = false;
-      _send_command_ex(cmd, 0, true, keep);   /* abortable — 뗌 시 즉시 중단 */
+    uint32_t period = CFG_BTN_HOLD_REPEAT_MS;   /* 평상시 주기 — 변경하지 않음 */
+    const int64_t press_us = s_action_press_us;
+    const bool held = (s_held_up || s_held_down || s_held_rot);
+
+    if (s_combo_pending != 0) {
+      /* ── 조합 전환 대기: 진행 중 송신이 끝나기를 기다린다 ── */
+      if (!held || press_us == 0) {
+        s_combo_pending = 0;        /* 기다리는 사이 다 뗌 → 새 송신 금지(유출 방지) */
+      } else if (!s_rf_tx_busy &&
+                 (s_rf_queue == NULL || uxQueueMessagesWaiting(s_rf_queue) == 0)) {
+        somfy_command_t cmd = _held_combo_cmd();   /* 대기 중 또 바뀌었을 수 있다 */
+        s_combo_pending = 0;
+        if (cmd != 0) {
+          s_last_sent_cmd = cmd;
+          somfy_rts_abort = false;                 /* 이제서야 해제 — 이전 job 은 죽었다 */
+          _send_command_ex(cmd, CFG_BTN_MAX_HOLD_MS, true, false);
+        }
+      } else {
+        period = COMBO_SWITCH_POLL_MS;             /* 아직 송신 중 — 곧 다시 확인 */
+      }
+    } else if (press_us != 0 && held
+               && s_ui.state == OLED_STATE_ACTION && s_ui.action_active
+               && (esp_timer_get_time() - press_us) / 1000 >= HOLD_REPEAT_START_MS) {
+      /* ── 조합 변경 감지 ── */
+      somfy_command_t cmd = _held_combo_cmd();
+      if (cmd != 0 && cmd != s_last_sent_cmd) {
+        /* 조합이 바뀌었다 → 진행 중 송신을 끊고 **새 롤링코드**로 다시 시작.
+         *  정품도 조합이 바뀌면 새 코드다(같은 조합 유지 중엔 같은 코드 반복). */
+        s_last_sent_cmd = cmd;
+        somfy_rts_abort = true;     /* ★레벨 유지 — 프레임 경계에서 잡힐 때까지 */
+        s_combo_pending = cmd;
+        period = COMBO_SWITCH_POLL_MS;
+      }
     }
-    vTaskDelay(pdMS_TO_TICKS(CFG_BTN_HOLD_REPEAT_MS));
+    vTaskDelay(pdMS_TO_TICKS(period));
   }
 }
 
@@ -1212,7 +1295,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
       if (first) {
         s_action_press_us = esp_timer_get_time();
         s_last_sent_cmd = SOMFY_CMD_UP;
-        _send_command(SOMFY_CMD_UP, 0);         /* 즉시 1회(이후 연속은 태스크) */
+        _send_command_press(SOMFY_CMD_UP);    /* ★뗄 때까지 연속(정품 매칭) */
       }
     }
     break;
@@ -1223,6 +1306,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
     if (!(s_held_down || s_held_rot)) {         /* 전부 뗌 → 반복 게이트 닫고 진행 burst 중단 */
       s_action_press_us = 0;
       s_last_sent_cmd = 0;
+      s_combo_pending = 0;                      /* ★조합 전환 대기 취소(유출 방지) */
       somfy_rts_abort = true;
     }
     if (_in_setup_mode()) break;
@@ -1258,7 +1342,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
       if (first) {
         s_action_press_us = esp_timer_get_time();
         s_last_sent_cmd = SOMFY_CMD_DOWN;
-        _send_command(SOMFY_CMD_DOWN, 0);
+        _send_command_press(SOMFY_CMD_DOWN);  /* ★뗄 때까지 연속(정품 매칭) */
       }
     }
     break;
@@ -1269,6 +1353,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
     if (!(s_held_up || s_held_rot)) {           /* 전부 뗌 → 반복 게이트 닫고 진행 burst 중단 */
       s_action_press_us = 0;
       s_last_sent_cmd = 0;
+      s_combo_pending = 0;                      /* ★조합 전환 대기 취소(유출 방지) */
       somfy_rts_abort = true;
     }
     if (_in_setup_mode()) break;
@@ -1434,7 +1519,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
       if (first) {
         s_action_press_us = esp_timer_get_time();
         s_last_sent_cmd = SOMFY_CMD_MY;
-        _send_command(SOMFY_CMD_MY, 0);
+        _send_command_press(SOMFY_CMD_MY);    /* ★뗄 때까지 연속(정품 매칭) */
       }
     }
     break;
@@ -1448,6 +1533,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
       if (!(s_held_up || s_held_down)) {        /* 전부 뗌 → 반복 정지·burst 종료 */
         s_action_press_us = 0;
         s_last_sent_cmd = 0;
+        s_combo_pending = 0;                    /* ★조합 전환 대기 취소(유출 방지) */
         somfy_rts_abort = true;
         oled_ui_notify_action_end(&s_ui);
       }
@@ -2545,6 +2631,126 @@ flush:
 }
 
 /* 콘솔 `vl` — 저장된 진동 기록 출력. */
+/* ═══ `~INT` 선 진단 — 고장 위치를 **소프트웨어만으로** 둘로 쪼갠다 ══════════════
+ *
+ *  배경: ②(PCF `~INT` 인터럽트)는 `intdiag` 실측으로 "선이 안 움직인다"까지 확인됐다
+ *  (버튼 조작 중 290,023 표본 / 전이 0회). 하지만 그게 **PCF 쪽인지 배선 쪽인지**는
+ *  구분되지 않았다.
+ *
+ *  회로(kicad/somfy_blinds_h4 PCB 에서 네트 추적으로 확인, 2026-08-14):
+ *      U3 pad1(~INT, PCF8575DBR) ──┬── R3 10k ── +3V3
+ *                                  └── U1 pad3 = GPIO2(D2)
+ *      배선 실재: segment 20개 + via 2개
+ *
+ *  → GPIO2 에 **내부 풀다운(~45k)** 을 걸고 전압을 재면 R3 가 이 지점에서 보이는지
+ *    알 수 있다:
+ *      R3 10k 가 살아 있으면  V ≈ 3.3 × 45/(10+45) ≈ 2.7V  (HIGH)
+ *      GPIO2 까지 안 닿으면   V ≈ 0V                        (LOW)
+ *    ADC 로 실전압을 재므로 **풀업 저항값까지 역산**된다(Rpu = Rpd×(3.3-V)/V).
+ *
+ *  판정:
+ *    · 풀다운인데 HIGH(≈2.7V) → GPIO2~R3 정상 → 고장은 **R3~U3 pad1 사이**
+ *                                (0.65mm SSOP pad1 냉납 또는 PCF INT 출력 불량)
+ *    · 풀다운에서 LOW(≈0V)    → **GPIO2 까지 배선/via 단선**
+ *
+ *  ※ADC1 은 BAT_ADC(GPIO1)·PCF 비트뱅(GPIO6)과 공유라 버튼 뮤텍스로 직렬화한다
+ *    (안 하면 변환이 교란된다 — _read_bat_mv 주석 참조). */
+static int _intpd_read_mv(adc_channel_t ch) {
+  if (!s_bat_adc_ok) return -1;
+  int raw = 0, sum = 0, n = 0;
+  for (int i = 0; i < 8; i++)
+    if (adc_oneshot_read(s_bat_adc, ch, &raw) == ESP_OK) { sum += raw; n++; }
+  if (n == 0) return -1;
+  raw = sum / n;
+  int mv = 0;
+  if (s_bat_cali && adc_cali_raw_to_voltage(s_bat_cali, raw, &mv) == ESP_OK)
+    return mv;
+  return (raw * 3100) / 4095;            /* 캘리 없으면 근사(ATTEN_12 ≈ 3.1V FS) */
+}
+
+void somfy_app_intpd_test(void) {
+  const int pin = BOARD_PIN_PCF_INT;
+  ESP_LOGW(TAG, "[INTPD] ================================================");
+  ESP_LOGW(TAG, "[INTPD] `~INT`(IO%d) 풀다운 진단 — 버튼은 건드리지 마세요", pin);
+
+  adc_unit_t unit; adc_channel_t ch;
+  const bool adc_ok = (adc_oneshot_io_to_channel(pin, &unit, &ch) == ESP_OK)
+                      && s_bat_adc_ok;
+  if (adc_ok) {
+    adc_oneshot_chan_cfg_t ccfg = { .atten = ADC_ATTEN_DB_12,
+                                    .bitwidth = ADC_BITWIDTH_DEFAULT };
+    if (adc_oneshot_config_channel(s_bat_adc, ch, &ccfg) != ESP_OK)
+      ESP_LOGW(TAG, "[INTPD] ADC 채널 설정 실패 — 디지털 판독만 진행");
+  } else {
+    ESP_LOGW(TAG, "[INTPD] IO%d ADC 불가 — 디지털 판독만 진행", pin);
+  }
+
+  SemaphoreHandle_t mtx = btn_handler_get_i2c_mutex();
+  const bool locked = (mtx && xSemaphoreTake(mtx, pdMS_TO_TICKS(500)) == pdTRUE);
+  if (mtx && !locked)
+    ESP_LOGW(TAG, "[INTPD] 버튼 뮤텍스 확보 실패 — 값이 흔들릴 수 있음");
+
+  struct { const char *name; gpio_pull_mode_t pull; } steps[] = {
+    { "floating(풀 없음)", GPIO_FLOATING     },
+    { "내부 풀다운 ~45k ", GPIO_PULLDOWN_ONLY},
+    { "내부 풀업   ~45k ", GPIO_PULLUP_ONLY  },
+  };
+  int mv_pd = -1;
+  for (int i = 0; i < 3; i++) {
+    gpio_set_direction(pin, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(pin, steps[i].pull);
+    vTaskDelay(pdMS_TO_TICKS(50));            /* RC 안정 — 넉넉히 */
+    int lv = gpio_get_level(pin);
+    int mv = adc_ok ? _intpd_read_mv(ch) : -1;
+    if (i == 1) mv_pd = mv;
+    if (mv >= 0)
+      ESP_LOGW(TAG, "[INTPD] %-18s 디지털=%s  ADC=%dmV", steps[i].name,
+               lv ? "HIGH" : "LOW ", mv);
+    else
+      ESP_LOGW(TAG, "[INTPD] %-18s 디지털=%s", steps[i].name, lv ? "HIGH" : "LOW ");
+  }
+
+  /* 출력 LOW 로 몰아 readback — 3V3 단락이면 안 내려간다 */
+  gpio_set_pull_mode(pin, GPIO_FLOATING);
+  gpio_set_direction(pin, GPIO_MODE_OUTPUT);
+  gpio_set_level(pin, 0);
+  vTaskDelay(pdMS_TO_TICKS(20));
+  gpio_set_direction(pin, GPIO_MODE_INPUT_OUTPUT);   /* IN 레지스터 읽기용 */
+  gpio_set_level(pin, 0);
+  vTaskDelay(pdMS_TO_TICKS(20));
+  ESP_LOGW(TAG, "[INTPD] 출력 LOW readback = %s%s", gpio_get_level(pin) ? "HIGH" : "LOW",
+           gpio_get_level(pin) ? "  ★내려가지 않음 = 3V3 단락 의심" : "  (정상 — 싱크 가능)");
+
+  /* 원복: 입력 + 풀업(평상시 `~INT` 감시 상태) */
+  gpio_set_direction(pin, GPIO_MODE_INPUT);
+  gpio_set_pull_mode(pin, GPIO_PULLUP_ONLY);
+  if (locked) xSemaphoreGive(mtx);
+
+  ESP_LOGW(TAG, "[INTPD] ---- 판독 ----");
+  if (mv_pd >= 0) {
+    /* Rpu = Rpd × (VDD - V) / V,  Rpd ≈ 45k, VDD = 3300mV */
+    if (mv_pd > 50 && mv_pd < 3250) {
+      const int rpu_k = (45 * (3300 - mv_pd)) / mv_pd;
+      ESP_LOGW(TAG, "[INTPD] 풀다운 시 %dmV → 상단 풀업 ≈ %dk 로 환산됨", mv_pd, rpu_k);
+      if (rpu_k <= 25)
+        ESP_LOGW(TAG, "[INTPD] → R3 10k 가 GPIO2 에서 **보인다**. 배선 정상."
+                      " 고장은 **R3~U3 pad1 구간**(pad1 냉납 또는 PCF INT 출력 불량)");
+      else
+        ESP_LOGW(TAG, "[INTPD] → 풀업이 예상(10k)보다 훨씬 약하다. 접촉 불량 의심");
+    } else if (mv_pd <= 50) {
+      ESP_LOGW(TAG, "[INTPD] 풀다운 시 %dmV(≈0V) → R3 가 **안 보인다**"
+                    " = GPIO2 까지 배선/via 단선", mv_pd);
+    } else {
+      ESP_LOGW(TAG, "[INTPD] 풀다운인데 %dmV(거의 3V3) → 강한 소스가 물려 있음(단락 의심)",
+               mv_pd);
+    }
+  } else {
+    ESP_LOGW(TAG, "[INTPD] (ADC 없이) 풀다운에서 HIGH=배선정상/PCF측 고장,"
+                  " LOW=GPIO2 배선 단선");
+  }
+  ESP_LOGW(TAG, "[INTPD] ================================================");
+}
+
 void somfy_app_vibelog_dump(void) {
   ESP_LOGW(TAG, "[VIBELOG] === 진동 기록 %u건 (창 %d초, heartbeat %d초) ===",
            (unsigned)s_vl_n, VIBELOG_WIN_S, VIBELOG_HB_S);
