@@ -527,7 +527,18 @@ static volatile bool s_intdiag_req = false;
 
 void btn_handler_int_diag_request(void) { s_intdiag_req = true; }
 
-/* 한 구간 관찰. poll=true 면 10ms 마다 PCF 를 읽으면서(=평소처럼) 관찰한다. */
+/* 한 구간 관찰. poll=true 면 10ms 마다 PCF 를 읽으면서(=평소처럼) 관찰한다.
+ *
+ *  ★★★2026-08-15 **LP 코어도 반드시 멈춰야 한다** — 안 그러면 이 진단이 거짓이 된다.
+ *
+ *  PCF8574/8575 의 `~INT` 는 **포트를 읽으면 해제**된다. ③(LP 코어)이 들어오면서
+ *  LP 가 2ms 마다 PCF 를 읽으므로, HP 폴링만 멈춰서는 INT 가 LOW 로 유지되지 않는다.
+ *  → 관찰 구간 내내 HIGH 로 보여 "선이 안 움직인다" 는 **잘못된 결론**이 나온다.
+ *
+ *  ※최초 측정(2026-08-13 13:46, 커밋 1bbcbc5)은 LP 코어(18:54, f45ac86)보다
+ *    5시간 앞서서 이 문제가 없었다 — 그때 판정 자체는 유효하다.
+ *    하지만 pad1 재납땜 후 **재검증할 때는 이 수정이 없으면 무조건 "여전히 죽음"**
+ *    으로 나온다. */
 static void _int_diag_phase(const char *name, bool poll, uint32_t dur_ms) {
   uint32_t samples = 0, high = 0, edges = 0;
   int prev = gpio_get_level(PCF8574_INT_PIN);
@@ -559,8 +570,26 @@ static void _int_diag_run(void) {
   ESP_LOGW(TAG, "[INTDIAG] 이 구간에는 폴링을 멈추므로 버튼 기능 자체는 안 먹습니다 — 정상입니다.");
   ESP_LOGW(TAG, "[INTDIAG] ================================================");
 
+  /* ★LP 코어 폴링도 멈춘다 — PCF 읽기가 `~INT` 를 해제하므로, 이걸 안 멈추면
+   *  2ms 마다 지워져 관찰 구간이 통째로 HIGH 로 보인다(위 함수 주석 참조). */
+#if SOMFY_LP_CORE_PATH
+  const uint32_t lp_saved = ulp_enabled;
+  if (s_lp_active) {
+    ulp_enabled = 0;
+    vTaskDelay(pdMS_TO_TICKS(20));      /* 진행 중 트랜잭션이 끝날 여유 */
+    ESP_LOGW(TAG, "[INTDIAG] LP 코어 폴링 정지 (PCF 읽기가 ~INT 를 지우므로)");
+  }
+#endif
+
   _int_diag_phase("A:폴링정지", false, INTDIAG_WATCH_MS);
   _int_diag_phase("B:폴링동작", true,  INTDIAG_POLL_MS);
+
+#if SOMFY_LP_CORE_PATH
+  if (s_lp_active) {
+    ulp_enabled = lp_saved;
+    ESP_LOGW(TAG, "[INTDIAG] LP 코어 폴링 재개");
+  }
+#endif
 
   ESP_LOGW(TAG, "[INTDIAG] ---- 판독 ----");
   ESP_LOGW(TAG, "[INTDIAG] A 의 전이 > 0  → `~INT` 가 입력에 반응한다 = ②(인터럽트 기반) **가능**");

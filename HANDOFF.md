@@ -399,6 +399,23 @@ python measure_rf.py <wav>                # deviation / carrier offset / 타이�
   버튼을 눌러도 선이 안 움직인다 → PCF8574 가 `~INT` 를 구동하지 못하는 상태
   (배선 미연결 또는 IC INT 출력 불량). **풀업 추가는 해결책이 아니다** — 이미 있다.
   → ② 를 다시 시도하기 전에 **반드시 `intdiag` 로 전이가 잡히는지 먼저 확인**할 것.
+
+  **데이터시트 대조(`doc/parts/pcf8575.pdf`)로 대안 가설이 전부 배제됐다** —
+  INT sink `IOL 1.6mA` vs 우리 부하 0.33mA(풀업 무관) · `tiv 4µs`(샘플링 무관) ·
+  *"reading/writing **another device** does not affect the interrupt circuit"*(OLED 무관).
+  게다가 *"resetting … when data on the port is **changed to the original setting**"* 이라
+  **버튼을 누르고 있는 동안 INT 는 LOW 로 유지**된다(누름당 100ms+). 290,023 표본에서
+  전이 0회는 "짧은 펄스를 놓쳤다" 로 설명 불가 = **선이 정말 안 움직인다.**
+  고장 위치는 `intpd`(GPIO2 내부 풀다운+ADC, 풀다운 시 2508mV → 상단 풀업 ≈14k)로
+  **R3 ~ U3 pad1 구간**으로 좁혀졌다 → **pad1 재납땜 먼저**. 자세한 건
+  `doc/wiring/wiring_xiao-c6.md` 의 `~INT` 절.
+
+  ★★**`intdiag` 는 LP 코어 폴링을 멈춰야 한다**(2026-08-15 수정). PCF 읽기가 INT 를
+  해제하는데 LP 가 2ms 마다 읽으므로, 안 멈추면 관찰 구간이 통째로 HIGH 로 보인다.
+  최초 측정(13:46, `1bbcbc5`)은 LP 도입(18:54, `f45ac86`)보다 5시간 앞서 이 문제가
+  없었지만, **재검증 시에는 이 수정 없이는 무조건 "여전히 죽음" 이 나온다.**
+  ※폴링과 INT 는 원리적으로 공존이 어렵다 —
+  *"Interrupts that occur during the ACK clock pulse **can be lost**"*.
   ※`~INT` ISR 을 등록해두면 **초당 약 4,500회 폭주**해 prio 10 버튼 태스크를 짓밟아
     **버튼이 통째로 죽는다**(실측 540,522회/120초). 선은 조용하므로 전기 신호가 아니라
     `_vibe_isr_handler` 의 `gpio_ll_intr_disable`/`gpio_intr_enable` 반복과의 간섭으로

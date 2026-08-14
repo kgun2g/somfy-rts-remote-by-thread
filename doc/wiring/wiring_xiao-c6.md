@@ -265,3 +265,41 @@ INT(open-drain) 출력 불량. **pad 1 재납땜을 먼저 시도**하고 `intdi
 > prio 10 버튼 태스크를 짓밟아 **버튼이 통째로 죽는다**. 진단용이라도 남기지 말 것.
 > 부품·핀 배치는 정상이다 — PCF8574(16핀, INT=pin 13) vs PCF8575(24핀, INT=pin 1)
 > 혼동이 원인이 아님을 KiCad 대조로 확인했다(h4 = PCF8575DBR / SSOP-24, pad1 = ~INT).
+
+#### 데이터시트 대조 — 대안 가설이 전부 배제된다
+
+`doc/parts/pcf8575.pdf` (TI PCF8575, §8 Detailed Description / §6 Timing / §5 Electrical) 대조:
+
+| 항목 | 데이터시트 | 우리 | 판정 |
+|---|---|---|---|
+| INT sink 능력 | `IOL = 1.6 mA @ VOL 0.4 V` | R3 10 kΩ → **0.33 mA** | 여유 5배 → **풀업 값 무관** |
+| INT 유효 시간 | **`tiv = 4 µs`** (P port → INT) | intdiag 샘플링 52 µs | 아래 ★ 때문에 무관 |
+| 다른 디바이스 트래픽 | *"Reading from or writing to **another device** does not affect the interrupt circuit"* | OLED 가 같은 버스 공유(폴백 모드) | **OLED 간섭 아님** |
+| 입력 모드 요구 | *"any rising or falling edge of the port inputs **in the input mode**"* | init 에서 `0xFF 0xFF` write 로 전 핀 입력 래치 | 조건 충족 |
+
+⇒ "풀업 부족 / 짧은 펄스를 놓침 / 공유 버스 간섭" 세 가설이 **전부 배제**된다.
+
+> ★**판정을 결정적으로 만드는 문장**
+> *"Resetting and reactivating the interrupt circuit is achieved when **data on the port
+> is changed to the original setting**, or data is read from or written to the port"*
+>
+> 버튼을 **떼면** 포트가 원래 값으로 돌아가 INT 가 **자가 해제**된다. 즉 INT 는
+> **누르고 있는 동안 LOW 로 유지**된다(누름 1회당 100 ms 이상, `tiv` 4 µs 라 지연도 무의미).
+> 그런데 15초간 **290,023 표본에서 전이 0회**였다 — "짧은 펄스를 놓쳤다" 로는 설명이
+> 안 된다. **선이 정말 안 움직인다.**
+
+#### ★향후 `~INT` 를 쓸 때의 함정 2가지 (pad1 수리 후에도 유효)
+
+1. **빠른 탭은 통째로 놓칠 수 있다.** 떼는 순간 INT 가 자가 해제되므로, ISR/읽기가
+   늦으면 포트가 이미 원래 값으로 돌아가 있어 **읽어도 아무 변화가 없다.**
+2. **폴링과 INT 를 섞으면 이벤트가 손실된다.**
+   *"Interrupts that occur during the ACK clock pulse **can be lost** (or be very short),
+   due to the resetting of the interrupt during this pulse"*
+   LP 코어가 2 ms 마다 I²C 트랜잭션을 돌리므로 그 ACK 구간에 떨어지는 엣지는 조용히
+   사라진다. ②(인터럽트 기반)로 전환하려면 **폴링을 완전히 끄는 설계**라야 한다.
+
+> 같은 이유로 **`intdiag` 는 LP 코어 폴링을 반드시 멈춰야 한다**(2026-08-15 수정 완료).
+> LP 가 2 ms 마다 PCF 를 읽으면 INT 가 계속 해제되어 관찰 구간이 통째로 HIGH 로 보인다.
+> ※최초 측정(2026-08-13 13:46, `1bbcbc5`)은 LP 코어 도입(18:54, `f45ac86`)보다 5시간
+> 앞서서 이 문제가 없었다 — 그때 판정 자체는 유효하다. 하지만 **재검증 시에는 이 수정이
+> 없으면 무조건 "여전히 죽음" 으로 나온다.**
