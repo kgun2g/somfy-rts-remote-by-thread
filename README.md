@@ -22,7 +22,13 @@ ESP32-C6)·esp32-h2(ESP32-H2 SuperMini, I2C 공유).
   RAM 절약) → custom Edge driver 로 1카드 3블라인드. 둘 다 lift/tilt.
 - **Somfy RTS 447 송신**: CC1101 2-FSK + RMT 비트뱅, 80비트(10바이트) 프레임,
   롤링코드, 블라인드별 주파수. Manchester 극성·HW/SW sync·byte 7~9·tilt 커맨드
-  모두 정품 IQ 검증값.
+  모두 정품 IQ 검증값. 한 누름 = **2 프레임**(첫 프레임 HW sync 12 + 재전송 6),
+  **byte7 은 재전송 인덱스**(첫 프레임 `0x84`, 재전송 `196+rep*4`) — 정품·ESPSomfy 동일.
+  > ★**rtl_433 이 보여주는 byte 값은 wire 바이트가 아니다.** 송신은 b[1..6]만
+  > 체인 XOR 하지만 rtl_433 은 **b[1..9] 전체를 디스크램블**한다
+  > (`표시 b8 = wire b8 ^ wire b7`, `표시 b9 = wire b9 ^ wire b8`).
+  > 이걸 모르면 재전송 프레임의 byte7 을 "hold 코드" 로 오독한다 — 실제로 그렇게
+  > 오독해 멀쩡하던 긴 누름을 깬 적이 있다. 자세한 건 `HANDOFF.md`.
 - **OLED UI**: 동작 모션(UP/DOWN/STOP/TILT/PROG/ROT), 시계, 대상 블라인드 표시,
   설정 메뉴. **렌더러는 해상도로 자동 선택**(보드 무관, `BOARD_OLED_*`):
   **128×64 가로** / **64×128 세로** → 풀스크린 네이티브(고딕 폰트 + 7세그 시계),

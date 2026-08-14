@@ -567,13 +567,47 @@ Matter over Thread 는 **Thread Border Router** 가 mesh ↔ Internet 게이트�
 **Thread SED + ICD + PM auto-light-sleep (v3.3):**
 - `esp_pm_configure()` + `CONFIG_FREERTOS_USE_TICKLESS_IDLE` + `CONFIG_ENABLE_ICD_SERVER` 조합으로
   **라디오를 끄지 않은 채** CPU 만 자동 light sleep.
-- Thread mesh 의 ICD poll (SlowPoll 5 s / FastPoll 200 ms) 주기 내 SmartThings 명령 수신 가능 → 즉시 wake + 모션 표시 (v3.6).
+- Thread mesh 의 ICD poll (SlowPoll 7 s / FastPoll 200 ms) 주기 내 SmartThings 명령 수신 가능 → 즉시 wake + 모션 표시 (v3.6).
 - 주변장치 power-down 비활성: I²C/SPI/RMT 상태 보존 (peripheral light-sleep 시 깨어나면 재초기화 불필요).
 
+> ### ★★★2026-08-15 — light sleep 은 **오랫동안 한 번도 진입하지 않았다**
+>
+> `CONFIG_PM_PROFILING=y` + 콘솔 `pm`(`esp_pm_dump_locks`)으로 계측한 결과:
+>
+> ```
+> bt        APB_FREQ_MAX  Active=1  100%      ← BLE 스택
+> rmt_0_0   CPU_FREQ_MAX  Active=1  100%      ← 우리 CC1101 RMT 채널
+> Mode stats:  CPU_MAX 160M  99%              ← light sleep 항목 자체가 없음
+> ```
+>
+> PM 락 두 개가 부팅부터 100% 잡혀 있어 automatic light sleep 이 **진입 자체를 못 했다**.
+> `esp_pm_configure()` 성공 = "허용됨" 일 뿐 **자고 있다는 증거가 아니다**.
+>
+> **해제 방법 (적용 완료)**
+> - `rmt_enable()` 은 CPU_FREQ_MAX 락을 잡는다 → 부팅 때 켜두지 말고 **송신 burst 동안만**
+>   켠다(`_rmt_acquire`/`_rmt_release`). `rmt_disable` 은 진행 중 전송을 자르므로
+>   `rmt_tx_wait_all_done()` 로 먼저 비울 것. → CPU_MAX **99% → 5%**
+> - `CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y` (CHIP 기본값인데 꺼져 있었다) → 등록 후
+>   BLE deinit, 이미 provisioned 면 부팅 시 초기화조차 안 함. → `bt` 락 소멸, 힙 **164→184 KB**
+>
+> **USB 에서는 확인 불가** — USB-JTAG 보호를 위해 설계상 USB 중엔 light sleep 을 끈다
+> (`ls = want_ls && !on_usb`). 진입 여부는 **배터리에서만** 보인다.
+>
+> **계측은 NVS 로 남긴다** — 이 보드는 **포트를 여는 순간 리셋**되므로 RAM 통계는
+> 읽으러 가는 행위가 지워버린다. `CONFIG_PM_LIGHT_SLEEP_CALLBACKS=y` + exit 콜백의
+> 실제 `sleep_time_us` 를 배터리 로그 행(`bat_sample_t.ls`)에 실어 `bl` 로 조회한다.
+
 **Wake 소스:**
-- 4 개 버튼 GPIO (PCF8574 ~INT IO17)
-- 로터리/충전/진동 변화 (PCF8574 P0~P3 + IO3 CHG_STAT + IO16 VIBE)
+- 4 개 버튼 GPIO — ~~PCF8574 `~INT`~~ **사용 불가**(아래 ★) → **폴링**으로 처리
+- 로터리/충전/진동 변화 (PCF8574 P0~P3 + CHG_STAT + VIBE)
 - **SmartThings Matter 명령 (v3.6)** — Thread mesh ICD wake 후 해당 모션 즉시 화면 표시
+
+> ★ **PCF8574/8575 `~INT` 는 이 기판에서 쓸 수 없다 (2026-08-13 실측 확정).**
+> 버튼을 조작하며 290,023 표본을 관찰했으나 **전이 0회**(HIGH 100%). 회로도상 풀업
+> `R3 10k` 는 정상 존재하고, `intpd` 진단(GPIO2 내부 풀다운 + ADC 실전압)에서
+> 풀다운 시 2508 mV → 상단 풀업 ≈14 k 로 환산되어 **R3 가 GPIO2 에서 보인다**
+> = 배선·GPIO 정상. 고장은 **R3 ~ U3 pad1 구간**(0.65 mm SSOP pad1 냉납 또는 IC INT
+> 출력 불량). ※`~INT` ISR 을 등록해두면 초당 ~4,500 회 폭주해 **버튼이 통째로 죽는다**.
 
 ### 진동 wake (`_v2`/`_h2`만)
 - 디바이스를 흔들면 VS1 진동 센서 동작 → PCF8574 INT pulse → wake
@@ -581,6 +615,40 @@ Matter over Thread 는 **Thread Border Router** 가 mesh ↔ Internet 게이트�
 - **지속 진동 시** (계속 흔드는 경우): 마지막 진동 후 5초간 sleep 차단
 
 ---
+
+## 진단 콘솔 (USB 시리얼, 115200)
+
+USB-Serial-JTAG 콘솔로 기기를 직접 조회·조작할 수 있다.
+
+| 명령 | 용도 |
+|---|---|
+| `bl` / `bl clear` | 배터리 방전 기록(NVS) — 전압·%·평균전류·**light sleep 비율**·ADC 산포 |
+| `pm` | `esp_pm_dump_locks` — PM 락 보유 + 절전모드 체류 (진단 빌드 전용) |
+| `bd` / `bd clear` | 부팅 진단 — 직전/실패 부팅 단계·리셋 사유 |
+| `vl` / `vl clear` | 진동센서 기록 |
+| `tx <cmd> [hold_ms]` | RF 송신 — `up`/`down`/`updown`/`myup`/`mydown`/`my`/`prog` |
+| `tx8 <hex> [cmd] [hold]` | **raw byte8 강제 지정** 송신 — rtl_433 표시값과의 대응표 작성용 |
+| `sel <n>` / `cyc ±1` | 블라인드 선택 / 순환 |
+| `freq [idx mhz]` | 주파수 조회·설정 |
+| `intpd` | `~INT` 풀다운 진단 — 배선 단선 vs PCF 측 고장 판별 |
+| `intdiag` | `~INT` 선 관찰 (15초, 그동안 버튼 조작 필요) |
+| `usbsim off\|on` | 배터리 모드 시뮬 |
+| `reboot` | 재부팅 |
+
+> ### ★시리얼 접속 시 지뢰 두 개
+>
+> 1. **`write_timeout` 을 반드시 설정할 것.** 안 하면 write 가 hang 한다.
+>    ```python
+>    sp = serial.Serial(); sp.port='COM7'; sp.baudrate=115200
+>    sp.timeout=0.3; sp.write_timeout=5      # ★
+>    sp.open()
+>    ```
+>    write 가 실패하면 **연결을 새로 만들어 재시도**하면 대개 통한다.
+>
+> 2. **포트를 여는 것만으로 기기가 리셋된다**(부팅 진단에 `리셋사유=USB리셋(플래시/포트열기)`).
+>    → **RAM 에만 있는 통계는 읽으러 가는 순간 사라진다.** 배터리 방전 기록은
+>    NVS 라 살아남지만 `pm` 의 누적 통계는 날아간다. 그래서 light sleep 비율을
+>    배터리 로그 행에 실어 NVS 로 남기게 만들었다(`bl` 의 `sleep%`).
 
 ## 문제 해결
 
@@ -594,10 +662,13 @@ Matter over Thread 는 **Thread Border Router** 가 mesh ↔ Internet 게이트�
 | OLED 상하 반전(뒤집힘) | H2 시제품 패널 180° 장착 + `-Rotate` 미지정(기본 `ROTATE_180=0`) | `-Rotate 180` 로 빌드/플래시 (`.\build.ps1 -Board esp32-h2 -Rotate 180 -Action flash`). 좌우(거울) 반전이면 `-Rotate m0` |
 | 로터리 미반응 | PCF8574 I2C 미연결 | GNPE: SDA=IO19, SCL=IO18 bit-bang + 4.7kΩ pull-up 확인 |
 | 블라인드 반응 없음 | 주파수 불일치 | 로터리 롱프레스 → 주파수 미세조정 |
+| **PROG 를 길게 눌러도 반응 없음** (짧게는 정상) | `_build_frame` 이 byte7 을 전 프레임 `0x84` 로 고정. 정품·ESPSomfy 는 **재전송마다 `196+rep*4`** 로 올린다 | 2026-08-15 수정 완료 — 송신 루프에서 프레임마다 갱신(byte9 체크섬도 재계산). 되돌리려면 `frame[7] = 0x84;` |
+| SDR 로 보면 한 번 눌렀는데 신호가 여러 번 잡힘 | 프레임 수가 정품(2개)보다 많거나, 프레임 간 무신호가 길어 rtl_433 이 별개 버스트로 분리 | `SOMFY_REPEAT_COUNT=2` + `_transmit_frame` 대기 `us/1000`(내림). 정품 interFrame ≈3.9 ms 수준이면 한 버스트로 묶인다 |
 | OLED 안 켜짐 | I2C 주소 불일치 | `CFG_OLED_ADDR=0x3C` 확인 |
 | Matter 페어링 실패 | Thread Border Router 부재 / 거리 | SmartThings Hub v3+ / Apple TV 4K / Nest Hub 2nd gen 등이 같은 네트워크에 있는지 확인 |
 | Matter 페어링 실패 (코드 인식) | NVS 의 이전 fabric 잔존 | 설정 메뉴 → Thread Rst, 또는 `.\build.ps1 -Action erase` |
-| SmartThings 명령에 응답 지연 (≤5초) | Thread SED SlowPoll 주기 (5 s) | 정상 동작 — ICD 응답성 (FastPoll 200 ms) 는 active 트랜잭션 중에만 발동 |
+| SmartThings 명령에 응답 지연 (≤7초) | Thread SED SlowPoll 주기 (`CONFIG_ICD_SLOW_POLL_INTERVAL_MS=7000`) | 정상 동작 — ICD 응답성 (FastPoll 200 ms) 는 active 트랜잭션 중에만 발동 |
+| **SmartThings 에서 offline 로 뜨고 안 돌아옴** | `CONFIG_ICD_IDLE_MODE_INTERVAL_SEC` 가 esp-matter 기본값 2 → CHIP 이 구독 최대주기를 이 값으로 협상해 **2초마다 보고를 강요**당한다(실측: IM:ReportData 2.02초 간격 무한 반복). 배터리로 돌리면 그 약속을 못 지켜 허브가 offline 판정 | **30 으로 상향**(적용 완료). 하향 링크 지연은 SlowPoll 이 정하므로 명령 반응은 그대로 |
 | 리셋 직후 시간 초기화 | NVS 시간 영속화 미동작 | v3.6 이상 펌웨어 사용 + border router 통한 SNTP 동기화 1시간 대기 |
 | 빌드 실패 (MSYSTEM) | Git Bash 사용 | PowerShell에서 `build.ps1` 실행 |
 | 롤링코드 오류 (모터 무응답) | 전체 `erase-flash` 로 `rollcode` 파티션까지 삭제 | 블라인드 재-PROG. (Matter factory reset/OTA 는 `rollcode` 파티션 보존 → 재등록 불필요) |

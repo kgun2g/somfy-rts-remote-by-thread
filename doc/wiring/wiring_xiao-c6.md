@@ -60,7 +60,7 @@ MTDO=GPIO7 (    LP_GPIO7, LP_I2C_SCL, FSPID)     ← 하드웨어 LP_I2C
 | OLED   | SCL  | D5  | **GPIO23** | I2C 0x3C |
 | PCF8574 | SDA | D4(공유)/MTCK | **GPIO22** / 6 | 자동 폴백 — LP_I2C(6) 우선 프로브 → 무응답 시 공유 OLED 버스(22) |
 | PCF8574 | SCL | D5(공유)/MTDO | **GPIO23** / 7 | 〃 pull-up: 공유=OLED 공통 1쌍 / LP=PCF 전용 1쌍 |
-| PCF8574 | ~INT | D2 | **GPIO2** (LP) | active-LOW wake, 10 kΩ pull-up |
+| PCF8574 | ~INT | D2 | **GPIO2** (LP) | active-LOW wake, 10 kΩ pull-up — **★현 기판에서 동작 안 함(아래)** |
 | 센서   | CHG_STAT | D7 | **GPIO17** | **USB 감지** — VBUS 분압 active-HIGH (충전 섹션) |
 | 센서   | BAT ADC | D1 | **GPIO1** (A1) | 배터리 전압 분압 ADC → 실측 % (충전 섹션) |
 | 센서   | VIBE | D0 | **GPIO0** (LP) | VS1 진동, light-sleep wake (구 GPIO3/D11 미노출) |
@@ -240,3 +240,28 @@ BAT+↔GND 는 무의미(C6/C7/C8 470µF 벌크가 이미 담당).
 - 외부 풀업: 공유 배선=OLED·PCF 공통 SDA/SCL 각 **4.7 kΩ** 1쌍 / LP_I2C 배선=PCF 전용 별도 1쌍.
   ~INT 는 **10 kΩ** → +3V3.
 - CC1101 은 저속이라 GPIO-matrix 라우팅으로 충분.
+
+### ★ `~INT`(GPIO2) 는 현 h4 기판에서 동작하지 않는다 (2026-08-15 실측)
+
+버튼을 조작하며 **290,023 표본**을 관찰했으나 **전이 0회**(HIGH 100%).
+콘솔 `intpd` 진단(GPIO2 내부 풀다운 + ADC 실전압)으로 고장 위치를 갈랐다:
+
+```
+floating(풀 없음)   디지털=HIGH  ADC=3255 mV
+내부 풀다운 ~45k    디지털=HIGH  ADC=2508 mV   ← 상단 풀업 ≈ 14 k 로 환산
+내부 풀업   ~45k    디지털=HIGH  ADC=3256 mV
+출력 LOW readback = LOW                        ← 싱크 가능, 3V3 단락 아님
+```
+
+**R3 10 kΩ 이 GPIO2 에서 그대로 보인다 = 배선·GPIO 모두 정상.**
+PCB 네트 추적으로도 `U3 pad1(~INT) ── R3 10k ── +3V3` + `U1 pad3(GPIO2)` 3점 연결이
+확인되고 동판 배선도 실재한다(segment 20 / via 2).
+
+⇒ 고장은 **R3 ~ U3 pad1 구간** — 0.65 mm 피치 SSOP **pad 1 냉납** 또는 PCF8575 의
+INT(open-drain) 출력 불량. **pad 1 재납땜을 먼저 시도**하고 `intdiag` 로 전이가
+잡히는지 확인할 것. GPIO 를 다른 핀으로 옮기는 것은 불필요하다(그쪽은 정상).
+
+> ⚠ `~INT` ISR 을 등록해두면 **초당 약 4,500 회 폭주**(실측 540,522회/120초)해
+> prio 10 버튼 태스크를 짓밟아 **버튼이 통째로 죽는다**. 진단용이라도 남기지 말 것.
+> 부품·핀 배치는 정상이다 — PCF8574(16핀, INT=pin 13) vs PCF8575(24핀, INT=pin 1)
+> 혼동이 원인이 아님을 KiCad 대조로 확인했다(h4 = PCF8575DBR / SSOP-24, pad1 = ~INT).
