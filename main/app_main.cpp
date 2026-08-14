@@ -10,6 +10,7 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_console.h>
+#include <esp_pm.h>          /* esp_pm_dump_locks — 절전 진단 */
 #include <string.h>
 #include <stdlib.h>
 #include <nvs_flash.h>
@@ -440,6 +441,17 @@ static int scmd_tx(int argc, char **argv){
     printf("OK tx %s hold=%lu\n", a, (unsigned long)hold);
     return 0;
 }
+extern "C" void somfy_app_console_tx_byte8(int raw_b8, int cmd, uint32_t hold_ms);
+/* byte8 캘리브레이션: tx8 <hex> [cmd] [hold_ms]  (cmd 기본 8=PROG) */
+static int scmd_tx8(int argc, char **argv){
+    if(argc<2){ printf("usage: tx8 <byte8 hex> [cmd=8] [hold_ms=0]\n"); return 0; }
+    int b8 = (int)strtol(argv[1], NULL, 16);
+    int cmd = (argc>=3)? (int)strtol(argv[2],NULL,0) : 8;
+    uint32_t hold = (argc>=4)? (uint32_t)strtoul(argv[3],NULL,10) : 0;
+    somfy_app_console_tx_byte8(b8, cmd, hold);
+    printf("OK tx8 b8=0x%02X cmd=%d hold=%lu\n", b8 & 0xFF, cmd, (unsigned long)hold);
+    return 0;
+}
 static int scmd_sel(int argc, char **argv){
     if(argc<2){ printf("usage: sel <0..%d | %d=ALL>\n", BLIND_MAX_COUNT-1, BLIND_SEL_ALL); return 0; }
     int n=atoi(argv[1]); somfy_app_console_select(n);
@@ -472,6 +484,22 @@ static int scmd_bl(int argc, char **argv){
     if (argc >= 2 && !strcmp(argv[1], "clear")) { somfy_app_batlog_clear(); printf("OK bl clear\n"); return 0; }
     somfy_app_batlog_dump();
     printf("OK bl\n");
+    return 0;
+}
+/* ★2026-08-14 절전 진단 — light sleep 이 **실제로** 도는지 본다.
+ *  CONFIG_PM_PROFILING=y 일 때 esp_pm_dump_locks 가 각 lock 의 보유시간과
+ *  각 절전 모드 체류시간을 출력한다. 지금까지 `pm=3`(=esp_pm_configure 가
+ *  light sleep 을 허용) 만 보고 "자고 있다"고 추정해 왔는데 그건 증거가 아니었다.
+ *  이 명령으로 몇 시간짜리 방전 대신 즉시 확인한다.
+ *  ※PM_PROFILING 은 런타임 오버헤드가 있으므로 **전류 측정 빌드에서는 끌 것**. */
+static int scmd_pm(int argc, char **argv){
+    (void)argc; (void)argv;
+#if CONFIG_PM_ENABLE
+    esp_pm_dump_locks(stdout);
+#else
+    printf("CONFIG_PM_ENABLE 이 꺼져 있음\n");
+#endif
+    printf("OK pm\n");
     return 0;
 }
 extern "C" void somfy_app_intpd_test(void);
@@ -804,6 +832,8 @@ extern "C" void app_main()
       esp_console_cmd_register(&txc);
       const esp_console_cmd_t slc={ .command="sel", .help="블라인드 선택", .hint=NULL, .func=&scmd_sel, .argtable=NULL };
       esp_console_cmd_register(&slc);
+      const esp_console_cmd_t t8c={ .command="tx8", .help="byte8 캘리브레이션 tx8 <hex> [cmd] [hold_ms]", .hint=NULL, .func=&scmd_tx8, .argtable=NULL };
+      esp_console_cmd_register(&t8c);
       const esp_console_cmd_t cyc={ .command="cyc", .help="블라인드 선택 순환 -1/1 (_blind_cycle 검증)", .hint=NULL, .func=&scmd_cyc, .argtable=NULL };
       esp_console_cmd_register(&cyc);
       const esp_console_cmd_t frq={ .command="freq", .help="freq [idx mhz] 주파수 조회/설정", .hint=NULL, .func=&scmd_freq, .argtable=NULL };
@@ -820,6 +850,8 @@ extern "C" void app_main()
       esp_console_cmd_register(&idc);
       const esp_console_cmd_t ipd={ .command="intpd", .help="~INT 풀다운 진단 (고장 위치 판별)", .hint=NULL, .func=&scmd_intpd, .argtable=NULL };
       esp_console_cmd_register(&ipd);
+      const esp_console_cmd_t pmc={ .command="pm", .help="절전 진단 — PM lock 보유시간/절전모드 체류시간", .hint=NULL, .func=&scmd_pm, .argtable=NULL };
+      esp_console_cmd_register(&pmc);
       const esp_console_cmd_t usc={ .command="usbsim", .help="배터리 모드 시뮬 (usbsim off|on)", .hint=NULL, .func=&scmd_usbsim, .argtable=NULL };
       esp_console_cmd_register(&usc); }
     boot_diag_stage(BOOT_S1_CONSOLE_CMDS);

@@ -79,6 +79,7 @@
 #if BOARD_HAS_BAT_ADC
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
+#include "esp_rom_sys.h"   /* esp_rom_delay_us — tick 무관 busy-wait */
 #include "esp_adc/adc_cali_scheme.h"
 #endif
 /* WiFi → Thread 전환. wifi_provision.h 제거, thread_provision.h 사용. */
@@ -1009,6 +1010,7 @@ static void _hold_repeat_task(void *pvParam) {
     const int64_t press_us = s_action_press_us;
     const bool held = (s_held_up || s_held_down || s_held_rot);
 
+
     if (s_combo_pending != 0) {
       /* ── 조합 전환 대기: 진행 중 송신이 끝나기를 기다린다 ── */
       if (!held || press_us == 0) {
@@ -1050,6 +1052,26 @@ static void _hold_repeat_task(void *pvParam) {
 void somfy_app_console_tx(int cmd, uint32_t hold_ms) {
   somfy_rts_abort = false;
   _send_command_ex((somfy_command_t)cmd, hold_ms, false, false);
+}
+
+/* ★2026-08-15 byte8 캘리브레이션 — `tx8 <raw hex> [cmd] [hold_ms]`.
+ *  raw byte8 을 강제로 지정해 송신한다. SDR 로 rtl_433 표시값을 읽어
+ *  **raw ↔ 표시 대응표**를 만드는 것이 목적이다(추측 금지 — somfy_rts.c 주석 참조).
+ *  정품 hold 는 표시 0xC4 이므로, 그걸 만드는 raw 값을 찾으면 PROG 긴 누름을
+ *  정품과 같게 만들 수 있다. 송신이 끝나면 override 를 반드시 해제한다. */
+void somfy_app_console_tx_byte8(int raw_b8, int cmd, uint32_t hold_ms) {
+  somfy_rts_byte8_override = raw_b8;         /* <0 이면 해제 */
+  somfy_rts_abort = false;
+  _send_command_ex((somfy_command_t)cmd, hold_ms, false, false);
+  /* 큐가 직렬이라 이 job 이 끝난 뒤 풀어야 한다 — worker 가 실제로 비워질 때까지 대기 */
+  for (int i = 0; i < 200; i++) {
+    if (!s_rf_tx_busy &&
+        (s_rf_queue == NULL || uxQueueMessagesWaiting(s_rf_queue) == 0)) break;
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+  somfy_rts_byte8_override = -1;
+  ESP_LOGW(TAG, "[TX8] raw byte8=0x%02X cmd=%d hold=%lums 송신 완료 — override 해제",
+           raw_b8 & 0xFF, cmd, (unsigned long)hold_ms);
 }
 void somfy_app_console_select(int n) {
   blind_manager_select(&s_mgr, (uint8_t)n);
@@ -1434,11 +1456,29 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
       break;
     }
     if (evt->hold_ms == 0) {
-      /* PROG PRESS: 정품 리모컨처럼 누르고 있는 동안 PROG 를 계속 송신하고
-       *  떼면 즉시 멈춘다. 롱프레스 event(hold_ms>0)는 무시 — PRESS 가
-       *  이미 abortable 송신을 시작했고 RELEASE 가 멈춘다. */
+      /* ★★★2026-08-15 PROG 를 **정품 구조**로 재현 (연속 송신 제거).
+       *  사용자 신고: "PROG 를 2초 이상 누르면 작동하지 않는다(정품은 됨)."
+       *
+       *  【정품 실측 — somfy_rts_447/remote_x1 의 cs16 버스트 길이】
+       *    긴 누름 연속 버스트(1.3~2.0초)는 **Up/Down 구간에만** 존재하고
+       *    PROG 구간(ch1 00:16:42~55 / ch2 00:20:25~37 / ch4 00:22:36~58)은
+       *    **전부 178~318ms** 다.
+       *    ⇒ 정품은 PROG 를 길게 눌러도 **연속 송신하지 않는다**. 짧은 버스트
+       *      하나를 hold 코드(표시 C4/19)로 보내고 끝낸다.
+       *
+       *  ★2026-08-15 정정: 여기서 "짧은 버스트 + hold 코드" 로 나눴던 건 오독에
+       *  근거한 것이라 되돌렸다. 정품의 C4 는 hold 코드가 아니라 **재전송 프레임의
+       *  byte7(196+rep*4)** 이 디스크램블되어 그렇게 보인 것뿐이다.
+       *  → 누르는 동안 연속 송신하고, byte7 은 프레임마다 증가한다.
+       *
+       *  ※되돌리기(연속 송신):
+       *      _send_command_ex(SOMFY_CMD_PROG, CFG_BTN_MAX_HOLD_MS, true, false);
+       *    로 바꾸고 _hold_repeat_task 의 PROG 블록을 지우면 된다. */
       oled_ui_notify_action_start(&s_ui, OLED_ACTION_PROG);
       somfy_rts_abort = false;
+      /* ★2026-08-15 연속 송신 — 정품과 동일. 누르는 동안 계속 쏘고, 프레임마다
+       *  byte7 이 재전송 인덱스로 증가한다(somfy_rts.c _encode80_byte7).
+       *  ※짧은 버스트로 끊었더니 "계속 눌러도 짧게 한 번"이 되어 되돌렸다. */
       _send_command_ex(SOMFY_CMD_PROG, CFG_BTN_MAX_HOLD_MS, true, false);
     }
     break;
@@ -2413,6 +2453,15 @@ typedef struct __attribute__((packed)) {
                       *  이벤트코드 0=주기측정, 1~15=버튼(아래 BLEV_*) */
   uint8_t  sp;       /* ★2026-08-12 (A) 직전 측정의 8표본 산포(ADC 카운트).
                       *  배터리 구동 중엔 시리얼이 없으니 여기 실어 나른다. */
+  uint8_t  ls;       /* ★★★2026-08-14 직전 샘플 이후 **light sleep 체류 비율**(0~100%).
+                      *
+                      *  왜 여기에 넣는가: 이 보드는 **포트를 여는 순간 리셋된다**
+                      *  (부팅진단 `리셋사유=USB리셋(플래시/포트열기)`). 그래서
+                      *  esp_pm_dump_locks 의 RAM 통계는 **읽으러 가는 행위 자체가
+                      *  지워버린다** — 실제로 배터리 구간 통계를 그렇게 날렸다.
+                      *  → 배터리 로그와 같은 NVS 경로로 실어 리셋에 견디게 한다.
+                      *  값은 esp_pm_light_sleep_register_cbs 의 exit 콜백이 누적한
+                      *  실제 sleep_time_us 로 계산한다(추정 아님). */
 } bat_sample_t;
 /* ※구조체가 6→7바이트로 바뀌었다. _batlog_load() 가 blob 길이를 검사하므로
  *  예전 형식으로 저장된 기록은 자동 폐기된다(오해석 없음). */
@@ -2421,6 +2470,47 @@ static bat_sample_t s_bl_buf[BATLOG_MAX];
 static uint16_t     s_bl_n = 0;     /* 저장된 개수(최대 BATLOG_MAX) */
 static uint16_t     s_bl_head = 0;  /* 다음 쓸 위치(링) */
 static uint32_t     s_bl_sess = 0;  /* 세션 번호(부팅/분리마다 증가) */
+
+/* ═══ light sleep 실측 누적 — NVS 로 남기기 위한 계측기 ═══════════════════════
+ *  esp_pm_light_sleep_register_cbs 의 exit 콜백이 **실제 잔 시간**(sleep_time_us)
+ *  을 준다. IDLE 태스크 컨텍스트라 블로킹 금지 → 누적만 한다.
+ *  이 값이 있어야 "절전이 됐나"를 배터리에서 직접 알 수 있다. USB 에서는
+ *  설계상 light sleep 을 끄므로(USB-JTAG 보호) 0 이 정상이다. */
+static volatile int64_t  s_ls_total_us = 0;   /* 부팅 후 누적 light sleep 시간 */
+static volatile uint32_t s_ls_count    = 0;   /* 진입 횟수 */
+static int64_t s_ls_mark_us   = 0;            /* 직전 배터리 샘플 시점의 누적값 */
+static int64_t s_ls_mark_wall = 0;            /* 그때의 벽시계 */
+
+#if CONFIG_PM_ENABLE && CONFIG_FREERTOS_USE_TICKLESS_IDLE
+static esp_err_t _ls_exit_cb(int64_t sleep_time_us, void *arg) {
+  (void)arg;
+  if (sleep_time_us > 0) { s_ls_total_us += sleep_time_us; s_ls_count++; }
+  return ESP_OK;
+}
+static void _ls_stats_init(void) {
+  esp_pm_sleep_cbs_register_config_t cfg = {
+      .enter_cb = NULL, .exit_cb = _ls_exit_cb,
+      .enter_cb_user_arg = NULL, .exit_cb_user_arg = NULL,
+      .enter_cb_prior = 0, .exit_cb_prior = 0 };
+  esp_err_t e = esp_pm_light_sleep_register_cbs(&cfg);
+  ESP_LOGW(TAG, "[LS] light sleep 계측 등록: %s", esp_err_to_name(e));
+}
+#else
+static void _ls_stats_init(void) { ESP_LOGW(TAG, "[LS] PM/tickless 미사용 — 계측 없음"); }
+#endif
+
+/* 직전 샘플 이후 light sleep 비율(0~100). 호출 시 기준점을 갱신한다. */
+static uint8_t _ls_take_pct(int64_t now_us) {
+  const int64_t d_sleep = s_ls_total_us - s_ls_mark_us;
+  const int64_t d_wall  = now_us - s_ls_mark_wall;
+  s_ls_mark_us   = s_ls_total_us;
+  s_ls_mark_wall = now_us;
+  if (d_wall <= 0) return 0;
+  int64_t pct = (d_sleep * 100) / d_wall;
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  return (uint8_t)pct;
+}
 
 static void _batlog_save(void) {
   nvs_handle_t h;
@@ -2475,6 +2565,7 @@ static void _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int
                        (((pm < 0 ? 0 : pm) & 3) << 2) |
                        (((ev < 0 ? 0 : ev) & 0x0F) << 4));
   e->sp   = s_bat_last_spread;      /* ★A 직전 측정의 ADC 표본 산포 */
+  e->ls   = _ls_take_pct(esp_timer_get_time());  /* ★직전 샘플 이후 light sleep 비율 */
   s_bl_head = (uint16_t)((s_bl_head + 1) % BATLOG_MAX);
   if (s_bl_n < BATLOG_MAX) s_bl_n++;
   s_bl_dirty = true;       /* NVS 반영은 _batlog_flush_if_due 가 합쳐서 한다 */
@@ -2515,10 +2606,10 @@ void somfy_app_batlog_dump(void) {
     const int sp_mv = (int)e->sp * 3100 / BOARD_BAT_DIV_BOT
                       * (BOARD_BAT_DIV_TOP + BOARD_BAT_DIV_BOT) / 4095;
     ESP_LOGW(TAG, "BL %4u  +%5us  %4umV  %3u%%  avg%4dmA  radio=%d screen=%d pm=%d  "
-                  "산포%3d(%2dmV)  %s",
+                  "sleep%3u%%  산포%3d(%2dmV)  %s",
              (unsigned)i, (unsigned)e->t_s, (unsigned)e->mv, (unsigned)e->pct, ma,
              (e->flags & 1) ? 1 : 0, (e->flags & 2) ? 1 : 0, (e->flags >> 2) & 3,
-             (int)e->sp, sp_mv,
+             (unsigned)e->ls, (int)e->sp, sp_mv,
              EVN[(e->flags >> 4) & 0x0F]);
   }
 }
@@ -3212,6 +3303,7 @@ void somfy_app_run(void *arg) {
    *  (btn_handler_get_i2c_mutex → NULL, oled_ui_i2c_trylock → true 반환). */
 #if BOARD_HAS_BAT_ADC
   _bat_adc_init();
+  _ls_stats_init();     /* ★light sleep 실측 — 배터리 로그에 실어 NVS 로 남긴다 */
   {
     int _mv0 = _read_bat_mv();
     if (_mv0 > 0) {
@@ -3516,7 +3608,10 @@ void somfy_app_run(void *arg) {
       int _vbus = _read_bat_mv();                /* GP3 = VBUS (USB 시 ~6000mV 환산) */
       s_ui.usb_pwr = (_vbus > 3000);
       gpio_set_pull_mode(BOARD_PIN_CHG_STAT, GPIO_PULLUP_ONLY);
-      vTaskDelay(pdMS_TO_TICKS(3));
+      /* ★2026-08-14 vTaskDelay → esp_rom_delay_us.
+       *  pdMS_TO_TICKS(3) 는 tick 100Hz 에서 0 tick → 풀업 RC 가 안정되기 전에
+       *  읽어 저전압을 오판한다. tick 주기와 무관하게 고정. */
+      esp_rom_delay_us(3000);
       bool _bat_ok = gpio_get_level(BOARD_PIN_CHG_STAT);   /* HIGH=배터리>~3V */
       gpio_set_pull_mode(BOARD_PIN_CHG_STAT, GPIO_PULLDOWN_ONLY);  /* button_handler 기본 복원 */
       s_ui.bat_low = (!s_ui.usb_pwr && !_bat_ok);

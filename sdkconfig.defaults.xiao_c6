@@ -49,15 +49,32 @@ CONFIG_ICD_SLOW_POLL_INTERVAL_MS=7000
 #  ※하향 링크 지연은 SLOW_POLL(7초)이 정하므로 이 값과 무관 — 명령 반응은 그대로다.
 CONFIG_ICD_IDLE_MODE_INTERVAL_SEC=30
 
-# ★★2026-08-13 FreeRTOS tick 100 -> 1000 Hz (절전 ①)
-#  문제: light sleep 이 **한 번도 진입하지 않았다**(6.64h 실측 57mA).
-#    FREERTOS_IDLE_TIME_BEFORE_SLEEP=3 이고 HZ=100 이면 문턱이 3 tick = **30ms** 인데,
-#    btn_task 가 vTaskDelay(10ms)=**1 tick** 마다 깨워 유휴가 30ms 를 절대 못 넘었다.
-#    pm=3 은 "활성화됨"일 뿐 실제로 자고 있다는 뜻이 아니었다.
-#  HZ=1000 이면 문턱이 3ms 라 폴링 사이 ~9ms 를 잘 수 있다.
-#  ※문턱을 낮추는 대안은 불가 — FreeRTOS 자체 제약으로 최소값이 2다(Kconfig range 2..).
-#  ※RF 는 RMT 하드웨어가 심볼을 만들므로 무관. 단 프레임 간 대기가 vTaskDelay 라
-#    tick 해상도에 걸린다 → 프레임 주기가 +2~7ms 늘어난다(아래 주석 참고).
+# ★★★2026-08-14 FreeRTOS tick — 100Hz 로 내려 실측했으나 **차이 없음** → 1000Hz 유지
+#
+#  【3회 실측, 동일 전압구간 기울기】(전체평균 % 로 비교하면 안 된다 — 아래 절 참조)
+#     구간        #22 100Hz·LP없음   #32 1000Hz·LP   #33 100Hz·LP
+#     3790~3830   -0.64 mV/분        -0.71           -1.00
+#     3620~3800   -0.64 (28분뿐)     -0.94           -0.95   ← 표본 긴 구간
+#     3700~3790   -0.80 (10분뿐)     -0.75           -0.75   ← 표본 긴 구간, 완전 동일
+#   ⇒ **표본이 긴 구간에서는 100Hz 와 1000Hz 가 구별되지 않는다.**
+#     짧은 구간에서 #33 이 나빠 보이는 건 세션 시작 직후(표면전하 방전)가 섞인 탓.
+#   ⇒ "①이 악화 원인"이라는 앞선 추정은 **데이터로 뒷받침되지 않았다**. 철회한다.
+#     세 세션 공통 결론은 하나뿐 — 어떤 설정이든 60~80mA 에서 안 움직인다.
+#     ①·③ 모두 CPU 쪽이고, 지배 항목(라디오 상시 RX)은 아직 손대지 않았다.
+#
+#  【그래도 1000Hz 를 쓰는 이유】 tick 해상도가 필요한 곳이 있고(아래 ★),
+#   절전 면에서 둘이 구별되지 않으므로 기존 값을 유지한다. 사용자 결정(2026-08-14).
+#
+#  ★tick 을 다시 건드릴 때 **반드시** 확인할 것: `pdMS_TO_TICKS` 는 정수 내림이라
+#   100Hz 에서 10ms 미만 대기가 **0 tick = 소멸**한다(vTaskDelay(0)=yield).
+#   그래서 아래 4곳은 이미 `esp_rom_delay_us()` 로 바꿔 tick 무관하게 만들어 뒀다:
+#     somfy_rts.c:339/415 (5ms VCO/PA settle — SDR 실측으로 넣은 것),
+#     cc1101.c:365 (2ms SCAL), somfy_app.c:3399 (3ms CHG_STAT 풀업 안정).
+#   새로 짧은 vTaskDelay 를 추가하면 같은 함정에 빠진다 —
+#   검사 도구: sim/tools/tick_rate_rf_sim.py
+#
+#  ※light sleep 문턱(FREERTOS_IDLE_TIME_BEFORE_SLEEP)은 FreeRTOS 최소값이 2라
+#   더 못 낮춘다. 1000Hz 에서 3 tick = 3ms.
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ICD_FAST_POLL_INTERVAL_MS=200
 CONFIG_PM_ENABLE=y
@@ -74,3 +91,38 @@ CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
 CONFIG_ULP_COPROC_ENABLED=y
 CONFIG_ULP_COPROC_TYPE_LP_CORE=y
 CONFIG_ULP_COPROC_RESERVE_MEM=4096
+
+# ★★★2026-08-14 BLE 를 커미셔닝에만 쓰고 등록 후 해제 (절전 — 실측 근거)
+#
+#  【실측】 콘솔 `pm`(esp_pm_dump_locks, CONFIG_PM_PROFILING=y):
+#      bt       APB_FREQ_MAX  Active=1  Total_count=1  **100%**
+#      Mode stats: CPU_MAX 99% — **light sleep 진입 0회**
+#    BLE 스택이 부팅 때 APB_FREQ_MAX 락을 한 번 잡고 영원히 안 놓는다.
+#    APB_FREQ_MAX 를 쥐고 있으면 automatic light sleep 은 진입 자체가 불가하다.
+#   ⇒ ①(tick)·③(LP 코어)이 3회 측정에서 전부 눈금에 안 잡힌 진짜 이유.
+#     CPU 가 CPU_MAX 에서 내려온 적이 없으니 CPU 쪽 조치는 효과가 있을 수 없었다.
+#
+#  이 값은 esp-matter 예제 기본값(sdkconfig.defaults.c6_thread 의 =n)이 아무 설명
+#  없이 따라온 것이고, **CHIP Kconfig 자체 기본값은 y** 다. 되돌린다.
+#  효과: 커미셔닝 성공 시 BLE deinit + 이미 provisioned 된 상태로 부팅하면
+#        BLE 를 아예 초기화하지 않는다 → `bt` 락이 생기지 않고 RAM 도 확보된다.
+#  ※재페어링하려면 factory reset 이 필요하다(자격증명이 지워지면 다음 부팅에
+#    BLE 가 다시 올라온다) — Matter 표준 동작.
+CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
+
+# ★2026-08-14 802.15.4 라디오를 light sleep 중 전원차단 (절전)
+#  "allows the IEEE802.15.4 module to be powered down during automatic light sleep"
+#  ※light sleep 이 실제로 진입해야 의미가 있다 — 위 bt 락 해제와 세트다.
+CONFIG_IEEE802154_SLEEP_ENABLE=y
+
+# ★진단용 — 전류 측정 빌드에서는 **끌 것**(런타임 오버헤드).
+#  콘솔 `pm` 이 lock 보유시간 + 절전모드 체류시간을 출력한다.
+CONFIG_PM_PROFILING=y
+
+# ★★★2026-08-14 light sleep 진입/이탈 콜백 — **NVS 로 남기기 위한 계측**
+#  이 보드는 포트를 여는 순간 리셋된다(부팅진단 `리셋사유=USB리셋(플래시/포트열기)`).
+#  그래서 esp_pm_dump_locks 의 RAM 통계는 **읽으러 가는 행위가 지워버린다** —
+#  실제로 배터리 구간 통계를 그렇게 날렸다(2026-08-14).
+#  → exit 콜백이 주는 실제 sleep_time_us 를 누적해 **배터리 로그 행(bat_sample_t.ls)**
+#    에 실어 NVS 에 남긴다. 리셋과 무관하게 살아남고, 방전 기울기와 같은 표에서 본다.
+CONFIG_PM_LIGHT_SLEEP_CALLBACKS=y

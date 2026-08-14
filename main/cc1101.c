@@ -362,7 +362,10 @@ void cc1101_set_frequency(cc1101_t *dev, float freq_mhz)
     cc1101_strobe(dev, CC1101_SIDLE);
     _set_freq_regs(dev, freq_mhz);
     cc1101_strobe(dev, CC1101_SCAL);
-    vTaskDelay(pdMS_TO_TICKS(2));
+    /* ★2026-08-14 vTaskDelay → esp_rom_delay_us.
+     *  pdMS_TO_TICKS(2) 는 tick 100Hz 에서 0 tick → 대기 소멸 → SCAL(주파수
+     *  캘리브레이션, ~720us) 완료 전에 다음 동작이 나간다. tick 무관으로 고정. */
+    esp_rom_delay_us(2000);
 }
 
 float cc1101_get_frequency(const cc1101_t *dev)

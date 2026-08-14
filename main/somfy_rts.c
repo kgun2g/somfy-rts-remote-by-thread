@@ -8,9 +8,23 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "rom/ets_sys.h"
+#include "esp_rom_sys.h"   /* esp_rom_delay_us — tick 무관 busy-wait */
 #include <string.h>
 
 static const char *TAG = "SOMFY_RTS";
+
+/* ★★2026-08-15 **byte8 캘리브레이션용 override** (콘솔 `tx8`, 진단 전용).
+ *
+ *  왜 필요한가: rtl_433 이 보여주는 byte8 과 우리가 실제로 넣는 raw byte8 사이의
+ *  대응이 단순 덧셈이 아니다. 우리 실측(H4_01.json):
+ *      raw 0x00 → 표시 0x84   (MY / PROG)
+ *      raw 0x20 → 표시 0xa4   (UP)
+ *      raw 0x2C → 표시 0xa8   (DOWN)   ← +0x84 가 아님
+ *  정품 hold 는 표시 0xc4 인데, 그걸 만들 raw 값을 **추측하면 안 된다**
+ *  (추측으로 0x40 을 OR 했다가 멀쩡하던 긴 누름을 깼다 — somfy_rts.h 주석 참조).
+ *  → raw 값을 콘솔에서 직접 넣어 쏘고 SDR 로 표시값을 읽어 **대응표를 만든다**.
+ *  -1 이면 평소대로 _byte8_for_cmd(cmd) 를 쓴다. */
+volatile int somfy_rts_byte8_override = -1;
 
 /* ─── RMT 채널 핸들 ──────────────────────────── */
 static rmt_channel_handle_t  s_tx_chan   = NULL;
@@ -78,6 +92,31 @@ static uint8_t _calc80_checksum(uint8_t b7, uint8_t b8, uint8_t b9)
     cs ^= (b7 & 0x0F);
     cs ^= (b8 & 0x0F);
     return cs & 0x0F;
+}
+
+/* ★★★2026-08-15 byte7 = **재전송 인덱스**. 첫 프레임 0x84, 재전송은 196+rep*4.
+ *  (ESPSomfy 의 encode80Byte7 와 동일 — 상용 코드베이스와 정품이 일치한다.)
+ *
+ *  【정품 실측 검증】 시추오4ch리모컨x1_ch1/2/4.json 81건을 역산했다.
+ *   rtl_433 은 b[1..9] 를 체인 XOR 로 디스크램블하므로
+ *        표시 b8 = wire b8 ^ wire b7
+ *   이고, 표시값에서 wire b7 을 역산하면:
+ *        0x84(첫 프레임) 42건 · 0xC4(재전송0) 21건 · 0xC8(재전송1) 1건
+ *        0xE8(재전송9) 5건 · 0xFC(재전송14) 6건  → **75/81 = 93% 설명됨**
+ *   (나머지 6건은 0xFD 로 이 계열에 없고 byte9 도 제각각 — 디코드 오류)
+ *
+ *  ⇒ 내가 "hold 코드"로 오해했던 84→C4, A4→E4, A8→E8 은 전부
+ *    **첫 프레임 → 첫 재전송 프레임**이었다. 긴 누름의 DC/D0 도 repeat 14 다.
+ *    정품에 hold 코드 같은 건 없다.
+ *
+ *  ※과거 주석에 "byte7 가변을 적용했더니 모터 무응답이라 0x84 고정으로 원복"이
+ *    있는데, 그때 **타이밍 표준값과 묶어서** 바꿨다. byte7 이 누명을 썼을 수 있어
+ *    타이밍은 그대로 둔 채 byte7 만 정품 규칙으로 되돌린다. */
+static uint8_t _encode80_byte7(uint8_t start, int repeat)
+{
+    while ((repeat * 4) + start > 255) repeat -= 15;
+    if (repeat < 0) repeat = 0;
+    return (uint8_t)(start + repeat * 4);
 }
 
 /* rolling code + cmd → byte0(key) — 한국 정품 리모컨1 IQ 디코드 검증값.
@@ -148,7 +187,9 @@ static void _build_frame(uint8_t *frame,
 
     /* byte 7~9 (chain 밖) */
     frame[7] = 0x84;
-    frame[8] = _byte8_for_cmd(cmd);
+    frame[8] = (somfy_rts_byte8_override >= 0)
+                 ? (uint8_t)somfy_rts_byte8_override    /* ★진단 override */
+                 : _byte8_for_cmd(cmd);
     /* ★동시작동(UP+DOWN/MY+UP/MY+DOWN)은 정품 byte9 가 calc80 공식과 불일치(단일은 일치)
      *  → 정품 실측값 직접 지정(h2_15: UP+DOWN=0xC0, MY+UP/DOWN=0x59). 구현 후 캡처로 frame 일치 검증. */
     if (cmd == SOMFY_CMD_UP_DOWN) {
@@ -220,6 +261,31 @@ static int _frame_to_rmt(const uint8_t *frame, rmt_symbol_word_t *buf,
     return idx;
 }
 
+/* ═══ RMT 채널 on/off — PM 락을 burst 동안만 잡는다 ═══════════════════════════
+ *  `rmt_enable()` 은 CPU_FREQ_MAX PM 락을 획득한다. 켜둔 채로 두면 light sleep 이
+ *  영영 진입하지 못한다(위 somfy_rts_init 주석의 실측 참조).
+ *  release 는 진행 중 전송을 반드시 **끝까지 기다린 뒤** 끈다 — rmt_disable 은
+ *  진행 중 트랜잭션을 중단시키므로 그냥 끄면 마지막 프레임이 잘린다. */
+static bool s_rmt_on = false;
+
+static void _rmt_acquire(void)
+{
+    if (s_rmt_on) return;
+    esp_err_t e = rmt_enable(s_tx_chan);
+    if (e != ESP_OK) { ESP_LOGW(TAG, "rmt_enable 실패(%s)", esp_err_to_name(e)); return; }
+    s_rmt_on = true;
+}
+
+static void _rmt_release(void)
+{
+    if (!s_rmt_on) return;
+    /* 큐에 남은 프레임까지 전부 나간 뒤에 끈다. 넉넉히 — 15초 hold 최대치보다 길게. */
+    esp_err_t e = rmt_tx_wait_all_done(s_tx_chan, 20000);
+    if (e != ESP_OK) ESP_LOGW(TAG, "rmt_tx_wait_all_done(%s) — 그래도 disable", esp_err_to_name(e));
+    rmt_disable(s_tx_chan);
+    s_rmt_on = false;
+}
+
 /* 단일 frame RMT 송신. 송신 소요시간만큼 vTaskDelay (trans_done 미사용). */
 static void _transmit_frame(somfy_rts_t *ctx, const uint8_t *frame,
                              int hw_sync_count, bool wake)
@@ -243,7 +309,26 @@ static void _transmit_frame(somfy_rts_t *ctx, const uint8_t *frame,
                 + (uint32_t)(SOMFY_T_SWSYNC_ON + SOMFY_T_SWSYNC_OFF)
                 + 80u * 2u * (uint32_t)SOMFY_T_SYMBOL
                 + (uint32_t)SOMFY_T_INTER_FRAME;
-    uint32_t ms = (us + 999u) / 1000u + 4u;
+    /* ★★★2026-08-14 `+4u` 여유분 제거 — "SDR 에 신호가 3번 잡힌다" 의 진짜 원인.
+     *
+     *  【정품 실측】 rtl_433 디코드(somfy_cli.py extract, 정품 up 24개):
+     *      messageCount **1건** (23/24), retransmission=1
+     *      SW sync 펄스 2개 / HW sync 18개 = 12+6  → 물리적으론 2 프레임
+     *    즉 정품도 2 프레임을 쏘지만 rtl_433 이 **한 버스트로 묶어 1건**으로 낸다.
+     *    묶이는 기준이 프레임 간 무신호 길이이고, 정품은 interFrame ≈ 3968us 다.
+     *
+     *  【우리가 3건으로 잡힌 이유】 `+4u` 가 프레임마다 약 4.8ms 의 여분 침묵을
+     *    만들어(대기 147ms > 프레임 실소요 142.192ms) 총 무신호가 **10.3ms** —
+     *    정품의 2.6배다. 그래서 rtl_433 이 프레임마다 별개 버스트로 보고 3건을 냈다.
+     *
+     *  【수정】 올림(+999)과 여유(+4)를 빼고 **내림**한다. 대기 142ms < 프레임
+     *    142.192ms 라 RMT 하드웨어가 다음 프레임을 **붙여서** 내보낸다
+     *    → 무신호는 설계값(SOMFY_T_INTER_FRAME 5448us)만 남는다.
+     *  ※프레임당 0.192ms 씩 소프트가 앞서지만 큐 깊이 4 이고 최대 hold 15초
+     *    (105 프레임)에서 누적 20ms 라 큐가 찰 일이 없다. 게다가 `_rmt_release()`
+     *    가 `rmt_tx_wait_all_done()` 으로 큐를 비운 뒤 채널을 끈다.
+     *  검증: sim/tools/tick_rate_rf_sim.py */
+    uint32_t ms = us / 1000u;
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
@@ -280,7 +365,21 @@ bool somfy_rts_init(somfy_rts_t *ctx, cc1101_t *dev)
         ESP_LOGE(TAG, "rmt_enable 실패 — RF 비활성");
         return false;
     }
-    ESP_LOGI(TAG, "Somfy RTS 초기화 완료 (GD0=IO%d)", CC1101_PIN_GD0);
+    /* ★★★2026-08-14 **곧바로 다시 끈다** — 절전의 핵심.
+     *
+     *  esp_pm_dump_locks 실측(콘솔 `pm`):
+     *      rmt_0_0  CPU_FREQ_MAX  Active=1  Total_count=1  100%
+     *      Mode stats: CPU_MAX 160M 99%  (light sleep 항목 자체가 없음)
+     *  즉 `rmt_enable()` 이 잡는 CPU_FREQ_MAX 락을 부팅부터 계속 쥐고 있어서
+     *  **light sleep 이 단 한 번도 진입하지 못했다.** ①(tick 1000Hz)·③(LP 코어)이
+     *  측정에 안 잡힌 진짜 이유가 이것이다 — CPU 가 CPU_MAX 에서 내려온 적이 없으니
+     *  CPU 쪽 조치는 애초에 효과가 있을 수 없었다.
+     *  → 채널 생성/검증만 하고 끈다. 송신 직전에 켜고 끝나면 다시 끈다
+     *    (_rmt_acquire/_rmt_release). 락은 burst 동안만 유지된다.
+     *  ※버스트 경계는 cc1101_enter_tx_mode() ~ cc1101_idle() 와 같다. */
+    rmt_disable(s_tx_chan);
+    s_rmt_on = false;
+    ESP_LOGI(TAG, "Somfy RTS 초기화 완료 (GD0=IO%d) — RMT 는 송신 시에만 enable", CC1101_PIN_GD0);
     return true;
 }
 
@@ -332,11 +431,19 @@ void somfy_rts_send(somfy_rts_t *ctx, somfy_blind_t *blind,
      *  carrier 주파수가 frame 마다 흩어져 스펙트럼이 넓게 번진다.
      *  burst 시작 시 cc1101_enter_tx_mode 를 1회만 호출(calibration 1회),
      *  이후 모든 frame 은 TX state 를 유지한 채 RMT 송신만 한다. */
+    _rmt_acquire();                 /* ★burst 동안만 PM 락 보유 */
     cc1101_enter_tx_mode(ctx->cc1101);
     /* ★ TX 진입(MARCSTATE=TX) 후에도 VCO/PA 가 완전히 안정되기까지 잠깐
      *  여유 — SDR 실측상 burst 첫 frame 이 settling 중 깨져 나갔다.
-     *  5ms 지연 후 첫 frame 송신 → 모든 frame 이 안정 상태에서 나간다. */
-    vTaskDelay(pdMS_TO_TICKS(5));
+     *  5ms 지연 후 첫 frame 송신 → 모든 frame 이 안정 상태에서 나간다.
+     *
+     *  ★★2026-08-14 vTaskDelay → esp_rom_delay_us 로 교체.
+     *  왜: `pdMS_TO_TICKS` 는 **정수 내림**이라 tick 100Hz 에서
+     *  pdMS_TO_TICKS(5) = 0 tick 이 되고, vTaskDelay(0) 은 그냥 yield 라
+     *  **이 대기가 통째로 사라진다** → 위에 적힌 "첫 frame 이 깨진다"가 그대로
+     *  재발한다. 절전 검토로 tick 을 100Hz 로 되돌릴 수 있으므로 tick 주기와
+     *  무관한 busy-wait 으로 바꾼다. (5ms 스핀은 누름당 1회뿐이라 무시 가능) */
+    esp_rom_delay_us(5000);
 
     /* ★★ 한국 베네치아 정품 구조로 송신 (rxbyte 펄스 dump 확정):
      *  - HW sync 13 cycles (정품 frame period 141ms 역산: HW 63ms)
@@ -387,11 +494,41 @@ void somfy_rts_send(somfy_rts_t *ctx, somfy_blind_t *blind,
          *  "HW sync 12회(첫 프레임)/6회(재전송)" 와 일치한다.
          *  (PROG 만 17 로 올렸던 특수처리는 오독이라 제거 — 위 주석 참조) */
         int hw_sync = first ? 12 : 6;
+
+        /* ★byte7 을 프레임마다 갱신(정품 규칙 — 위 _encode80_byte7 주석 참조).
+         *  byte9 는 체크섬이 byte7 을 입력으로 받으므로 함께 재계산한다.
+         *  단 조합 명령(UP+DOWN/MY±)은 byte9 가 실측 고정값이라 건드리지 않는다. */
+        frame[7] = first ? 0x84 : _encode80_byte7(196, i - 1);
+        if (cmd != SOMFY_CMD_UP_DOWN && cmd != SOMFY_CMD_MY_UP &&
+            cmd != SOMFY_CMD_MY_DOWN) {
+            const uint8_t b9_base = _byte9_base_for_cmd(cmd);
+            frame[9] = (uint8_t)(b9_base |
+                                 _calc80_checksum(frame[7], frame[8], b9_base));
+        }
+
+        /* ★★★2026-08-14 **누르고 있음 비트(byte8 |= 0x40)** — 정품 실측.
+         *
+         *  【근거】 D:\RTL_SDR\sdrsharp-x64\시추오4ch리모컨1_hold.json (hold 캡처)
+         *    Up   (2)  Ext sub-code 0xE4   ← 짧게 누름은 0xA4
+         *    Down (4)  Ext sub-code 0xE8   ← 짧게 누름은 0xA8
+         *    Up+Down(6) Ext sub-code 0xC4
+         *   그리고 PROG 캡처(REMOTE_NEW/NEW2)에 0x84 와 **0xC4** 가 섞여 있다.
+         *   전부 차이가 정확히 **+0x40** 이다 → byte8 bit6 = "버튼을 누르고 있다".
+         *   byte9 는 체크섬이 byte8 을 입력으로 받으므로 자동으로 따라간다
+         *   (PROG 1d→19, 즉 하위니블 ^4 — calc80 식과 일치).
+         *
+         *  ※0x40 은 bit6 이고, 우리 byte8 표현과 rtl_433 표현의 오프셋(+0x84)에는
+         *    bit6 이 없으므로 **어느 표현에서든 그대로 OR** 하면 된다.
+         *  ※min_loops(정품 짧은 누름 = 2 프레임)까지는 짧은 누름 코드로 보내고,
+         *    그 뒤부터 hold 비트를 세운다 — 정품의 짧게/길게 구분과 같은 자리다.
+         *  ※되돌리기: 이 블록을 지우면 항상 짧은 누름 코드로만 나간다. */
+
         _transmit_frame(ctx, frame, hw_sync, first);
     }
 
     /* CC1101 IDLE 복귀 (burst 끝 — TX state 종료) */
     cc1101_idle(ctx->cc1101);
+    _rmt_release();                 /* ★PM 락 해제 — light sleep 재허용 */
 }
 
 void somfy_rts_tilt(somfy_rts_t *ctx, somfy_blind_t *blind, bool up)
@@ -411,8 +548,9 @@ void somfy_rts_send_steps(somfy_rts_t *ctx, somfy_blind_t *blind,
     /* ★ 다단 step 핵심: cc1101_enter_tx_mode 를 burst 시작 시 1회만 호출.
      *  매 step 마다 enter/idle 안 함 → step 간 ~20ms CC1101 오버헤드 제거
      *  → 슬랫이 끊어짐 없이 연속 회전. */
+    _rmt_acquire();                 /* ★burst 동안만 PM 락 보유 */
     cc1101_enter_tx_mode(ctx->cc1101);
-    vTaskDelay(pdMS_TO_TICKS(5));   /* VCO/PA settle */
+    esp_rom_delay_us(5000);   /* VCO/PA settle — tick 무관(위 _send 의 주석 참조) */
 
     ESP_LOGI(TAG, "Tilt steps: 블라인드[%s] cmd=%d count=%u",
              blind->name, cmd, step_count);
@@ -434,4 +572,5 @@ void somfy_rts_send_steps(somfy_rts_t *ctx, somfy_blind_t *blind,
     }
 
     cc1101_idle(ctx->cc1101);
+    _rmt_release();                 /* ★PM 락 해제 */
 }

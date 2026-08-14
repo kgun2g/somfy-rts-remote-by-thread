@@ -14,14 +14,14 @@
   * _btn_event_cb   : s_held_*, s_action_press_us, s_last_sent_cmd, somfy_rts_abort
   * _hold_repeat_task : CFG_BTN_HOLD_REPEAT_MS(500ms) 주기, HOLD_REPEAT_START_MS(500ms) 게이트
   * _rf_worker_task : **직렬** — job 하나가 끝나야 다음 job 시작 (여기서 유출이 생긴다)
-  * somfy_rts_send  : min_loops=SOMFY_REPEAT_COUNT(3) 는 abort 무시하고 무조건 송신,
+  * somfy_rts_send  : min_loops=SOMFY_REPEAT_COUNT(2) 는 abort 무시하고 무조건 송신,
                       이후 **프레임마다 1번만** somfy_rts_abort 검사 (프레임 ≈ 143ms)
                       → abort 를 짧게 pulse 하면 **놓친다**. 이게 설계의 핵심 함정.
 """
 import sys
 
 FRAME_MS = 143            # somfy_rts.c: max_loops = min + hold_ms/143
-MIN_LOOPS = 3             # SOMFY_REPEAT_COUNT — abort 무시 구간 (≈429ms)
+MIN_LOOPS = 2             # SOMFY_REPEAT_COUNT — abort 무시 구간 (2026-08-14 3→2, 정품 실측)
 MAX_HOLD_MS = 15000       # CFG_BTN_MAX_HOLD_MS
 HOLD_REPEAT_MS = 500      # CFG_BTN_HOLD_REPEAT_MS
 HOLD_START_MS = 500       # HOLD_REPEAT_START_MS

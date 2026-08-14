@@ -184,6 +184,137 @@ dirty-page 감축(전송 75%↓) 이후 재발 주기가 늘었는지 `[OLEDMON]
 
 ---
 
+## ★절전 측정 현황 (2026-08-14)
+
+**비교는 반드시 "동일 전압 구간의 기울기"로 한다.** % 는 1%p 양자화 + OCV 곡선
+비선형이고, 저 SoC 에서는 부하 강하가 커져 전체 평균 % 로 비교하면 왜곡된다.
+세션 조건(`radio` / `screen` / `pm`)이 같은지도 같이 확인할 것 — 배터리 기록의
+각 행에 들어 있다(`bl` 콘솔 명령).
+
+| 세션 | 구성 | 길이 | 3790~4000mV 구간 | 환산 |
+|---|---|---|---|---|
+| #22 | 개선 전 (tick **100Hz**, LP 없음) | 6.64h | −0.67 mV/분 | **47.4mA** |
+| #32 | ①tick **1000Hz** + ③LP 코어 | 7.70h | −0.75 mV/분 | **52.7mA** |
+
+세부 4구간 중 3개 악화 + 1개 동일, 개선된 구간 **없음**. 두 세션 모두
+`radio=1 / screen=OFF / pm=3` 로 조건 동일(#22 는 화면 ON 11% 포함 = 오히려 불리).
+
+⇒ **①(tick 1000Hz)은 절전이 아니라 소폭 악화.** 2026-08-14 **100Hz 로 되돌렸다.**
+
+> ★되돌리기 전에 반드시 했어야 하는 일: `pdMS_TO_TICKS` 는 정수 내림이라
+> 100Hz 에서 **10ms 미만 대기가 0 tick = 소멸**한다. `vTaskDelay(0)` 은 yield 라
+> 대기가 통째로 사라진다. 해당 4곳을 `esp_rom_delay_us()` 로 교체 완료:
+> `somfy_rts.c:339/415`(5ms VCO/PA settle — SDR 실측으로 넣은 것),
+> `cc1101.c:365`(2ms SCAL), `somfy_app.c:3399`(3ms CHG_STAT 풀업 안정).
+> **tick 을 다시 건드릴 때는 `vTaskDelay(pdMS_TO_TICKS(x))` 전수 재검사할 것.**
+
+100Hz 실기 확인: 부팅 정상, `tx up 3000` = 3.29초/23프레임(1000Hz 는 3.44초/24).
+프레임이 오히려 촘촘해진다(1000Hz 는 프레임당 +4.81ms 여분 틈이 생겼다).
+
+### ★★★진짜 원인 발견 (2026-08-15) — light sleep 은 한 번도 진입한 적이 없었다
+
+`CONFIG_PM_PROFILING=y` + 콘솔 `pm`(`esp_pm_dump_locks`)으로 **계측**했다:
+
+```
+Lock stats                     Active  Total_count  Time(%)
+  bt        APB_FREQ_MAX          1        1          100%   ★
+  rmt_0_0   CPU_FREQ_MAX          1        1          100%   ★
+  ot_sleep  APB_FREQ_MAX          0       59            1%
+Mode stats:  CPU_MAX 160M  99%      ← light sleep 항목 자체가 없음
+```
+
+락 두 개가 부팅부터 100% 잡혀 있어 **automatic light sleep 이 진입 자체를 못 했다.**
+①(tick)·③(LP 코어)이 3회 측정에서 전부 눈금에 안 잡힌 이유가 이것이다 —
+CPU 가 CPU_MAX 에서 내려온 적이 없으니 **CPU 쪽 조치는 효과가 있을 수 없었다.**
+
+| 조치 | 내용 | 결과 |
+|---|---|---|
+| `rmt_0_0` | `rmt_enable()` 이 CPU_FREQ_MAX 락을 잡는다. 부팅 때 켜고 계속 뒀다 → **burst 동안만** 켜도록(`_rmt_acquire`/`_rmt_release`, 경계는 `cc1101_enter_tx_mode`…`cc1101_idle`). `rmt_disable` 은 진행 중 전송을 자르므로 `rmt_tx_wait_all_done()` 로 먼저 비운다 | **CPU_MAX 99% → 5%** |
+| `bt` | `CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING` 이 CHIP 기본값 y 인데 우리는 꺼져 있었다(esp-matter 예제 기본값이 이유 없이 따라옴). 켜면 등록 후 BLE deinit + 이미 provisioned 면 부팅 시 초기화조차 안 함 | **`bt` 락 소멸, 힙 164→184KB** |
+
+수정 후: `APB_MIN 90% / APB_MAX 3% / CPU_MAX 6%`, 락 목록 깨끗.
+※USB 에서는 설계상 light sleep 을 끄므로(USB-JTAG 보호) **진입 여부는 배터리에서만** 보인다.
+
+### ★계측을 NVS 로 남긴다 (2026-08-15)
+
+이 보드는 **포트를 여는 순간 리셋**된다(`리셋사유=USB리셋(플래시/포트열기)`).
+그래서 `esp_pm_dump_locks` 의 RAM 통계는 **읽으러 가는 행위가 지워버린다** —
+실제로 배터리 구간 통계를 그렇게 날렸다.
+→ `CONFIG_PM_LIGHT_SLEEP_CALLBACKS=y` + `esp_pm_light_sleep_register_cbs` 의 exit
+콜백이 주는 **실제 `sleep_time_us`** 를 누적해 배터리 로그 행(`bat_sample_t.ls`)에
+싣는다. `bl` 한 번으로 방전 기울기와 sleep% 를 같은 표에서 본다.
+
+```
+BL   12  + 1436s  3869mV   62%  avg  70mA  radio=1 screen=0 pm=3  sleep 87%  산포  2( 3mV)  주기
+                                                                  ^^^^^^^^^
+```
+
+### 남은 후보 (기대값 순)
+
+| 순서 | 조치 | 상태 |
+|---|---|---|
+| 0 | **락 해제 후 방전 측정** — `bt`/`rmt` 락을 푼 뒤 배터리 방전을 아직 못 받았다 | **미측정. 최우선** |
+| 1 | `CONFIG_MAC_BB_PD` 활성화 — light sleep 중 라디오 MAC/BB 전원차단 | 미시도. 현재 not set |
+| 2 | CC1101 `SPWD` (송신 안 할 때 절전) | 미시도 (데이터시트 ~1.7mA **추정**) |
+| 3 | btn_task 유휴 주기 25ms → 30ms 초과 | 미시도 — 아래 ★ |
+| 4 | 메인 루프 유휴 깨움(10회/초), hold_repeat(2회/초) | 미시도 |
+
+> ★**light sleep 은 아직 한 번도 진입한 적이 없을 가능성이 크다.** 문턱은
+> `FREERTOS_IDLE_TIME_BEFORE_SLEEP=3` tick 이고(FreeRTOS 최소값 2라 더 못 낮춘다),
+> 100Hz 에서 3 tick = **30ms**. 그런데 btn_task 유휴가 25ms → `pdMS_TO_TICKS(25)`
+> = 2 tick = 20ms 로 깨어난다 → 문턱을 못 넘는다.
+> `pm=3` 은 "esp_pm_configure 가 light sleep 을 **허용**했다"는 뜻일 뿐
+> **실제로 자고 있다는 증거가 아니다.** 라디오(~60mA)가 지배 항목이므로
+> 1번(MAC_BB_PD)부터 가는 게 기대값이 크다.
+
+## ✅ 완료 — PROG 긴 누름 무응답 (2026-08-15)
+
+**증상**: PROG 를 2초 이상 눌러도 블라인드가 반응하지 않음(짧게는 정상, 정품은 동작).
+훨씬 이전부터 있던 문제.
+
+**원인**: `_build_frame` 이 **byte7 을 전 프레임 `0x84` 로 고정**하고 있었다.
+정품(그리고 ESPSomfy)은 **재전송마다 byte7 을 올린다** — 첫 프레임 `0x84`,
+재전송 `196 + rep*4` (= `0xC4, 0xC8, 0xCC, …`).
+
+**수정**: `somfy_rts.c` 송신 루프에서 프레임마다
+`frame[7] = first ? 0x84 : _encode80_byte7(196, i-1)` 로 갱신하고,
+체크섬이 byte7 을 입력으로 받으므로 `frame[9]` 도 함께 재계산한다.
+(조합 명령 UP+DOWN/MY± 은 byte9 가 실측 고정값이라 제외.)
+**타이밍은 건드리지 않았다** — 과거 "byte7 가변 → 모터 무응답" 기록은 타이밍
+표준값과 묶어서 바꾼 것이라 byte7 이 누명을 썼던 것으로 보인다.
+
+### ★★★이 건에서 이틀 돈 이유 — rtl_433 표시값 ≠ wire 바이트
+
+송신은 b[1..6]만 체인 XOR 하지만 **rtl_433 풀 디코더는 b[1..9] 전체를 디스크램블**한다
+(`ESPSomfy-RTS/SOMFY_RTS_447.md` 에 명시돼 있다). 따라서
+
+```
+표시 b8 = wire b8 ^ wire b7        표시 b9 = wire b9 ^ wire b8
+```
+
+콘솔 `tx8` 로 raw byte8 을 스윕해 8/8 실증했다(`H4_02.json`):
+
+| raw | 0x00 | 0x20 | 0x40 | 0x44 | 0x48 | 0x4C | 0xC4 | 0x60 |
+|---|---|---|---|---|---|---|---|---|
+| 표시 | 84 | A4 | C4 | C0 | CC | C8 | 40 | E4 |
+
+> **오독 경위(반복 금지)** — 정품이 짧게 `84/A4/A8`, 길게 `C4/E4/E8` 로 보여
+> "bit 0x40 = 누르고 있음(hold 코드)" 이라고 판단하고 그걸 구현했다가 **멀쩡하던
+> 긴 누름까지 깼다**. 실제로는 wire b7(재전송 인덱스)이 XOR 되어 그렇게 보인 것이고
+> **hold 코드는 존재하지 않는다**. 정품 81건 역산에서 75건(93%)이
+> `0x84`(첫 프레임)/`0xC4`(재전송0)/`0xC8`(1)/`0xE8`(9)/`0xFC`(14) 로 설명된다.
+> 나머지 6건은 `0xFD` 로 계열 밖 + byte9 불일치 = 디코드 오류.
+> **표시값을 wire 값으로 착각하지 말 것.**
+
+### 참조 구현을 먼저 볼 것
+
+`D:\dev\workspaces\ESPSomfy-RTS` — 사용자가 447MHz 2-FSK 대응을 추가한 fork.
+`SOMFY_RTS_447.md`(설계 근거) + `Somfy.cpp` 의 `encode80BitFrame` /
+`encode80Byte7` / `sendFrame`. 우리 `somfy_rts.c` 와 구조가 사실상 같다.
+전 항목 대조 결과 프레임 내용·프레임 수는 일치하고, 타이밍은 우리가 실측에 더 가깝다
+(SYMBOL 644 vs 640, SW sync 4840 vs 4850, interFrame 3916 vs 4000).
+**프로토콜 의문이 생기면 SDR 분석 전에 여기부터 볼 것.**
+
 ## ★RF 실측 데이터 — 추측하지 말고 여기서 확인할 것
 
 | | 경로 |
@@ -222,6 +353,21 @@ python measure_rf.py <wav>                # deviation / carrier offset / 타이�
 
 즉 **정품은 누르고 있는 동안 조각내지 않고 계속 쏜다.** 간격이 보이는 캡처는
 전부 별개 누름이다. 우리 펌웨어도 이 구조로 맞췄다(아래 함정 절 참조).
+
+## 진단 콘솔 명령 (USB 시리얼)
+
+| 명령 | 용도 |
+|---|---|
+| `bl` / `bl clear` | 배터리 방전 기록(NVS) — 전압·%·평균전류·**sleep%**·ADC 산포 |
+| `pm` | `esp_pm_dump_locks` — PM 락 보유 + 절전모드 체류(진단 빌드 전용) |
+| `tx <cmd> [hold_ms]` | RF 송신 (up/down/updown/myup/mydown/my/prog) |
+| `tx8 <hex> [cmd] [hold]` | **raw byte8 강제 지정** 송신 — rtl_433 표시값과의 대응표 작성용 |
+| `intpd` | `~INT` 풀다운 진단 — 배선단선 vs PCF측 고장 판별 |
+| `intdiag` | `~INT` 선 관찰(15초, 버튼 조작 필요) |
+| `vl` / `bd` | 진동센서 기록 / 부팅 진단 |
+
+> ★시리얼 접속은 `write_timeout` 을 반드시 설정할 것. 안 그러면 write 가 hang 한다.
+> 그리고 **포트를 여는 것만으로 기기가 리셋된다** — RAM 통계는 그때 날아간다.
 
 ## ★반드시 알아야 할 함정
 

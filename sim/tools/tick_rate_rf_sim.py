@@ -22,12 +22,12 @@
 """
 import sys
 
-T_SYMBOL = 632
+T_SYMBOL = 644            # 2026-08-14 정품 실측 갱신
 T_HWSYNC = 2520 + 2520
-T_SWSYNC = 4752 + 632
-T_INTERF = 5448
+T_SWSYNC = 4840 + 644     # 2026-08-14 정품 실측 갱신
+T_INTERF = 3916           # 2026-08-14 정품 실측 갱신
 QUEUE_DEPTH = 4          # rmt_tx_channel_config_t.trans_queue_depth
-MIN_LOOPS = 3            # SOMFY_REPEAT_COUNT
+MIN_LOOPS = 2            # SOMFY_REPEAT_COUNT (2026-08-14 3→2, 정품 실측 2프레임)
 
 
 def frame_us(hw_sync):
@@ -35,7 +35,9 @@ def frame_us(hw_sync):
 
 
 def wait_ms(hw_sync):
-    return (frame_us(hw_sync) + 999) // 1000 + 4
+    # ★2026-08-14 `+999` 올림과 `+4` 여유 제거 → 내림.
+    #  대기 < 프레임 이라 RMT 가 프레임을 붙여 내보낸다(프레임간 여분 0).
+    return frame_us(hw_sync) // 1000
 
 
 class Sim:

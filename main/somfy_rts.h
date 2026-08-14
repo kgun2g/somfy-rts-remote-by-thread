@@ -41,13 +41,34 @@ typedef enum {
  *   bitChip 632 · hwSync 2520 · swSyncHi 4752 · interFrame 5448.
  *  ※ 모터는 정품(632) 파형을 그대로 디코드하므로 정품값이 오히려 안전.
  *    만약 이 변경 후 블라인드 무응답이면 timing 만 이전 값으로 되돌릴 것. */
-#define SOMFY_T_SYMBOL      632     // Manchester chip (μs) — 정품 hold 실측(bitChip 632)
-#define SOMFY_T_HWSYNC_ON   2520    // HW sync HIGH (μs) — 정품 hold 실측(hwSync 2520)
-#define SOMFY_T_HWSYNC_OFF  2520    // HW sync LOW  (μs) — 정품 hold 실측
-#define SOMFY_T_SWSYNC_ON   4752    // SW sync HIGH (μs) — 정품 hold 실측(swSyncHi 4752)
-#define SOMFY_T_SWSYNC_OFF  632     // SW sync LOW  (μs) — 1 SYMBOL start-bit
-#define SOMFY_T_INTER_FRAME 5448    // inter-frame gap (μs) — 정품 hold 실측(interFrame 5448, <10000 이라
-                                    //  burst 가 한 패킷으로 묶여 디코더 그룹핑 유지).
+/* ★★★2026-08-14 정품 전수 재측정으로 갱신 (사용자 요청: "정품과 차이가 많다").
+ *
+ *  【측정 방법】 rtl_433 디코드(somfy_cli.py extract)의 pulse/gap 히스토그램을
+ *   **85개 캡처**(up 24 · down 29 · tilt up 32)에서 통합해 HIGH 와 LOW 를 분리 집계.
+ *      구간        HIGH 중앙      LOW 중앙     → 실제 T
+ *      1T          668 (n4533)   620 (n4536)    644
+ *      2T         1316 (n2850)  1264 (n2879)    645  (÷2)
+ *      HW sync    2536 (n1228)  2512 (n1280)   2524
+ *      SW sync    4840 (n144)      -              -
+ *      interFrame    -          3916 (n153)      -
+ *
+ *  ★함정: rtl_433 의 `bitChipUs` 하나만 보면 668 로 나와 우리 632 가 -5.4% 틀린
+ *   것처럼 보인다. 그건 FSK 슬라이서가 HIGH 를 길게 자르는 **편향**이다.
+ *   HIGH/LOW 를 나눠 평균내야 실제 심볼(644)이 나오고, 1T 와 2T 가 독립적으로
+ *   644/645 로 일치해 교차검증된다. 한 지표만 보고 바꾸면 5%를 잘못 밀어 넣는다.
+ *
+ *  【변경】 SYMBOL 632→644 (-1.9% 보정) · SWSYNC_ON 4752→4840 · INTER_FRAME 5448→3916.
+ *  【유지】 HWSYNC 2520 (실측 2524, 차이 0.16% — 측정 분해능 이하라 건드리지 않음).
+ *
+ *  ※되돌리기: 블라인드가 무응답이면 timing 만 이전 값(632/2520/4752/5448)으로
+ *    복구할 것. 그 조합은 실기 동작이 확인된 값이다. */
+#define SOMFY_T_SYMBOL      644     // Manchester chip (μs) — 정품 실측 1T/2T 교차검증 644
+#define SOMFY_T_HWSYNC_ON   2520    // HW sync HIGH (μs) — 정품 실측 2524 (차이 0.16%, 유지)
+#define SOMFY_T_HWSYNC_OFF  2520    // HW sync LOW  (μs) — 정품 실측 2512 (유지)
+#define SOMFY_T_SWSYNC_ON   4840    // SW sync HIGH (μs) — 정품 실측 4840 (n144)
+#define SOMFY_T_SWSYNC_OFF  644     // SW sync LOW  (μs) — 1 SYMBOL start-bit (SYMBOL 과 동일)
+#define SOMFY_T_INTER_FRAME 3916    // inter-frame gap (μs) — 정품 실측 3916 (n153).
+                                    //  기존 5448 은 +39% 로 가장 큰 차이였다.
 /* ★ Wake-up 펄스 — ESPSomfy-RTS 가 실제 Telis 리모컨 측정으로 검증한 값.
  *  표준 문서의 9415+89565 는 실측과 다르다(실제 wake 뒤 긴 silence 없음). */
 #define SOMFY_T_WAKE_HI     10920       // (preamble 사용으로 미사용)
@@ -58,7 +79,30 @@ typedef enum {
  *  wake 프레임(~217ms) + repeat 2회(~148ms×2) ≈ 0.5초.
  *  Somfy 모터는 frame 1회만 받아도 인식하므로 3 frames 로 충분.
  *  (이전 7회는 ~1초로 과길어 정품과 burst 길이가 달랐음.) */
-#define SOMFY_REPEAT_COUNT  3           // 1 wake + 2 repeats = 3 frames ≈ 0.5초
+/* ★★★2026-08-14 3 → 2 (정품 실측 일치). 사용자 신고: "짧게 1회 눌러도 SDR 에
+ *  신호가 3번씩 잡힌다" — 실제로 우리가 3 프레임을 쏘고 있었다.
+ *
+ *  【정품 전수 측정】 D:\RTL_SDR\sdrsharp-x64\somfy_rts_447 (버튼 6종 × 게인 5종,
+ *   scratchpad/count_frames.py — SW sync(4752us HIGH) 개수 = 프레임 수):
+ *     up / down / my / prog / tilt up / tilt down — **전부 중앙값 2 프레임**
+ *     HW sync 합계 중앙값 **18 = 12 + 6** = 첫 프레임(12) 1개 + 재전송(6) 1개
+ *   (4·6·8 프레임으로 나오는 소수 캡처는 일부러 길게 누른 것 — 캡처 폴더 주의사항 참조)
+ *
+ *  우리는 3 이라 12+6+6 = 24 였다. 2 로 맞추면 18 로 정품과 정확히 같아진다.
+ *  ※ON 길이(ms)로 역산하면 안 된다 — 첫 프레임은 172ms, 재전송은 142ms 로 길이가
+ *    달라 나눗셈이 안 맞는다. 그래서 SW sync 개수를 직접 셌다. */
+#define SOMFY_REPEAT_COUNT  2           // 1 wake + 1 repeat = 2 frames (정품 동일)
+
+/* ★★★2026-08-15 "hold 코드" 는 **존재하지 않는다** — 오독이었다. 기록만 남긴다.
+ *
+ *  정품 캡처에서 짧게=0x84/0xA4/0xA8, 길게=0xC4/0xE4/0xE8 로 보여 "+0x40 = 누르고
+ *  있음" 이라고 판단했다. 실제로는 rtl_433 이 b[1..9] 를 체인 XOR 로 디스크램블해서
+ *      표시 b8 = wire b8 ^ wire b7
+ *  이고, **wire b7 이 재전송 인덱스(첫 프레임 0x84, 재전송 196+rep*4)** 라서 그렇게
+ *  보였을 뿐이다. 즉 84→C4 는 "첫 프레임 → 첫 재전송 프레임" 이다.
+ *  정품 81건 역산에서 75건(93%)이 이 계열로 설명된다(somfy_rts.c _encode80_byte7).
+ *
+ *  ⇒ hold 비트는 제거했다. 대신 byte7 을 프레임마다 정품 규칙으로 갱신한다. */
 
 /* ─── 블라인드 구성 ──────────────────────────── */
 typedef struct {
@@ -84,6 +128,8 @@ extern volatile bool somfy_rts_abortable;
 /* true 면 다음 somfy_rts_send 1회가 롤링코드를 증가시키지 않고 현재 코드를 재사용한다
  * (hold 반복 — 정품은 버튼 누르는 동안 같은 코드 반복). 송신 후 자동으로 false 로 리셋(one-shot). */
 extern volatile bool somfy_rts_keep_rolling;
+/* 진단 전용 — >=0 이면 그 값을 byte8 로 강제(콘솔 tx8). -1=평소 동작. */
+extern volatile int somfy_rts_byte8_override;
 
 /* ─── API ────────────────────────────────────── */
 
