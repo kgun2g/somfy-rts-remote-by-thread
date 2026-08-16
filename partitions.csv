@@ -11,3 +11,13 @@ fctry,    data, nvs,     0x3E0000,  0x6000
 # rollcode: Somfy 롤링코드 전용 NVS — Matter factory reset(기본 nvs 삭제) 후에도
 #  보존돼 모터가 "롤링코드 역행"으로 거부하는 것을 막는다. (전체 erase-flash 는 지움)
 rollcode, data, nvs,     0x3E6000,  0x4000
+# ★★★2026-08-16 coredump: 패닉 backtrace 를 **플래시에 남긴다**.
+#  왜: H2 는 배터리 구동 중 콘솔이 없어(heap → linenoise 폭주) 패닉 로그를 볼 수단이
+#  전혀 없다. 실제로 절전빌드 후 배터리에서 패닉이 반복됐는데(부팅진단 리셋사유
+#  `★패닉/예외`, 13번 부팅에 10번 실패) 원인을 못 봤다.
+#  → 여기에 저장해두면 나중에 USB 를 꽂고 **콘솔 없이** 읽을 수 있다:
+#      esptool read_flash 0x3EA000 0x10000 core.bin
+#      espcoredump.py info_corefile -c core.bin build-<board>/somfy_blinds.elf
+#  배치: rollcode 끝(0x3EA000) ~ 4MB 끝(0x400000) 의 빈 90KB 중 64KB.
+#  ※기존 파티션의 오프셋을 하나도 건드리지 않으므로 **NVS 측정 데이터는 그대로다**.
+coredump, data, coredump, 0x3EA000,  0x10000

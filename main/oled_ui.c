@@ -508,7 +508,20 @@ static const uint8_t kG_AZ[26][9] = {
     {0x1F,0x10,0x08,0x08,0x04,0x02,0x02,0x01,0x1F}, // Z
 };
 static const uint8_t kG_dot[9]   = {0,0,0,0,0,0,0,0x06,0x06};
-static const uint8_t kG_pct[9]   = {0x23,0x13,0x08,0x04,0x02,0x19,0x18,0,0};
+/* ★2026-08-16 '%' 를 9행 전체로 다시 그렸다.
+ *  사용자 신고: "숫자·텍스트는 깔끔한데 % 만 약간 작고 위에 붙어 있다."
+ *  원인 — 이 글꼴은 6×9 인데 옛 글리프는 **7행만 쓰고 8·9행이 0** 이었다
+ *      {0x23,0x13,0x08,0x04,0x02,0x19,0x18, 0, 0}
+ *                                          ↑↑ 빈 2행 → 위로 붙고 작아 보인다.
+ *  숫자는 0x1E…0x1E 로 9행을 꽉 채우므로 나란히 놓으면 눈에 띈다.
+ *  → 좌상/우하 2×2 사각과 대각선을 9행에 맞춰 늘렸다(bit0 = 왼쪽 픽셀):
+ *        col 012345
+ *      r0  ##...#      r5  ..#...
+ *      r1  ##...#      r6  .#....
+ *      r2  ....#.      r7  #...##
+ *      r3  ...#..      r8  ....##
+ *      r4  ...#..                                                        */
+static const uint8_t kG_pct[9]   = {0x23,0x23,0x10,0x08,0x08,0x04,0x02,0x31,0x30};
 static const uint8_t kG_dash[9]  = {0,0,0,0,0x1E,0,0,0,0};
 static const uint8_t kG_slash[9] = {0x20,0x10,0x10,0x08,0x04,0x04,0x02,0x02,0x01};
 static const uint8_t kG_gt[9]    = {0x01,0x02,0x04,0x08,0x10,0x08,0x04,0x02,0x01};
@@ -1327,10 +1340,14 @@ static void _draw_thread_signal(int x, int y, bool attached)
 #define _draw_wifi_signal _draw_thread_signal
 
 /* RSSI(dBm) → 신호 막대 레벨 0..4 매핑.
- *  INVALID(127) 인데 CONNECTED 면 링크는 있으나 측정불가 → 풀바(4). */
+ *  ★INVALID(127) 는 **ROUTER/LEADER(부모가 없는 역할)** 일 때만 여기 들어온다 →
+ *   링크는 확실히 있으므로 풀바(4).
+ *   ※detach(권외) 는 이제 호출측에서 OLED_MT_NO_SIGNAL('-') 로 분기하므로 여기
+ *     오지 않는다. 예전엔 detach 도 INVALID 로 들어와 **꽉 찬 안테나로 고정**됐다
+ *     (2026-08-15 수정 — somfy_app.c 의 thread_prov_is_attached() 분기 참조). */
 static int _rssi_to_level(int8_t rssi)
 {
-    if (rssi == OLED_RSSI_INVALID) return 4;   /* connected, RSSI 미상 */
+    if (rssi == OLED_RSSI_INVALID) return 4;   /* attached, 부모 없음(router/leader) */
     if (rssi >= -55) return 4;
     if (rssi >= -65) return 3;
     if (rssi >= -78) return 2;
@@ -1358,12 +1375,18 @@ static void _draw_signal_bars(int x, int y, int level)
 /* 메인 화면 상단 Matter 상태 표시 (x..x+7, y..y+6).
  *  UNPAIRED : X (미페어링/대기)
  *  PAIRING  : 'P' 점멸 (페어링 트랜잭션 진행 중)
- *  CONNECTED: 신호막대만 (부모 RSSI 기반 4단계 가변, 안테나 도형 없음) */
+ *  CONNECTED: 신호막대만 (부모 RSSI 기반 4단계 가변, 안테나 도형 없음)
+ *  NO_SIGNAL: '-' (등록돼 있으나 Thread detach = 권외) */
 static void _draw_matter_status(int x, int y, const oled_ui_ctx_t *ctx)
 {
     switch (ctx->matter_state) {
     case OLED_MT_CONNECTED:
         _draw_signal_bars(x, y, _rssi_to_level(ctx->parent_rssi));
+        break;
+    case OLED_MT_NO_SIGNAL:
+        /* ★가로줄 '-' — 등록은 유지되나 지금 신호가 안 잡힘.
+         *  X(미등록)와 확실히 구분되도록 중앙 1줄만 그린다. */
+        for (int i = 0; i <= 6; i++) _fb_set_pixel(x + i, y + 3, true);
         break;
     case OLED_MT_PAIRING:
         /* 'P' 점멸 (~0.4s 주기). 페어링 중임을 명확히. */

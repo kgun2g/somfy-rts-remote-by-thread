@@ -261,6 +261,36 @@ See main/boards/ for available boards."
 #  define BOARD_DISABLE_OTA          0
 #endif
 
+/* ── ★★★2026-08-15 진단 로그 링버퍼 — 보드별 on/off + 크기 ─────────────────
+ *  두 링버퍼는 **정적 배열(.bss)** 이라 그대로 heap 을 깎는다:
+ *      배터리 방전 로그 : BOARD_BATLOG_MAX  × 8B
+ *      진동 로그        : BOARD_VIBELOG_MAX × 8B
+ *  H2 는 heap 이 빠듯해(BLE 커미셔닝 PASE peak) 이 3.4KB 가 그대로 부담이다.
+ *  실제로 배터리 ADC 실측(BOARD_BAT_SWAPPED=0)을 켜자 CHIP PacketBuffer 가
+ *  pool EMPTY 로 죽고 linenoise malloc 실패로 콘솔이 폭주했다(2026-08-15).
+ *  → 보드별로 끄거나 줄일 수 있게 한다. 코드는 #if 로 남겨 되돌리기 쉽게.
+ *
+ *  ENABLE=0 이면 버퍼·기록·NVS 저장이 모두 빠지고, 조회 명령(bl/vl)은
+ *  "비활성" 안내만 출력한다(콘솔 등록은 유지 — 사용자 혼란 방지). */
+/* ★2026-08-16 light sleep 만 선택적으로 끈다(DFS·MTD/SED 는 유지).
+ *  원인 미확정 크래시를 임시 차단할 때 쓴다 — somfy_app.c `_enable_pm_light_sleep` 참조. */
+#ifndef BOARD_DISABLE_LIGHT_SLEEP
+#  define BOARD_DISABLE_LIGHT_SLEEP  0
+#endif
+
+#ifndef BOARD_BATLOG_ENABLE
+#  define BOARD_BATLOG_ENABLE        1
+#endif
+#ifndef BOARD_BATLOG_MAX
+#  define BOARD_BATLOG_MAX           300   /* × 8B = 2,400B */
+#endif
+#ifndef BOARD_VIBELOG_ENABLE
+#  define BOARD_VIBELOG_ENABLE       1
+#endif
+#ifndef BOARD_VIBELOG_MAX
+#  define BOARD_VIBELOG_MAX          128   /* × 8B = 1,024B */
+#endif
+
 /* ── 빌드타임 변형 오버라이드 (build.ps1 -Pcf/-Rotary/-Oled/-Rotate → CMake -D) ──
  *  보드 헤더를 안 고치고도 한 보드의 PCF/로터리/OLED 변형을 빌드 시 골라 만든다.
  *  main/CMakeLists.txt 가 -D BOARD_OVR_* 컴파일 정의로 주입 → 여기서 보드 기본값을 덮는다.

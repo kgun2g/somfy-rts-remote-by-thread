@@ -88,7 +88,13 @@
 #define BOARD_OLED_WIDTH       128
 #define BOARD_OLED_HEIGHT       64
 #define BOARD_OLED_COL_OFFSET    0   // 표준 128×64 → CONFIG_OFFSETX=0
-#define BOARD_OLED_ROTATE_180    0   // 정방향
+/* ★★★2026-08-16 0 → 1. **기판 실물이 180° 장착이다.**
+ *  doc/wiring/wiring_xiao-c6.md:12 — "현 시제품 기판은 OLED 가 180° 장착이라
+ *  `-Rotate 180` 필수(flash·ota-image 도 동일)".
+ *  여기가 0 이면 `-Rotate 180` 을 매번 손으로 붙여야 하고, 한 번만 빠뜨려도
+ *  화면이 상하 뒤집힌다(실제로 그렇게 플래시해 사용자를 화나게 했다).
+ *  → 기본값을 기판에 맞춘다. 정방향 패널로 바꾸면 `-Rotate 0` 으로 덮으면 된다. */
+#define BOARD_OLED_ROTATE_180    1   // 기판이 180° 장착 (wiring_xiao-c6.md)
 #define BOARD_OLED_FIXUP_72X40   0   // 표준 SSD1306 → 보정 불필요
 #define BOARD_OLED_ADDR         0x3C
 
@@ -109,6 +115,16 @@
 
      wake 가 필요한 ~INT 는 두 배선 모두 LP_GPIO(D2=GPIO2) 에 둔다.
    ════════════════════════════════════════════════════════ */
+/* ★★★2026-08-16 이 기판은 **PCF8575**(16비트) 다 — 좌/우 버튼이 P10/P11(bit8/9).
+ *  여기에 정의가 없으면 board_select.h 기본값 0 → PCF_NBYTES=1(PCF8574) 이 되어
+ *  (a) 좌/우 버튼이 통째로 사라지고
+ *  (b) LP 코어 프로그램은 LP_PCF_NBYTES 2 고정이라 button_handler.c:148 의
+ *      _Static_assert 가 "LP/HP PCF read width mismatch" 로 **빌드를 깬다**.
+ *  그래서 지금까지 `-Pcf 8575` 를 매번 손으로 붙여야 했다(빠뜨려 빌드 실패함).
+ *  → 기본값을 기판에 맞춘다. PCF8574 개체는 `-Pcf 8574` 로 덮으면 된다.
+ *  ※dist/ 의 옛 파일명 `..._8574_...` 와 doc/OTA.md 예시는 실기와 다르다. */
+#define BOARD_HAS_LR_BUTTONS   1   // PCF8575 (좌/우 버튼 P10/P11)
+
 #define BOARD_I2C_SHARED       1   // 공유 HW I2C(22/23) — LP_I2C 미연결 시 폴백 대상
 #define BOARD_PIN_PCF_SDA      22  // D4(GPIO22)=OLED SDA 공유 (공유 모드)
 #define BOARD_PIN_PCF_SCL      23  // D5(GPIO23)=OLED SCL 공유 (공유 모드)

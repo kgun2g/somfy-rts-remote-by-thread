@@ -380,7 +380,30 @@ static pcf_state_t PCF_RD_SHARED(void) {
    * 에서 PCF scl 을 400k 로 통일해 글리치를 짧게 줄였다. 남은 짧은 글리치는 scl 일치 덕에
    * 즉시 재호출로 흡수된다(최대 2회 재시도 → ~격번 소거). scl 100k 일 땐 글리치가 길어 재시도 무효였음. */
   uint8_t buf[2] = {0xFF, 0xFF};
-  oled_ui_i2c_lock();   /* 공유 HW I2C: OLED flush 와 직렬화 */
+  /* ★★★2026-08-15 `oled_ui_i2c_lock()`(portMAX_DELAY) → **유한 대기**로 교체.
+   *
+   *  왜: 이 함수는 **버튼 태스크(prio 10)가 10ms 마다** 부른다. 그런데 같은 뮤텍스를
+   *  쥔 쪽에서 IDF I2C 가 NACK 처리 중 `while (i2c_ll_is_bus_busy()) nop;`
+   *  (**타임아웃 없음**) 로 스핀하면 **락을 쥔 채 CPU 를 놓지 않는다**.
+   *  그러면 prio 10 이 무한 대기 → prio 4(somfy_app) 와 prio 0(IDLE) 이 굶어
+   *  **양쪽 워치독이 동시에** 터진다.
+   *  실제로 H2 에서 BOARD_BAT_SWAPPED=0 으로 ADC 읽기를 켜(=이 뮤텍스의 두 번째
+   *  경쟁자가 생김) 재현됐다: task_wdt 23회(somfy_app + IDLE), 로그 폭주,
+   *  somfy_app=7 에서 부팅 미완료. (2026-08-15)
+   *
+   *  → 못 잡으면 **이번 폴만 건너뛴다**. 다음 폴이 10ms 뒤라 손해가 없고,
+   *    무한 대기·우선순위 역전이 사라진다. 같은 처방을 _read_bat_mv 는 이미 쓰고
+   *    있었는데(oled_ui_i2c_trylock) 이쪽만 예전 API 로 남아 있었다.
+   *  ※타임아웃 50ms 는 OLED flush 1회보다 넉넉해 실사용에서 거의 실패하지 않는다.
+   *    실패가 잦으면 아래 카운터가 올라가므로 로그로 바로 드러난다. */
+  if (!oled_ui_i2c_trylock(50)) {
+    static uint32_t s_lock_skip = 0;
+    if ((++s_lock_skip % 100) == 1) {
+      ESP_LOGW(TAG, "공유 I2C 락 확보 실패 — 이번 폴 건너뜀 (누적 %u회)",
+               (unsigned)s_lock_skip);
+    }
+    return data;                       /* 직전 값 유지 — 다음 폴(10ms)에서 재시도 */
+  }
   esp_err_t err = i2c_master_receive(s_pcf_dev, buf, PCF_NBYTES, 50 /*ms*/);
   /* INVALID_STATE 격번은 같은 버스 OLED↔PCF 디바이스 전환 시 드라이버 FSM 의 잔여
    * 상태 때문 — 동시성이 아니므로 직렬화(mutex)로는 안 잡힌다. 짧은 지연 뒤 재시도하면

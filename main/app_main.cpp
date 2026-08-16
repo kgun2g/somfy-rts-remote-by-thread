@@ -64,6 +64,8 @@ extern "C" {
 #include "cc1101.h"
 #include "somfy_rts.h"
 #include "blind_manager.h"
+/* USB 호스트(SOF) 판정용 — 드라이버가 아니라 LL 레지스터만 읽는다. _usb_host_sof_present() 참조 */
+#include "hal/usb_serial_jtag_ll.h"
 cc1101_t        g_cc1101;
 somfy_rts_t     g_somfy;
 blind_manager_t g_mgr;
@@ -502,6 +504,81 @@ static int scmd_pm(int argc, char **argv){
     printf("OK pm\n");
     return 0;
 }
+/* ═══ 콘솔 `rt` — 태스크별 CPU 점유 실측 (★2026-08-16 신규) ═══════════════
+ *  왜 필요한가: 방전 로그가 light sleep 체류 85% 를 보여준다. 즉 **깨어 있는 15%**
+ *  가 소비의 대부분(≈4.5mA / 5.34mA)인데, 그 15% 를 누가 쓰는지는 아무도 몰랐다.
+ *  메인 루프 주기(100ms)를 늘리는 방안은 이미 한 번 되돌린 이력이 있으므로
+ *  (커밋 c7b4fc7 — 깨우기 경로를 늦추면 사용성이 깨짐), 주기를 건드리기 전에
+ *  **어느 태스크가 실제로 CPU 를 쓰는지** 먼저 재야 한다.
+ *
+ *  ★누적이 아니라 **구간 델타**로 잰다. 부팅 직후에는 Matter/Thread 초기화가
+ *  CPU 를 크게 쓰므로 누적값을 보면 정상 운전 구간이 묻힌다. 첫 `rt` 가 기준점을
+ *  잡고, 두 번째 `rt` 가 그 사이 구간만 보여준다.
+ *
+ *  ※런타임 카운터는 esp_timer(µs) 기반 uint32 라 약 71.6분에 한 바퀴 돈다.
+ *    측정 구간은 그보다 짧게 잡을 것(한 바퀴까지는 unsigned 뺄셈이 맞다). */
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS && CONFIG_FREERTOS_USE_TRACE_FACILITY
+#define RT_MAX_TASKS 28
+static TaskStatus_t s_rt_prev[RT_MAX_TASKS];
+static UBaseType_t  s_rt_prev_n     = 0;
+static uint32_t     s_rt_prev_total = 0;
+#endif
+static int scmd_rt(int argc, char **argv){
+#if !(CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS && CONFIG_FREERTOS_USE_TRACE_FACILITY)
+    (void)argc; (void)argv;
+    printf("CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS / USE_TRACE_FACILITY 가 꺼져 있음\n");
+#else
+    const bool reset = (argc > 1 && argv[1] && argv[1][0] == 'r');
+    TaskStatus_t *cur = (TaskStatus_t *)calloc(RT_MAX_TASKS, sizeof(TaskStatus_t));
+    if (!cur) { printf("메모리 부족\n"); return 0; }
+    uint32_t total = 0;
+    UBaseType_t n = uxTaskGetSystemState(cur, RT_MAX_TASKS, &total);
+
+    if (s_rt_prev_n == 0 || reset) {
+        memcpy(s_rt_prev, cur, n * sizeof(TaskStatus_t));
+        s_rt_prev_n = n; s_rt_prev_total = total;
+        printf("[RT] 기준점 설정 (태스크 %u개). 원하는 상태로 둔 뒤 다시 `rt` 실행.\n",
+               (unsigned)n);
+        free(cur); return 0;
+    }
+
+    const uint32_t dtotal = total - s_rt_prev_total;   /* unsigned — 1회 랩까지 정확 */
+    printf("[RT] 구간 %.1f초 — 태스크별 CPU 점유 (합계 100%%)\n", dtotal / 1000000.0);
+    printf("[RT] %-16s %10s %7s %5s %8s\n", "태스크", "CPU(us)", "점유%", "prio", "스택여유");
+
+    /* delta 를 구해 큰 순으로 출력 — 태스크 수가 적어 선택정렬로 충분하다. */
+    uint32_t d[RT_MAX_TASKS]; int idx[RT_MAX_TASKS]; int m = 0;
+    for (UBaseType_t i = 0; i < n; i++) {
+        uint32_t prev = 0; bool found = false;
+        for (UBaseType_t j = 0; j < s_rt_prev_n; j++) {
+            if (s_rt_prev[j].xHandle == cur[i].xHandle) {
+                prev = (uint32_t)s_rt_prev[j].ulRunTimeCounter; found = true; break;
+            }
+        }
+        (void)found;      /* 새로 생긴 태스크는 prev=0 → 구간 전체가 delta */
+        d[m] = (uint32_t)cur[i].ulRunTimeCounter - prev; idx[m] = (int)i; m++;
+    }
+    for (int a = 0; a < m; a++) {
+        int best = a;
+        for (int b = a + 1; b < m; b++) if (d[b] > d[best]) best = b;
+        if (best != a) { uint32_t t = d[a]; d[a] = d[best]; d[best] = t;
+                         int ti = idx[a]; idx[a] = idx[best]; idx[best] = ti; }
+        const TaskStatus_t *ts = &cur[idx[a]];
+        printf("[RT] %-16s %10u %6.2f%% %5u %8u\n",
+               ts->pcTaskName, (unsigned)d[a],
+               dtotal ? (100.0 * d[a] / dtotal) : 0.0,
+               (unsigned)ts->uxCurrentPriority,
+               (unsigned)ts->usStackHighWaterMark);
+    }
+    /* 다음 구간을 위해 기준점 갱신 — 연속 호출로 구간을 이어 볼 수 있다. */
+    memcpy(s_rt_prev, cur, n * sizeof(TaskStatus_t));
+    s_rt_prev_n = n; s_rt_prev_total = total;
+    free(cur);
+#endif
+    printf("OK rt\n");
+    return 0;
+}
+
 extern "C" void somfy_app_intpd_test(void);
 /* `~INT` 풀다운 진단 — PCF측 고장 vs GPIO2 배선단선 을 가른다(somfy_app.c 주석 참조) */
 static int scmd_intpd(int argc, char **argv){
@@ -551,8 +628,45 @@ static int scmd_bd(int argc, char **argv){
  *  왜 usb_serial_jtag_is_connected() 가 아니라 VBUS 핀인가:
  *    그 API 는 SOF 패킷 기반이라 부팅 ~1초 시점엔 열거가 안 끝나 false 가 나올 수 있다
  *    (그러면 USB 로 개발할 때도 콘솔이 사라진다). VBUS 분압은 꽂는 즉시 HIGH 다. */
+/* ★★★2026-08-16 USB **호스트** 존재 판정 — CHG_STAT 배선과 무관.
+ *
+ *  왜 필요한가: 아래 _usb_vbus_present() 는 CHG_STAT(VBUS 분압) 을 읽는데, H2 는
+ *  이 배선이 고장나 항상 LOW 로 읽힌다. 그래서 USB 에 꽂아도 "배터리 단독 부팅"
+ *  으로 판정돼 **콘솔이 아예 등록되지 않았고**, `bl`/`bd` 같은 진단 명령을 보내면
+ *  아무도 RX FIFO 를 비우지 않아 호스트 write 가 Write timeout 으로 죽었다.
+ *  (이번 세션에서 H2 콘솔 명령이 한 번도 먹지 않은 진짜 이유다.)
+ *
+ *  판정 방법: full-speed USB 호스트는 **1ms 마다 SOF 패킷**을 보낸다. SOF raw
+ *  인터럽트 비트를 지우고 3ms 뒤 다시 서 있으면 호스트가 붙어 있는 것이다.
+ *  · PC 에 연결   → SOF 있음  → 콘솔 시작
+ *  · 배터리/보조배터리 → SOF 없음 → 콘솔 생략(원래 의도인 '배터리 단독 부팅 보호'
+ *    를 CHG_STAT 보다 **정확하게** 지킨다 — 전원만 주는 충전기도 걸러낸다)
+ *  드라이버 설치 불필요(LL 레지스터 직접 읽기), 보드·배선 무관. */
+static bool _usb_host_sof_present(void)
+{
+    for (int i = 0; i < 5; i++) {
+        usb_serial_jtag_ll_clr_intsts_mask(USB_SERIAL_JTAG_INTR_SOF);
+        esp_rom_delay_us(3000);          /* SOF 주기 1ms → 3ms 면 충분 */
+        if (usb_serial_jtag_ll_get_intraw_mask() & USB_SERIAL_JTAG_INTR_SOF) return true;
+    }
+    return false;
+}
+
 static bool _usb_vbus_present(void)
 {
+    /* ★★★2026-08-16 SOF 판정을 여기서 쓰지 않는다 — **시도했다가 되돌림**.
+     *
+     *  H2 는 CHG_STAT 이 고장나 USB 에서도 콘솔이 안 떠서, 위 _usb_host_sof_present()
+     *  로 대신 판정해 콘솔을 켰다. 콘솔은 실제로 살아났지만(write 성공) **곧바로
+     *  task_wdt 가 터졌다**:
+     *      task_wdt: somfy_app (CPU 0) 이 굶음 / Tasks currently running: CPU 0: console
+     *      A1=0x1000(4096), RA=ROM  → linenoise 4KB 할당 실패 후 콘솔이 폭주
+     *  H2 는 heap 이 빠듯해 콘솔을 켜면 이 경로로 들어간다(2026-08-15 에도 동일 관측).
+     *  즉 이 게이트는 "배터리 보호"만이 아니라 **H2 heap 보호**로도 작동하고 있었다.
+     *  → 판정 함수는 남겨 두되(원인 규명·향후 heap 확보 후 재검토) 사용하지 않는다.
+     *  H2 진단 기록은 콘솔 대신 **NVS 파티션 덤프**로 읽는다(esptool read_flash
+     *  0x10000 0xC000 → tools 로 오프라인 파싱). 그 편이 리셋도 안 만든다. */
+    (void)&_usb_host_sof_present;
 #if defined(BOARD_PIN_CHG_STAT) && BOARD_CHG_STAT_ACTIVE_HIGH
     gpio_config_t io = {};
     io.pin_bit_mask = 1ULL << BOARD_PIN_CHG_STAT;
@@ -853,7 +967,9 @@ extern "C" void app_main()
       const esp_console_cmd_t pmc={ .command="pm", .help="절전 진단 — PM lock 보유시간/절전모드 체류시간", .hint=NULL, .func=&scmd_pm, .argtable=NULL };
       esp_console_cmd_register(&pmc);
       const esp_console_cmd_t usc={ .command="usbsim", .help="배터리 모드 시뮬 (usbsim off|on)", .hint=NULL, .func=&scmd_usbsim, .argtable=NULL };
-      esp_console_cmd_register(&usc); }
+      esp_console_cmd_register(&usc);
+      const esp_console_cmd_t rtc={ .command="rt", .help="태스크별 CPU 점유 (rt=구간측정, rt r=기준점 재설정)", .hint=NULL, .func=&scmd_rt, .argtable=NULL };
+      esp_console_cmd_register(&rtc); }
     boot_diag_stage(BOOT_S1_CONSOLE_CMDS);
     esp_matter::console::init();
     }   /* if (_usb_on) */

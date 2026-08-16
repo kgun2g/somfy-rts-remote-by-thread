@@ -278,10 +278,28 @@ bool cc1101_init(cc1101_t *dev)
         .sclk_io_num     = CC1101_PIN_SCK,
         .quadwp_io_num   = -1,
         .quadhd_io_num   = -1,
-        .max_transfer_sz = 256,
+        .max_transfer_sz = 64,   /* DMA 미사용 → FIFO 한도(64B). 실제 최대 9B */
     };
-    /* ★ non-fatal: 자원 충돌/실패 시 abort 대신 false (디바이스·Matter 계속) */
-    esp_err_t e = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
+    /* ★★★2026-08-16 SPI_DMA_CH_AUTO → SPI_DMA_DISABLED. **패닉의 직접 원인이었다.**
+     *
+     *  coredump 로 확인한 크래시 스택(H2, 배터리 구동 중):
+     *      #0 memcpy
+     *      #1 uninstall_priv_desc   spi_master.c:1181
+     *      #2 setup_priv_desc       spi_master.c:1260
+     *      #3 spi_device_polling_start
+     *
+     *  기전: 위 spi_write/spi_read 는 **스택 버퍼**(VLA)를 넘긴다. 스택은 DMA 불가라
+     *  DMA 가 켜져 있으면 IDF 가 **전송할 때마다 바운스 버퍼를 heap 에 할당**한다
+     *  (setup_dma_priv_buffer). heap 이 모자라 그 할당이 실패하면 `goto clean_up` 로
+     *  가는데, 거기서 부르는 uninstall_priv_desc 가
+     *      memcpy(orig_rx_buffer, trans_buf->buffer_to_rcv, ...)
+     *  를 하는데 **buffer_to_rcv 는 성공 경로에서만 대입된다** → 초기화 안 된
+     *  쓰레기 포인터로 memcpy → 패닉. (IDF 버그: OOM 을 크래시로 바꾼다.)
+     *
+     *  CC1101 은 최대 전송이 PATABLE 8B(+주소 1B)=9B 뿐이라 DMA 가 애초에 무의미하다.
+     *  끄면 FIFO 직접 전송(64B 한도)이 되어 **할당이 아예 없어지고**, 크래시 경로가
+     *  사라지는 동시에 전송마다 나던 malloc/free 도 없어져 heap 압박도 준다. */
+    esp_err_t e = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_DISABLED);
     if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "spi_bus_initialize 실패: %s — RF 비활성", esp_err_to_name(e));
         return false;

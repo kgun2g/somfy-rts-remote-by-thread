@@ -126,3 +126,16 @@ CONFIG_PM_PROFILING=y
 #  → exit 콜백이 주는 실제 sleep_time_us 를 누적해 **배터리 로그 행(bat_sample_t.ls)**
 #    에 실어 NVS 에 남긴다. 리셋과 무관하게 살아남고, 방전 기울기와 같은 표에서 본다.
 CONFIG_PM_LIGHT_SLEEP_CALLBACKS=y
+
+# ★★★2026-08-16 태스크별 CPU 점유 실측 — 콘솔 `rt` (진단 전용, 측정 끝나면 끌 것)
+#
+#  왜: 방전 로그가 light sleep 체류 85% 를 보여준다 → **깨어 있는 15%** 가 소비의
+#  대부분(≈4.5mA / 5.34mA)인데 그 15% 를 누가 쓰는지 근거가 없었다. 메인 루프
+#  100ms 를 늘리는 안은 이미 되돌린 이력이 있어(c7b4fc7 — 깨우기 경로를 늦추면
+#  버튼/진동이 죽는다) 주기를 건드리기 전에 **실측**이 필요하다.
+#
+#  USE_TRACE_FACILITY 가 uxTaskGetSystemState 를, GENERATE_RUN_TIME_STATS 가
+#  태스크별 누적 실행시간을 준다. 카운터는 esp_timer(µs) 기반.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y

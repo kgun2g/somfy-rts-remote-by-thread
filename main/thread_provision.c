@@ -55,6 +55,25 @@ bool thread_prov_is_provisioned(void)
 #endif
 }
 
+/* ★2026-08-16 (①진단) 원시 Thread 역할을 그대로 준다.
+ *  사용자 신고: "권외로 나가면 안테나가 '-'(권외)가 아니라 'X'(미등록)로 바뀐다."
+ *  'X' 는 FabricCount==0 일 때만 나와야 하므로 예상과 다르다 — 판정에 쓰이는
+ *  세 값(fabric / attached / role)을 함께 찍어야 어디서 갈리는지 알 수 있다.
+ *  반환은 otDeviceRole 원시값: 0=DISABLED 1=DETACHED 2=CHILD 3=ROUTER 4=LEADER. */
+int thread_prov_get_role(void)
+{
+#if CONFIG_OPENTHREAD_ENABLED
+    int r = -1;
+    esp_openthread_lock_acquire(portMAX_DELAY);
+    otInstance *inst = esp_openthread_get_instance();
+    if (inst) r = (int)otThreadGetDeviceRole(inst);
+    esp_openthread_lock_release();
+    return r;
+#else
+    return -1;
+#endif
+}
+
 bool thread_prov_is_attached(void)
 {
 #if CONFIG_OPENTHREAD_ENABLED

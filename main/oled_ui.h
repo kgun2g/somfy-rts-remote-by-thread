@@ -108,6 +108,11 @@ typedef enum {
     OLED_MT_UNPAIRED  = 0,
     OLED_MT_PAIRING   = 1,
     OLED_MT_CONNECTED = 2,
+    /* ★2026-08-15 등록은 돼 있으나 Thread 가 **detach**(권외) — 화면에 '-' 표시.
+     *  이전엔 이 상태가 CONNECTED 로 남고 RSSI 는 INVALID(127) 가 되는데,
+     *  _rssi_to_level 이 127 을 "링크는 있으나 측정불가 → 풀바" 로 해석해서
+     *  **신호가 0인데 안테나가 꽉 찬 채로 멈춰 있었다**(사용자 신고). */
+    OLED_MT_NO_SIGNAL = 3,
 } oled_matter_state_t;
 
 #define OLED_RSSI_INVALID  127

@@ -1821,22 +1821,55 @@ static void _enable_pm_light_sleep(void) {
    *  죽어 관찰 자체가 불가능해지기 때문이다(실제로 겪은 문제). 시뮬은 "배터리 모드
    *  로직"을 보려는 것이지 전력 자체를 재현하려는 게 아니다. */
   const bool on_usb = btn_handler_is_charging();
-  const int  min_mhz = on_usb ? 160 : 80;
-  const bool ls      = want_ls && !on_usb;   /* USB 중엔 light sleep 도 불필요 */
+  /* ★★★2026-08-16 BOARD_DISABLE_LIGHT_SLEEP — **패닉 임시 차단**.
+   *  H2 에서 절전 빌드(①MTD ②tick ③PM)를 넣은 뒤 배터리 구동 중 패닉이 반복됐다.
+   *  부팅진단 근거: 리셋사유가 PM 적용 전 `USB리셋` → 적용 후 `★패닉/예외` 로 바뀌고
+   *  실패 누적이 29 → 39 (13번 부팅에 10번). 방전 로그상 크래시 직전은 `pm=3`
+   *  (light sleep 적용) 상태의 버튼 조작 구간이었다.
+   *  H2 는 OLED 와 PCF 가 I2C 를 공유하므로 light sleep 의 주변장치 복귀와 그 경로가
+   *  충돌하는 것이 1순위 의심이지만, **아직 backtrace 를 못 봤다**(배터리 구동 중엔
+   *  콘솔이 없다). 원인 확정 전까지 light sleep 만 끈다 —
+   *  ①(FTD→MTD/SED, 가장 큰 절감)과 ②③의 DFS 는 그대로 유지된다. */
+  const bool ls      = want_ls && !on_usb && !BOARD_DISABLE_LIGHT_SLEEP;
+
+  /* ★★★2026-08-16 max 160MHz 하드코딩 제거 — **H2 에서 PM 이 통째로 실패했다**.
+   *
+   *  ESP32-H2 의 CPU 최대는 96MHz 다(rtc_clk_cpu_freq_mhz_to_config: 96=PLL,
+   *  그 외는 XTAL 32MHz 의 정수 분주만 허용). 그래서 max=160 을 넘기면
+   *  esp_pm_configure 가 ESP_ERR_INVALID_ARG 를 돌려주고 **DFS 도 light sleep 도
+   *  전혀 걸리지 않았다** — 실측 `PM 설정: 80MHz~160MHz ... → ESP_ERR_INVALID_ARG`
+   *  이고 방전 로그의 sleep 체류가 0.0% 였던 이유다.
+   *  → 보드 설정값을 그대로 쓴다(C6=160 / H2=96).
+   *
+   *  min 도 보드마다 유효값이 다르므로 후보를 순서대로 시도해 첫 성공을 채택한다:
+   *    ① 절반(DFS 효과 최대)  ② XTAL  ③ DFS 없음(min=max — light sleep 만이라도)
+   *  C6 는 ①이 80MHz 라 지금까지와 **완전히 동일**하다(측정 연속성 유지). */
+  const int max_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
+  const int cand[3] = {
+      on_usb ? max_mhz : max_mhz / 2,
+      on_usb ? max_mhz : CONFIG_XTAL_FREQ,
+      max_mhz,
+  };
 
   static int s_pm_state = -1;   /* 적용된 상태 코드(아래 want 와 동일 규칙) */
-  const int want = (ls ? 2 : 0) + (min_mhz == 80 ? 1 : 0);
+  const int want = (ls ? 2 : 0) + (on_usb ? 0 : 1);
   if (s_pm_state == want) return;
 
-  esp_pm_config_t pm_cfg = {
-      .max_freq_mhz       = 160,
-      .min_freq_mhz       = min_mhz,
-      .light_sleep_enable = ls,
-  };
-  esp_err_t pm_err = esp_pm_configure(&pm_cfg);
+  esp_err_t pm_err = ESP_ERR_INVALID_ARG;
+  int min_mhz = max_mhz;
+  for (int i = 0; i < 3 && pm_err != ESP_OK; i++) {
+    if (cand[i] <= 0 || cand[i] > max_mhz) continue;
+    esp_pm_config_t pm_cfg = {
+        .max_freq_mhz       = max_mhz,
+        .min_freq_mhz       = cand[i],
+        .light_sleep_enable = ls,
+    };
+    pm_err  = esp_pm_configure(&pm_cfg);
+    min_mhz = cand[i];
+  }
   if (pm_err == ESP_OK) { s_pm_state = want; g_pm_state_applied = want; }
-  ESP_LOGW(TAG, "PM 설정: %dMHz~160MHz, light_sleep=%s (전원=%s, 등록=%d) → %s",
-           min_mhz, ls ? "ON" : "OFF", on_usb ? "USB" : "배터리",
+  ESP_LOGW(TAG, "PM 설정: %dMHz~%dMHz, light_sleep=%s (전원=%s, 등록=%d) → %s",
+           min_mhz, max_mhz, ls ? "ON" : "OFF", on_usb ? "USB" : "배터리",
            paired ? 1 : 0, esp_err_to_name(pm_err));
 #else
   static bool s_pm_warned = false;
@@ -2425,7 +2458,7 @@ static uint8_t _bat_mv_to_pct(int mv) {
  *  샘플 6바이트 × 300 = 1.8KB — 2분 간격이면 약 10시간, 초반 5초 24건 포함.
  *  꽉 차면 오래된 것부터 덮어써 최근 구간을 남긴다.
  *  조회: 콘솔 `bl` (덤프) / `bl clear` (삭제). */
-#define BATLOG_MAX      300
+#define BATLOG_MAX      BOARD_BATLOG_MAX   /* 보드별(board_select.h) — H2 는 128 */
 #define BATLOG_FAST_S   120     /* 이 시간까지는 빠른 주기 */
 #define BATLOG_FAST_IV  5       /* 빠른 주기(초) */
 #define BATLOG_SLOW_IV  120     /* 이후 주기(초) */
@@ -2439,6 +2472,17 @@ static uint8_t _bat_mv_to_pct(int mv) {
 #define BLEV_ROT    6
 #define BLEV_PROG   7
 #define BLEV_OTHER  8
+/* ★★★2026-08-16 세션 경계 표식.
+ *  예전엔 새 방전 세션이 시작될 때 `_batlog_reset()` 으로 링을 **통째로 비웠다**.
+ *  그래서 세션 판정이 한 번만 틀려도 직전 기록이 전부 사라졌다(실제로 여러 번
+ *  날아갔다). 이제는 비우지 않고 이 표식을 한 건 넣어 경계만 남긴다 —
+ *  오래된 기록은 링이 돌면서 자연히 밀려날 뿐, **지워지지 않는다**. */
+#define BLEV_SESS   9
+/* ★2026-08-16 (①진단) 안테나 표시가 CONNECTED 를 벗어난 순간을 기록한다.
+ *  사용자 신고가 배터리 구동 중(콘솔 없음) 상황이라 시리얼 로그로는 못 잡는다.
+ *  → 방전 로그에 남겨 NVS 덤프로 나중에 읽는다(sim/tools/batlog_decode.py). */
+#define BLEV_NOSIG  10   /* '-' 등록 유지 + 권외(detach) */
+#define BLEV_UNPAIR 11   /* 'X' 미등록(FabricCount==0) — 이게 찍히면 예상 밖이다 */
 /* ★NVS 쓰기 합치기: 버튼 연타 중 누름마다 1.8KB blob 을 쓰면 플래시 마모가 크고
  *  쓰기(10~20ms)가 버튼 태스크를 붙잡는다. RAM 링에는 **즉시** 넣고, NVS 는
  *  BATLOG_FLUSH_MS 마다 한 번만 쓴다. 전원이 갑자기 끊기면 최대 그만큼 잃지만,
@@ -2466,10 +2510,38 @@ typedef struct __attribute__((packed)) {
 /* ※구조체가 6→7바이트로 바뀌었다. _batlog_load() 가 blob 길이를 검사하므로
  *  예전 형식으로 저장된 기록은 자동 폐기된다(오해석 없음). */
 
+#if BOARD_BATLOG_ENABLE
 static bat_sample_t s_bl_buf[BATLOG_MAX];
 static uint16_t     s_bl_n = 0;     /* 저장된 개수(최대 BATLOG_MAX) */
 static uint16_t     s_bl_head = 0;  /* 다음 쓸 위치(링) */
 static uint32_t     s_bl_sess = 0;  /* 세션 번호(부팅/분리마다 증가) */
+/* NVS 에서 읽어온 직전 세션 상태 — _batlog_try_resume 이 사용 */
+static uint8_t  s_bl_saved_on   = 0;
+static uint32_t s_bl_saved_el   = 0;
+static int      s_bl_saved_mv0  = 0;
+static uint8_t  s_bl_saved_pct0 = 0;
+
+/* ★★★2026-08-16 light sleep **진입 횟수**를 세션 단위로 누적해 NVS 에 남긴다.
+ *
+ *  왜: `rt`(태스크별 CPU) 실측에서 전 태스크 작업량 합이 **1.02%** 로 나왔다
+ *  (IDLE 98.98%, somfy_app 0.70% = 회당 703µs). 그런데 배터리에서 sleep 체류는
+ *  85% 다 — 남는 14%p 는 **일이 아니라** 깨어남 1회당 고정비용(진입/복귀)이거나
+ *  락 보유 구간이라는 뜻이다. 그 둘을 가르려면 **진입 횟수**가 있어야 한다:
+ *      회당 오버헤드 = (구간 - sleep시간)/진입횟수 - 703µs
+ *  이 값이 십수 ms 면 메인 루프 주기가 유효한 지렛대이고, 1ms 수준이면 아니다.
+ *
+ *  왜 NVS 인가: 배터리 구동 중엔 콘솔이 없고, 포트를 열면 리셋되어 RAM 통계가
+ *  날아간다. 방전 로그와 같은 경로로 실어 **NVS 덤프로 리셋 없이** 읽는다
+ *  (sim/tools/batlog_decode.py).
+ *
+ *  세션 누적 = 이전 부팅들의 누적(base) + 이번 부팅에서 세션 시작 이후 증가분. */
+static uint32_t s_dis_ls_cnt0     = 0;   /* 세션 시작 시점의 s_ls_count */
+static int64_t  s_dis_ls_us0      = 0;   /* 세션 시작 시점의 s_ls_total_us */
+static uint32_t s_dis_ls_base_cnt = 0;   /* 이전 부팅들에서 누적된 진입 횟수 */
+static int64_t  s_dis_ls_base_us  = 0;   /* 〃 sleep 시간 */
+static uint32_t s_bl_saved_lscnt  = 0;   /* NVS 에서 읽어온 값 */
+static uint64_t s_bl_saved_lsus   = 0;
+static void _batlog_ls_session_begin(bool resume);   /* 정의는 아래(_batlog_new_session 뒤) */
 
 /* ═══ light sleep 실측 누적 — NVS 로 남기기 위한 계측기 ═══════════════════════
  *  esp_pm_light_sleep_register_cbs 의 exit 콜백이 **실제 잔 시간**(sleep_time_us)
@@ -2512,6 +2584,16 @@ static uint8_t _ls_take_pct(int64_t now_us) {
   return (uint8_t)pct;
 }
 
+/* ★★★2026-08-15 **세션 상태도 함께 NVS 에 남긴다** — 재부팅에도 기록이 이어지게.
+ *
+ *  사용자 신고: "6시간 배터리 구동했는데 기록이 25.9분뿐이다."
+ *  원인: 전환 감지의 `static bool was_usb_pwr = true;` 가 **부팅 시 항상 USB 로
+ *  가정**해서, 배터리 구동 중 재부팅(배터리 글리치/브라운아웃)이 나면 첫 판독에서
+ *  "USB→배터리 전환"으로 오인하고 `_batlog_reset()` 이 **직전 기록을 통째로 지웠다**.
+ *  실제로 부팅진단에 `261회차 bat=3990mV 리셋사유=전원투입` 이 남아 있었다.
+ *
+ *  → 세션 경과시간·기준값·활성여부를 로그와 같이 저장하고, 부팅 시 배터리 상태면
+ *    **같은 세션을 이어받는다**(_batlog_try_resume). 그러면 재부팅이 나도 기록이 남는다. */
 static void _batlog_save(void) {
   nvs_handle_t h;
   if (nvs_open("batlog", NVS_READWRITE, &h) != ESP_OK) return;
@@ -2519,6 +2601,18 @@ static void _batlog_save(void) {
   nvs_set_u16(h, "head", s_bl_head);
   nvs_set_u32(h, "sess", s_bl_sess);
   nvs_set_blob(h, "buf", s_bl_buf, sizeof(bat_sample_t) * BATLOG_MAX);
+  /* ★세션 상태 — 재부팅 후 이어받기용.
+   *  경과시간은 esp_timer 가 리셋되므로 **초 단위 절대 경과**로 저장한다. */
+  const uint32_t el_s = s_dis_t0_us
+      ? (uint32_t)((esp_timer_get_time() - s_dis_t0_us) / 1000000) : 0;
+  nvs_set_u8 (h, "dis_on",  s_dis_t0_us ? 1 : 0);
+  nvs_set_u32(h, "dis_el",  el_s);
+  nvs_set_u32(h, "dis_mv0", (uint32_t)s_dis_mv0);
+  nvs_set_u8 (h, "dis_pc0", s_dis_pct0);
+  /* ★light sleep 세션 누적 — 위 s_dis_ls_* 주석 참조 */
+  nvs_set_u32(h, "ls_cnt", s_dis_ls_base_cnt + (s_ls_count - s_dis_ls_cnt0));
+  nvs_set_u64(h, "ls_us",  (uint64_t)(s_dis_ls_base_us +
+                                      (s_ls_total_us - s_dis_ls_us0)));
   nvs_commit(h);
   nvs_close(h);
 }
@@ -2533,14 +2627,62 @@ static void _batlog_load(void) {
     nvs_get_u16(h, "n", &s_bl_n);
     nvs_get_u16(h, "head", &s_bl_head);
     nvs_get_u32(h, "sess", &s_bl_sess);
+    /* 세션 상태(있으면) — 실제 이어받기는 _batlog_try_resume 이 판단한다. */
+    nvs_get_u8 (h, "dis_on",  &s_bl_saved_on);
+    nvs_get_u32(h, "dis_el",  &s_bl_saved_el);
+    uint32_t _mv = 0; nvs_get_u32(h, "dis_mv0", &_mv); s_bl_saved_mv0 = (int)_mv;
+    nvs_get_u8 (h, "dis_pc0", &s_bl_saved_pct0);
+    nvs_get_u32(h, "ls_cnt", &s_bl_saved_lscnt);
+    nvs_get_u64(h, "ls_us",  &s_bl_saved_lsus);
   }
   nvs_close(h);
 }
 
+static void _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int pm,
+                           int ev);   /* 전방 선언 (정의는 아래) */
+
+/* 부팅 시 호출 — 배터리 구동 중이고 직전 세션이 살아 있으면 **이어받는다**.
+ *  이어받으면 t0 를 "지금 - 저장된 경과" 로 되돌려 로그의 +초 축이 연속된다.
+ *  USB 구동이면 아무것도 안 한다(정상적으로 세션 없음). */
+static bool _batlog_try_resume(bool on_battery)
+{
+  if (!on_battery || !s_bl_saved_on || s_bl_n == 0) return false;
+  s_dis_t0_us    = esp_timer_get_time() - (int64_t)s_bl_saved_el * 1000000;
+  s_dis_mv0      = s_bl_saved_mv0;
+  s_dis_pct0     = s_bl_saved_pct0;
+  s_dis_prev_us  = esp_timer_get_time();
+  s_dis_prev_mv  = s_bl_saved_mv0;
+  _batlog_ls_session_begin(true);   /* 이전 부팅들의 light sleep 누적을 이어받는다 */
+  s_dis_prev_pct = s_bl_saved_pct0;
+  ESP_LOGW(TAG, "[BATLOG] ★재부팅 감지 — 세션 #%u 이어받음 (경과 %us, %d건 보존)",
+           (unsigned)s_bl_sess, (unsigned)s_bl_saved_el, (unsigned)s_bl_n);
+  _batlog_add_ev((int)s_bl_saved_el, s_bl_saved_mv0, s_bl_saved_pct0,
+                 matter_blinds_get_radio_enabled(), oled_ui_is_panel_on(),
+                 g_pm_state_applied, BLEV_OTHER);   /* 재부팅 지점 표시 */
+  return true;
+}
+
+/* ★전체 삭제 — 콘솔 `blclear` 로 사용자가 명시적으로 요청할 때만 불린다.
+ *  2026-08-16 이전에는 새 방전 세션마다 이걸 불러 기록이 사라졌다. */
 static void _batlog_reset(void) {
   s_bl_n = 0; s_bl_head = 0; s_bl_sess++;
   memset(s_bl_buf, 0, sizeof(s_bl_buf));
   _batlog_save();
+}
+
+/* ★2026-08-16 새 방전 세션 — **지우지 않는다**. 세션 번호만 올린다.
+ *  경계는 호출자가 BLEV_SESS 표식으로 남긴다. */
+static void _batlog_new_session(void) { s_bl_sess++; }
+
+/* 방전 세션의 light sleep 계측 기준점을 잡는다.
+ *  resume=true  → 이전 부팅들의 누적을 이어받는다(재부팅해도 합계가 유지됨)
+ *  resume=false → 새 세션이므로 0 부터
+ *  어느 쪽이든 "지금까지 이 부팅에서 잔 것"은 세션에 넣지 않는다(cnt0/us0 로 뺀다). */
+static void _batlog_ls_session_begin(bool resume) {
+  s_dis_ls_cnt0     = s_ls_count;
+  s_dis_ls_us0      = s_ls_total_us;
+  s_dis_ls_base_cnt = resume ? s_bl_saved_lscnt : 0;
+  s_dis_ls_base_us  = resume ? (int64_t)s_bl_saved_lsus : 0;
 }
 
 static bool     s_bl_dirty = false;
@@ -2593,15 +2735,23 @@ void somfy_app_batlog_dump(void) {
   if (s_bl_n == 0) { ESP_LOGW(TAG, "[BATLOG] (비어 있음)"); return; }
   const uint16_t start = (s_bl_n < BATLOG_MAX) ? 0
                        : (uint16_t)((s_bl_head + BATLOG_MAX - s_bl_n) % BATLOG_MAX);
-  int p0 = -1, t0 = 0;
+  int p0 = -1, t0 = 0, nsess = 0;
   for (uint16_t i = 0; i < s_bl_n; i++) {
     const bat_sample_t *e = &s_bl_buf[(start + i) % BATLOG_MAX];
-    if (p0 < 0) { p0 = e->pct; t0 = e->t_s; }
+    const int ev = (e->flags >> 4) & 0x0F;
+    /* ★2026-08-16 세션 경계에서 기준점을 다시 잡는다. 한 링에 여러 세션이 함께
+     *  남으므로(더 이상 지우지 않는다) 그냥 두면 t_s 가 0 으로 되돌아가 dt 가
+     *  음수가 되고 평균 전류가 엉뚱하게 찍힌다. */
+    if (ev == BLEV_SESS || p0 < 0) { p0 = e->pct; t0 = e->t_s; }
+    if (ev == BLEV_SESS) {
+      nsess++;
+      ESP_LOGW(TAG, "BL ────── 새 방전 세션 시작 (%d번째 경계) ──────", nsess);
+    }
     const int dt = e->t_s - t0;
     /* ★2026-08-12 분모의 `* 10` 제거 — 아래 [BATLOG] 쪽과 같은 버그였다. */
     const int ma = (dt > 0) ? ((p0 - e->pct) * BAT_CAPACITY_MAH * 36) / dt : 0;
     static const char *EVN[] = {"주기","LEFT","RIGHT","SEL","UP","DOWN","ROT","PROG","기타",
-                                "?","?","?","?","?","?","?"};
+                                "세션시작","권외-","미등록X","?","?","?"};
     /* ★A 산포를 배터리 전압 mV 로 환산(나눗셈 순서 = _read_bat_mv 와 동일) */
     const int sp_mv = (int)e->sp * 3100 / BOARD_BAT_DIV_BOT
                       * (BOARD_BAT_DIV_TOP + BOARD_BAT_DIV_BOT) / 4095;
@@ -2614,6 +2764,24 @@ void somfy_app_batlog_dump(void) {
   }
 }
 void somfy_app_batlog_clear(void) { _batlog_reset(); ESP_LOGW(TAG, "[BATLOG] 기록 삭제됨"); }
+#else  /* !BOARD_BATLOG_ENABLE — 방전 로그 링버퍼·NVS 저장 전부 제외(heap 확보) */
+static void _batlog_load(void) {}
+static void _batlog_flush_if_due(int64_t now_us, bool force) { (void)now_us; (void)force; }
+static void _batlog_reset(void) {}
+static void _batlog_new_session(void) {}
+static void _batlog_ls_session_begin(bool resume) { (void)resume; }
+static void _batlog_add(int t_s, int mv, int pct, bool radio, bool panel, int pm) {
+  (void)t_s; (void)mv; (void)pct; (void)radio; (void)panel; (void)pm;
+}
+static void _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int pm, int ev) {
+  (void)t_s; (void)mv; (void)pct; (void)radio; (void)panel; (void)pm; (void)ev;
+}
+static bool _batlog_try_resume(bool on_battery) { (void)on_battery; return false; }
+void somfy_app_batlog_dump(void) {
+  ESP_LOGW(TAG, "[BATLOG] 이 보드에서는 비활성(BOARD_BATLOG_ENABLE=0 — heap 확보)");
+}
+void somfy_app_batlog_clear(void) { somfy_app_batlog_dump(); }
+#endif /* BOARD_BATLOG_ENABLE */
 
 /* ═══════════════════════════════════════════════
    진동센서 진단 기록 (★2026-08-13 신규, 사용자 요청)
@@ -2630,10 +2798,11 @@ void somfy_app_batlog_clear(void) { _batlog_reset(); ESP_LOGW(TAG, "[BATLOG] 기
    플래시 마모 대책: **섞인 창만** 남기고, 나머지는 VIBELOG_HB_S 마다 heartbeat
    1건만 남긴다. 3초마다 전부 쓰면 하루 28,800건이라 링이 금세 덮인다.
 ═══════════════════════════════════════════════ */
-#define VIBELOG_MAX    128        /* 링 크기(8바이트 × 128 = 1KB) */
+#define VIBELOG_MAX    BOARD_VIBELOG_MAX  /* 보드별(board_select.h) — 8바이트 × N */
 #define VIBELOG_WIN_S    3        /* 관측 창(초) — [VIBE-stat] 과 동일 */
 #define VIBELOG_HB_S    60        /* 활동이 없을 때 heartbeat 간격(초) */
 
+#if BOARD_VIBELOG_ENABLE
 typedef struct __attribute__((packed)) {
   uint16_t t_s;     /* 부팅 후 경과 초 */
   uint16_t polls;   /* 이 창의 폴링 횟수 */
@@ -2722,6 +2891,51 @@ flush:
 }
 
 /* 콘솔 `vl` — 저장된 진동 기록 출력. */
+
+void somfy_app_vibelog_dump(void) {
+  ESP_LOGW(TAG, "[VIBELOG] === 진동 기록 %u건 (창 %d초, heartbeat %d초) ===",
+           (unsigned)s_vl_n, VIBELOG_WIN_S, VIBELOG_HB_S);
+  ESP_LOGW(TAG, "[VIBELOG] 현재: 레벨=%d 고장판정=%d  누적 poll=%u high=%u isr=%u",
+           btn_handler_vibe_level(), btn_handler_vibe_stuck() ? 1 : 0,
+           (unsigned)btn_handler_vibe_poll_total(),
+           (unsigned)btn_handler_vibe_high_total(),
+           (unsigned)btn_handler_vibe_isr_count());
+  if (s_vl_n == 0) { ESP_LOGW(TAG, "[VIBELOG] (비어 있음)"); return; }
+  const uint16_t start = (s_vl_n < VIBELOG_MAX) ? 0
+                       : (uint16_t)((s_vl_head + VIBELOG_MAX - s_vl_n) % VIBELOG_MAX);
+  int mixed_cnt = 0;
+  for (uint16_t i = 0; i < s_vl_n; i++) {
+    const vibe_sample_t *e = &s_vl_buf[(start + i) % VIBELOG_MAX];
+    const bool mixed = (e->polls > 0 && e->high > 0 && e->high < e->polls);
+    if (mixed) mixed_cnt++;
+    ESP_LOGW(TAG, "VL %3u  %6us  poll=%4u high=%4u isr=%5u  %s",
+             (unsigned)i, (unsigned)e->t_s, (unsigned)e->polls,
+             (unsigned)e->high, (unsigned)e->isr,
+             mixed                      ? "★섞임(접점 동작)"
+             : (e->high == 0)           ? "계속 LOW(접점 붙음/GND 단락)"
+             : (e->high == e->polls)    ? "계속 HIGH(접점 안 닫힘)"
+                                        : "-");
+  }
+  ESP_LOGW(TAG, "[VIBELOG] 섞인 창 %d/%u — 0 이면 센서가 한 번도 동작하지 않은 것",
+           mixed_cnt, (unsigned)s_vl_n);
+}
+
+void somfy_app_vibelog_clear(void) {
+  s_vl_n = 0; s_vl_head = 0;
+  memset(s_vl_buf, 0, sizeof(s_vl_buf));
+  _vibelog_save();
+  ESP_LOGW(TAG, "[VIBELOG] 기록 삭제됨");
+}
+#else  /* !BOARD_VIBELOG_ENABLE — 링버퍼·기록 전부 제외(heap 확보) */
+static void _vibelog_tick(int64_t now_us) { (void)now_us; }
+static void _vibelog_load(void) {}
+static void _vibelog_save(void) {}
+void somfy_app_vibelog_dump(void) {
+  ESP_LOGW(TAG, "[VIBELOG] 이 보드에서는 비활성(BOARD_VIBELOG_ENABLE=0 — heap 확보)");
+}
+void somfy_app_vibelog_clear(void) { somfy_app_vibelog_dump(); }
+#endif /* BOARD_VIBELOG_ENABLE */
+
 /* ═══ `~INT` 선 진단 — 고장 위치를 **소프트웨어만으로** 둘로 쪼갠다 ══════════════
  *
  *  배경: ②(PCF `~INT` 인터럽트)는 `intdiag` 실측으로 "선이 안 움직인다"까지 확인됐다
@@ -2842,41 +3056,6 @@ void somfy_app_intpd_test(void) {
   ESP_LOGW(TAG, "[INTPD] ================================================");
 }
 
-void somfy_app_vibelog_dump(void) {
-  ESP_LOGW(TAG, "[VIBELOG] === 진동 기록 %u건 (창 %d초, heartbeat %d초) ===",
-           (unsigned)s_vl_n, VIBELOG_WIN_S, VIBELOG_HB_S);
-  ESP_LOGW(TAG, "[VIBELOG] 현재: 레벨=%d 고장판정=%d  누적 poll=%u high=%u isr=%u",
-           btn_handler_vibe_level(), btn_handler_vibe_stuck() ? 1 : 0,
-           (unsigned)btn_handler_vibe_poll_total(),
-           (unsigned)btn_handler_vibe_high_total(),
-           (unsigned)btn_handler_vibe_isr_count());
-  if (s_vl_n == 0) { ESP_LOGW(TAG, "[VIBELOG] (비어 있음)"); return; }
-  const uint16_t start = (s_vl_n < VIBELOG_MAX) ? 0
-                       : (uint16_t)((s_vl_head + VIBELOG_MAX - s_vl_n) % VIBELOG_MAX);
-  int mixed_cnt = 0;
-  for (uint16_t i = 0; i < s_vl_n; i++) {
-    const vibe_sample_t *e = &s_vl_buf[(start + i) % VIBELOG_MAX];
-    const bool mixed = (e->polls > 0 && e->high > 0 && e->high < e->polls);
-    if (mixed) mixed_cnt++;
-    ESP_LOGW(TAG, "VL %3u  %6us  poll=%4u high=%4u isr=%5u  %s",
-             (unsigned)i, (unsigned)e->t_s, (unsigned)e->polls,
-             (unsigned)e->high, (unsigned)e->isr,
-             mixed                      ? "★섞임(접점 동작)"
-             : (e->high == 0)           ? "계속 LOW(접점 붙음/GND 단락)"
-             : (e->high == e->polls)    ? "계속 HIGH(접점 안 닫힘)"
-                                        : "-");
-  }
-  ESP_LOGW(TAG, "[VIBELOG] 섞인 창 %d/%u — 0 이면 센서가 한 번도 동작하지 않은 것",
-           mixed_cnt, (unsigned)s_vl_n);
-}
-
-void somfy_app_vibelog_clear(void) {
-  s_vl_n = 0; s_vl_head = 0;
-  memset(s_vl_buf, 0, sizeof(s_vl_buf));
-  _vibelog_save();
-  ESP_LOGW(TAG, "[VIBELOG] 기록 삭제됨");
-}
-
 /* 콘솔 `usbsim off|on` — 배터리 모드 시뮬레이션 토글. */
 void somfy_app_console_usbsim(int off) {
   s_usb_sim_off = (off != 0);
@@ -2988,6 +3167,14 @@ static bool    s_nobat_judged   = false;
 /* ★2026-08-12 방전 중 표시 % 하한 (근거는 _bat_smooth_mv 위 주석 참고).
  *  255 = 미설정. USB 연결 중에는 충전이므로 255 로 되돌려 상승을 허용한다. */
 static uint8_t s_pct_floor     = BAT_PCT_UNKNOWN;
+/* ★2026-08-16 (③) 충전 중 표시% 천장 — 방전 중 하한(s_pct_floor)의 대칭.
+ *  milli-percent(0~100000) 로 들고 있어야 분 단위 상승률이 정수 절사로 죽지 않는다.
+ *  -1 = 비활성(방전 중). 자세한 배경은 사용 지점 주석 참조. */
+static int     s_pct_ceil_mpct = -1;
+static int64_t s_pct_ceil_us   = 0;
+#ifndef BAT_CHG_RISE_MPCT_PER_MIN
+#define BAT_CHG_RISE_MPCT_PER_MIN 850   /* 0.85%p/분 = 700mAh 를 약 2시간에 충전 */
+#endif
 static int64_t s_nobat_t0_us   = 0;
 static int32_t s_nobat_sum1 = 0, s_nobat_sum2 = 0;   /* 전반/후반 전압 합 */
 static int16_t s_nobat_n1   = 0, s_nobat_n2   = 0;   /* 전반/후반 표본 수 */
@@ -3501,21 +3688,78 @@ void somfy_app_run(void *arg) {
      *           처럼 보임. 이제 fabric/fail-safe 기준으로 정확히 구분. */
     {
       static int64_t s_last_mt_us = 0;
+      static bool    s_mt_panel_was_on = false;
+      const bool     mt_panel_on = oled_ui_is_panel_on();
       int64_t mt_now = esp_timer_get_time();
-      if (mt_now - s_last_mt_us >= 1000000) {   /* 1s */
+
+      /* ★★2026-08-15 **화면이 켜져 있을 때만 갱신한다** (절전).
+       *  왜: thread_prov_is_attached()/get_parent_rssi() 는 **OpenThread 락을
+       *  잡는다**. 화면이 꺼져 있으면 아무도 안 보는 값을 위해 1초마다 OT 태스크를
+       *  건드리고 CPU 를 깨우는 셈이라, tickless idle/light sleep 을 그만큼 깬다.
+       *  → 패널 OFF 면 통째로 건너뛴다.
+       *  ※꺼진 동안 상태가 변해도 문제없다 — 화면이 켜지는 순간 아래 전이 처리로
+       *    **즉시 1회 갱신**하므로 사용자는 항상 최신값을 본다(1초 지연 없음). */
+      if (!mt_panel_on) {
+        s_mt_panel_was_on = false;
+      } else {
+        if (!s_mt_panel_was_on) {
+          s_mt_panel_was_on = true;
+          s_last_mt_us = 0;          /* OFF→ON 전이: 즉시 갱신 */
+        }
+      /* ★★2026-08-15 주기 1초 → **7초** (슬로우 폴 주기와 일치).
+       *  근거: 우리는 sleepy end device(rx-off-when-idle) 라 부모 프레임을 받는 건
+       *  **폴링할 때뿐**이다. 따라서 otThreadGetParentAverageRssi 는
+       *  CONFIG_ICD_SLOW_POLL_INTERVAL_MS(=7000) 보다 빨리 변할 수 없고,
+       *  role→DETACHED 는 폴 실패 누적이라 더 느리다(child timeout 기본 240초).
+       *  1초 주기는 **같은 값을 7번 다시 읽으며 그때마다 OT 락을 잡는 것**이었다.
+       *  ※'P' 점멸은 anim_frame 구동이라 무관하고, 페어링 화면은 별도 로직을 쓴다. */
+      if (mt_now - s_last_mt_us >= 7000000) {   /* 7s = ICD slow poll */
         s_last_mt_us = mt_now;
         oled_matter_state_t mst;
         int8_t rssi = OLED_RSSI_INVALID;
         if (matter_blinds_is_commissioned()) {
-          mst  = OLED_MT_CONNECTED;
-          rssi = thread_prov_get_parent_rssi();
+          /* ★★2026-08-15 등록 여부(NVS)만으로 CONNECTED 를 결정하면 안 된다.
+           *  사용자 신고: "신호가 안 잡히는 먼 곳으로 옮겼는데 안테나가 그대로다."
+           *  원인 — 등록은 NVS 라 권외에서도 유지되고, Thread 가 detach 되면
+           *  parent RSSI 가 INVALID(127) 가 되는데 _rssi_to_level 이 127 을
+           *  "링크는 있으나 측정 불가 → 풀바(4)" 로 해석해 **꽉 찬 안테나로 고정**됐다.
+           *  → 실제 attach 상태를 함께 보고, detach 면 NO_SIGNAL('-') 로 표시한다. */
+          if (thread_prov_is_attached()) {
+            mst  = OLED_MT_CONNECTED;
+            rssi = thread_prov_get_parent_rssi();
+          } else {
+            mst  = OLED_MT_NO_SIGNAL;      /* 등록 유지 + 권외 → '-' */
+          }
         } else if (matter_blinds_is_pairing_in_progress()) {
           mst  = OLED_MT_PAIRING;
         } else {
           mst  = OLED_MT_UNPAIRED;
         }
         oled_ui_set_matter_status(&s_ui, mst, rssi);
+
+        /* ★★★2026-08-16 (①진단) 표시가 바뀌는 순간 **판정 근거 3종**을 남긴다.
+         *  사용자 신고: 권외로 나가면 '-'(권외)가 아니라 'X'(미등록)로 바뀐다.
+         *  'X' 는 FabricCount==0 일 때만 나와야 하는데 등록은 NVS 라 권외에서도
+         *  유지돼야 한다 → 예상과 다르므로 fabric/attached/role 을 함께 봐야
+         *  어디서 갈리는지 알 수 있다. 상태가 **바뀔 때만** 찍어 OT 락 부담을 없앤다.
+         *  배터리 구동 중엔 콘솔이 없으므로 방전 로그(NVS)에도 같이 남긴다. */
+        {
+          static oled_matter_state_t s_mt_prev = (oled_matter_state_t)0xFF;
+          if (mst != s_mt_prev) {
+            s_mt_prev = mst;
+            ESP_LOGW(TAG, "[MTDIAG] 표시=%s  fabric=%d  attached=%d  role=%d  rssi=%d",
+                     (mst == OLED_MT_CONNECTED) ? "막대" :
+                     (mst == OLED_MT_NO_SIGNAL) ? "-(권외)" :
+                     (mst == OLED_MT_PAIRING)   ? "P(페어링)" : "X(미등록)",
+                     matter_blinds_is_commissioned() ? 1 : 0,
+                     thread_prov_is_attached() ? 1 : 0,
+                     thread_prov_get_role(), (int)rssi);
+            if      (mst == OLED_MT_NO_SIGNAL) somfy_app_batlog_button(BLEV_NOSIG);
+            else if (mst == OLED_MT_UNPAIRED)  somfy_app_batlog_button(BLEV_UNPAIR);
+          }
+        }
       }
+      }   /* mt_panel_on */
     }
 
     /* v3.6: 페어링 화면 세부 단계 진행 (SETUP_MATTER_PAIR 일 때만).
@@ -3671,8 +3915,33 @@ void somfy_app_run(void *arg) {
                 if (s_pct_floor <= 100 && _pct > (int)s_pct_floor) _pct = (int)s_pct_floor;
                 else                                              s_pct_floor = (uint8_t)_pct;
               }
+              s_pct_ceil_mpct = -1;            /* 방전 복귀 → 충전 천장 해제 */
             } else {
               s_pct_floor = BAT_PCT_UNKNOWN;   /* 충전 중엔 상승이 정상 → 하한 해제 */
+              /* ★★★2026-08-16 (③) 충전 중 **상승률 제한** — 위 BAT_FULL_MV 주석이
+               *  "고치려면 충전 중 상승률 제한(하한 s_pct_floor 의 대칭)이 필요하다"
+               *  고 지시해 놓고 구현되지 않았던 부분이다.
+               *
+               *  사용자 실측(2026-08-16): 84% → USB 연결 **즉시 100%** → 1분 내
+               *  분리하면 96%. 원인은 충전 전류가 내부저항을 지나며 단자전압을
+               *  100mV 남짓 들뜨게 하는 것인데, 하한까지 풀어버려 **상한이 없다**.
+               *  즉 표시가 잔량이 아니라 단자전압을 따라간다.
+               *
+               *  → 천장을 둔다. USB 연결 순간의 표시값에서 출발해 실제 충전 속도보다
+               *    빠르게 오르지 못하게 하고, 표시 = min(전압환산%, 천장) 으로 한다.
+               *    700mAh 를 0.5C 로 충전하면 약 2시간 → 0.85%p/분. */
+              if (s_pct_ceil_mpct < 0) {
+                s_pct_ceil_mpct = (int)s_ui.chg_percent * 1000;   /* 직전 표시값에서 출발 */
+                s_pct_ceil_us   = now_us;
+              } else {
+                const int64_t dms = (now_us - s_pct_ceil_us) / 1000;
+                if (dms > 0) {
+                  s_pct_ceil_us    = now_us;
+                  s_pct_ceil_mpct += (int)((dms * BAT_CHG_RISE_MPCT_PER_MIN) / 60000);
+                  if (s_pct_ceil_mpct > 100000) s_pct_ceil_mpct = 100000;
+                }
+              }
+              if (_pct > s_pct_ceil_mpct / 1000) _pct = s_pct_ceil_mpct / 1000;
             }
             s_ui.chg_percent = (uint8_t)_pct;
             /* ★진단(2026-08-11): "% 가 한 값에 고정" 신고 대응. 원본/평활/표시%
@@ -3823,6 +4092,14 @@ void somfy_app_run(void *arg) {
      *  ※세션 시작 검출은 _is_usb_powered() 의 60초 hold 창 때문에 최대 1분 늦을 수
      *    있다(그 사이 값은 기준점에 포함된다) — 누적 평균에는 영향이 미미하다. */
     {
+      /* ★★★2026-08-15 `was_usb_pwr` 를 **부팅 시 실제 전원 상태로** 초기화한다.
+       *
+       *  버그였다: `= true`(항상 USB 로 가정) 라서, **배터리 구동 중 재부팅**
+       *  (배터리 글리치/브라운아웃 — 부팅진단에 `bat=3990mV 리셋사유=전원투입` 실재)
+       *  이 나면 첫 판독에서 "USB→배터리 전환"으로 오인하고 `_batlog_reset()` 이
+       *  **직전 기록을 통째로 지웠다**. 사용자 6시간 방전 기록이 이렇게 날아갔다.
+       *  → 첫 루프에서 실제 상태를 읽고, 배터리면 NVS 의 직전 세션을 **이어받는다**. */
+      static bool     s_bl_first    = true;
       static bool     was_usb_pwr  = true;
       static bool     dis_pending  = false;   /* 분리는 감지, 기준점은 아직 (★C) */
       static uint32_t dis_seq0     = 0;       /* 분리 시점의 평활 호출 횟수 */
@@ -3841,6 +4118,19 @@ void somfy_app_run(void *arg) {
 #define USB_DROP_CONFIRM_MS 2000
 #endif
       static int64_t usb_low_since_us = 0;
+      /* ★★★2026-08-16 **첫 판독 보정** — 이게 기록을 날려온 진짜 원인이다.
+       *
+       *  아래 `now_usb` 는 "usb_mode 이거나, 배터리로 읽힌 지 2초가 안 됐으면 USB"
+       *  다. 그런데 부팅 직후 첫 루프에서는 `usb_low_since_us` 가 방금 now_us 로
+       *  채워지므로 경과 0초 → **배터리인데도 now_usb 가 항상 true** 로 나온다.
+       *  결과: (1) s_bl_first 가 USB 부팅으로 오인해 _batlog_try_resume 을 아예
+       *  부르지 않고, (2) 2초 뒤 배터리로 뒤집히면 `was_usb_pwr && !now_usb` 가
+       *  성립해 **"USB 분리"로 오인** → 새 세션 → 기록 삭제.
+       *  즉 배터리로 부팅할 때마다 직전 기록이 지워졌다.
+       *  → 배터리로 부팅한 경우엔 디바운스 창을 이미 지난 것으로 놓는다. */
+      if (s_bl_first && !usb_mode && usb_low_since_us == 0) {
+        usb_low_since_us = now_us - (int64_t)USB_DROP_CONFIRM_MS * 1000;
+      }
       if (usb_mode) {
         usb_low_since_us = 0;
       } else if (usb_low_since_us == 0) {
@@ -3848,7 +4138,20 @@ void somfy_app_run(void *arg) {
       }
       const bool now_usb = usb_mode ||
           ((now_us - usb_low_since_us) < (int64_t)USB_DROP_CONFIRM_MS * 1000);
-      if (was_usb_pwr && !now_usb) {
+      if (s_bl_first) {
+        s_bl_first  = false;
+        was_usb_pwr = now_usb;                /* ★가짜 전환 방지 */
+        if (!now_usb) {
+          /* 배터리로 부팅 — 직전 세션이 살아 있으면 이어받고, 없으면
+           *  아래 dis_pending 경로로 새 세션을 시작한다(_batlog_reset 은
+           *  그때 한 번만 불린다). */
+          if (!_batlog_try_resume(true)) {
+            dis_pending = true;
+            dis_seq0    = s_bat_sm_seq;
+            ESP_LOGW(TAG, "[BATLOG] 배터리로 부팅 — 이어받을 세션 없음, 새로 시작");
+          }
+        }
+      } else if (was_usb_pwr && !now_usb) {
         /* ★★2026-08-12 (C) USB → 배터리: **평활을 비우고 기준점은 미룬다.**
          *  분리 순간의 평활값은 충전 중 단자전압(실측 4056mV)이지 배터리 OCV 가
          *  아니다. 예전엔 그 값을 그대로 기준점으로 삼아, 이후 90초에 걸친 정착
@@ -3885,10 +4188,16 @@ void somfy_app_run(void *arg) {
         s_dis_prev_pct = s_dis_pct0;
         ESP_LOGW(TAG, "[BATLOG] ★방전 시작 — %dmV %d%% / 용량 %dmAh (실측 %d회로 수렴)",
                  s_dis_mv0, (int)s_dis_pct0, BAT_CAPACITY_MAH, s_bat_hist_n);
-        _batlog_reset();          /* 새 세션 → NVS 기록 초기화 */
-        _batlog_add(0, s_dis_mv0, s_dis_pct0,
-                    matter_blinds_get_radio_enabled(), oled_ui_is_panel_on(),
-                    g_pm_state_applied);
+        /* ★★★2026-08-16 `_batlog_reset()` 제거 — **기록을 지우지 않는다**.
+         *  세션 번호만 올리고 경계 표식을 한 건 남긴다. 링이 가득 차면 가장 오래된
+         *  것부터 밀려날 뿐이라, 세션 판정이 틀려도 과거 기록은 살아남는다.
+         *  전체 삭제는 콘솔 `blclear`(somfy_app_batlog_clear) 로만 — 사용자가
+         *  명시적으로 요청할 때만 일어난다. */
+        _batlog_new_session();
+        _batlog_ls_session_begin(false);   /* 새 세션 — light sleep 계측도 0 부터 */
+        _batlog_add_ev(0, s_dis_mv0, s_dis_pct0,
+                       matter_blinds_get_radio_enabled(), oled_ui_is_panel_on(),
+                       g_pm_state_applied, BLEV_SESS);
       }
 
       /* ★기록 주기: 분리 직후 2분간은 5초, 그 뒤로는 2분마다 (사용자 지정).

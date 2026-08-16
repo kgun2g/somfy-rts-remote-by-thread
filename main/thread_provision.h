@@ -70,6 +70,10 @@ bool thread_prov_is_provisioned(void);
  */
 bool thread_prov_is_attached(void);
 
+/* 원시 otDeviceRole (0=DISABLED 1=DETACHED 2=CHILD 3=ROUTER 4=LEADER, -1=불가).
+ *  안테나 표시 진단용 — thread_provision.c 주석 참조. */
+int thread_prov_get_role(void);
+
 /**
  * @brief 현재 상태 반환.
  */

@@ -67,7 +67,11 @@
 #define BOARD_OLED_WIDTH 128
 #define BOARD_OLED_HEIGHT 64
 #define BOARD_OLED_COL_OFFSET 0
-#define BOARD_OLED_ROTATE_180 0 // 외부 모듈은 보통 정방향
+/* ★★★2026-08-16 0 → 1. 이 시제품은 OLED 가 **뒤집혀 장착**돼 있다
+ *  (doc/wiring/README.md 및 SETUP_GUIDE 의 `-Rotate 180 필수` 주석).
+ *  기본값이 0 이면 빌드할 때마다 `-Rotate 180` 을 손으로 붙여야 하는데,
+ *  한 번만 빠뜨려도 화면이 상하 뒤집힌다. → 기본값을 기판에 맞춘다. */
+#define BOARD_OLED_ROTATE_180 1 // 시제품 기판이 180° 장착
 #define BOARD_OLED_FIXUP_72X40 0
 #define BOARD_OLED_ADDR 0x3C
 
@@ -98,6 +102,47 @@
 /* OTA 미지원 — 설정 메뉴에서 FW Update 항목 제거(사용자 요청). */
 #define BOARD_DISABLE_OTA 1
 
+/* ★★★2026-08-15 진단 로그 링버퍼 축소 — heap 확보(사용자 지시).
+ *  두 링은 정적 배열(.bss)이라 그대로 heap 을 깎는다. H2 는 BLE 커미셔닝
+ *  PASE peak 때문에 heap 이 빠듯해, 배터리 ADC 실측(BOARD_BAT_SWAPPED=0)을 켜자
+ *  CHIP PacketBuffer pool EMPTY + linenoise malloc 실패로 죽었다.
+ *    진동 로그 : 센서 고장 원인(센서 불량)이 이미 규명돼 상시 기록 불필요 → **OFF** (-1,024B)
+ *    방전 로그 : % 실측 검증에 필요 → 유지하되 300 → **128 건**으로 축소 (-1,376B)
+ *  합계 약 2.4KB 확보. C6 는 기본값(300 / 128) 그대로 — 절전 측정에 긴 기록이 필요하다. */
+#define BOARD_VIBELOG_ENABLE 0
+/* ★★★2026-08-16 light sleep 임시 차단 — 배터리 구동 중 패닉 반복.
+ *  근거: 부팅진단 리셋사유가 절전빌드 적용 전 `USB리셋` → 적용 후 `★패닉/예외`,
+ *  실패 누적 29 → 39. 원인(추정: 공유 I2C ↔ light sleep 복귀) 확정 전까지 끈다.
+ *  ①MTD/SED(가장 큰 절감)와 DFS 는 유지된다. 원인 해결되면 0 으로 되돌릴 것. */
+/* ★★★2026-08-16 (3) **0 으로 되돌린다** — 아래 ①②의 진범이 따로 밝혀졌다.
+ *
+ *  코어덤프로 확인한 패닉의 실제 원인은 light sleep 이 아니라 **CC1101 SPI** 였다:
+ *      #1 uninstall_priv_desc  spi_master.c:1181   #2 setup_priv_desc  :1260
+ *    DMA + 스택버퍼 → 전송마다 heap 바운스 할당 → 실패 시 IDF 가 초기화 안 된
+ *    포인터로 memcpy → 크래시. cc1101.c 를 SPI_DMA_DISABLED 로 고쳐 경로가 소멸했다.
+ *  ②의 버튼 연타도 light sleep 을 끈 빌드에서 그대로 재현됐고(SEL 70건),
+ *    이후 하드웨어 조치로 해결됐다 — 역시 light sleep 과 무관했다.
+ *  → 아래 기록은 **오진의 이력**으로 남겨둔다. 판단 근거였던 두 증상 모두
+ *    다른 원인으로 설명·해결됐으므로 light sleep 을 다시 켠다.
+ *
+ * ── 이하 2026-08-16 당시의 (틀린) 판단 기록 ─────────────────────────────
+ * ★2026-08-16 다시 1 — light sleep 이 **두 가지 오작동의 공통분모**로 확인됐다.
+ *
+ *  ① 패닉: 절전빌드 후 배터리에서 반복(부팅진단 리셋사유 `USB리셋`→`★패닉/예외`,
+ *          실패누적 29→39). 전압은 5004mV 정상이라 브라운아웃이 아니다.
+ *  ② 버튼 연타: SEL 이 같은 1초에 4번씩 찍힌다(방전로그 실측). 디바운스는
+ *          esp_timer 기반(20ms)이라 tick 변경과 무관하므로, **PCF 읽기 값 자체가
+ *          토글**되고 있다는 뜻이다 → 사용자 신고 "채널 변경 버튼이 안 된다".
+ *
+ *  둘 다 H2 가 **OLED 와 PCF 로 I2C 를 공유**하는 구조에서 light sleep 복귀와
+ *  충돌하는 것으로 보인다(C6 는 PCF 를 LP_I2C/LP코어로 분리해 해당 없음).
+ *  ★backtrace 는 아직 못 봤다 — coredump 파티션은 넣어뒀으니 다음 패닉 때 잡힌다.
+ *  ①(FTD→MTD/SED, 최대 절감)과 DFS 는 그대로 유지된다. */
+#define BOARD_DISABLE_LIGHT_SLEEP 0
+
+#define BOARD_BATLOG_ENABLE 1
+#define BOARD_BATLOG_MAX 128 // × 8B = 1,024B
+
 /* ════════════════════════════════════════════════════════
    GPIO 직결 센서 (light sleep wake 가능)
    ════════════════════════════════════════════════════════ */
@@ -120,12 +165,67 @@
 #define BOARD_CHG_MA 100 // TP4054, R_PROG=10kΩ → ~100mA
 
 /* 충전 감지(A+B) — VBUS 분압(active-HIGH) + BAT 분압 ADC(실측 %) */
-#define BOARD_CHG_STAT_ACTIVE_HIGH 1 // CHG_STAT(GP12) ← VBUS(5V) 100k/150k 분압(~3.0V)
+#define BOARD_CHG_STAT_ACTIVE_HIGH 1 // CHG_STAT(GP12) ← VBUS(5V) 분압
+/* ★★2026-08-15 분압 100k/150k → **3.0V** (설계값 복구 확인).
+ *   ESP32-H2 의 VIH 는 약 2.475V 라 3.0V 면 여유가 충분하다.
+ *   ※한때 100k/100k(=2.5V)로 잘못 실장돼 있었고, 그때는 어느 쪽도 못 썼다:
+ *       내부 풀다운 ON  → 100k∥45k=31k → 1.18V → 항상 LOW(USB 영영 미감지)
+ *       내부 풀다운 OFF → 2.5V, 문턱 바로 위 → 불안정. 콘솔 REPL 이 스핀해
+ *                         somfy_app 을 굶기고 폭주했다(task_wdt: CPU 0 = console).
+ *   → 3.0V 로 복구됐으므로 아래 EXT_PULLDOWN 을 켠다(하단 150k 가 이미 풀다운이라
+ *     내부 풀다운을 병렬로 물리면 3.0V→1.29V 로 눌려 USB 를 LOW 로 오독한다). */
+/* ★★★2026-08-15 **보류(0)** — 배선을 설계값(3.0V)으로 복구한 뒤에도 이 값을 켜면
+ *   H2 가 죽는다. 원인은 분압이 아니라 **공유 I2C 버스 물림**이다:
+ *     task_wdt 덤프 = somfy_app 굶음 / 현재 실행 = btn_handler,
+ *     레지스터 A5=0x600c5090(주변장치) → IDF i2c 의
+ *      (**타임아웃 없음**) 안에서 스핀.
+ *     같은 시간에 CHIP 은 정상(CASE 수립·구독 협상 완료) = 시스템은 살아 있다.
+ *   EXT_PULLDOWN 을 켜면 USB 가 감지되어 충전 애니메이션 등 OLED 트래픽이 늘고,
+ *   그 잠재 결함이 드러난다. trylock 수정은 **뮤텍스 대기**만 막을 뿐
+ *   드라이버가 **락을 쥔 채 스핀**하는 건 못 막는다.
+ *   → 공유 I2C 물림을 먼저 고친 뒤 켤 것. 지금은 USB 미감지를 감수하고 안정 우선.
+ */
+/* ★★★2026-08-16 **켠다(1)** — 멀티미터 실측 근거 + 사용자 결정.
+ *   USB 연결 시 CHG_STAT = **0.69V** 로 측정됐다(설계상 5V×150/250 = 3.0V 여야 함).
+ *   역산하면 내부 풀다운이 ~18kΩ 로 붙어 하단 150k 를 짓누르고 있다
+ *     5 × (150k∥18k)/(100k + 150k∥18k) = 0.69V
+ *   → 항상 LOW → USB 를 영영 못 잡는다. 하단 150k 가 이미 풀다운 역할을 하므로
+ *     내부 풀다운은 해로울 뿐이다. 끄면 3.0V 로 올라가 정상 판정된다.
+ *
+ *   ※위 2026-08-15 의 위험 기록(켜면 공유 I2C 가 물려 somfy_app 이 굶음)은
+ *     **여전히 유효하다**. 다만 그 뒤로 조건이 바뀌었다:
+ *       · CC1101 SPI 가 DMA→비DMA (전송마다 나던 heap 할당이 사라짐, cc1101.c 주석)
+ *       · 버튼 하드웨어 정상화
+ *       · Thread FTD→MTD/SED (RAM·트래픽 감소)
+ *     재발(task_wdt: somfy_app 굶음 / 현재 실행 btn_handler)하면 **즉시 0 으로 되돌릴 것**. */
+#define BOARD_CHG_STAT_EXT_PULLDOWN 1
 #define BOARD_HAS_BAT_ADC 1
-/* ★ 현 기판은 분압이 오배선: BAT_ADC핀(GP3)=VBUS, CHG_STAT핀(GP12)=BAT.
- *   GP12 가 ADC 불가핀이라 잔량 % 측정 불가 → "USB/BAT/LOW" 상태 표시로 동작.
- *   기판을 정상 배선(GP3=BAT, GP12=VBUS)으로 고치면 0(또는 삭제) → 충전률 % 복귀. */
-#define BOARD_BAT_SWAPPED 1
-#define BOARD_PIN_BAT_ADC 3   // GP3 (ADC1) ← BAT 100k/100k 분압
-#define BOARD_BAT_DIV_TOP 100 // 100k/100k → Vbat = Vadc×2
-#define BOARD_BAT_DIV_BOT 100
+/* 구 기판은 분압이 오배선이었다: BAT_ADC핀(GP3)=VBUS, CHG_STAT핀(GP12)=BAT.
+ *   GP12 가 ADC 불가핀이라 잔량 % 측정 불가 → "USB/BAT/LOW" 상태 표시로 동작(=1).
+ * ★2026-08-15: BAT_ADC/CHG_STAT 회로를 **정상 배선으로 수정**(GP3=BAT 분압 → ADC
+ *   실측 %, GP12=VBUS 분압 → USB 감지) → **0 으로 전환**.
+ *   =1 경로(USB/BAT/LOW 텍스트)는 somfy_app·oled_ui 의 #if 로 그대로 보존(삭제 금지).
+ *   ※되돌리기: 배선이 옛 상태인 기판을 쓰면 다시 1 로. */
+/* ★★★2026-08-15 처음 0 으로 켰을 때 H2 가 죽었다(task_wdt 23회: somfy_app + IDLE,
+ *   로그 폭주, somfy_app=7 부팅 미완료). 원인은 배선이 아니라 **락**이었다 —
+ *   공유 I2C 경로 `PCF_RD_SHARED()` 가 `oled_ui_i2c_lock()`(portMAX_DELAY) 을
+ *   **버튼 태스크(prio 10)에서 10ms 마다** 잡고 있었고, 같은 뮤텍스를 쥔 쪽이 IDF I2C
+ *   NACK 무한 스핀에 걸리면 prio 10 이 영원히 막혀 prio 4/0 이 굶는다.
+ *   ADC 읽기(=이 뮤텍스의 두 번째 경쟁자)를 켜자 그 경로가 드러난 것이다.
+ *   → button_handler.c 의 해당 락을 **유한 대기(trylock 50ms) + 실패 시 이번 폴
+ *     건너뜀** 으로 바꾼 뒤 0 으로 복귀. (그쪽 주석 참조) */
+#define BOARD_BAT_SWAPPED 0
+#define BOARD_PIN_BAT_ADC 3   // GP3 (ADC1) ← BAT 분압
+/* ★2026-08-15 저항 실장이 한때 CHG_STAT 과 서로 바뀌어 있었다(150k 가 BAT_ADC 하단에).
+ *   그 상태에선 BOT=150 으로 맞춰야 했고, 안 고치면 전압을 1.2배 과대 계산했다
+ *   (vadc 2085mV → 잘못 4170mV / 올바르게 3475mV). **사용자가 원래 회로로 복구**하여
+ *   설계값 100k/100k(×2) 로 되돌린다. */
+/* ★★★2026-08-16 BOT 100 → 150. **멀티미터 실측으로 확정**했다.
+ *    USB 분리(VBUS=0.02V) 상태에서  GP3 = 2.500V,  배터리 = 4.187V
+ *    → 분압비 2.500/4.187 = 0.597 ≈ 150/(100+150)  즉 상단 100k / 하단 150k
+ *  USB 를 빼도 GP3 가 2.5V 를 유지하므로 **GP3 는 배터리를 본다**(VBUS 아님).
+ *  → 이전에 "GP3 가 VBUS 를 본다"고 판단해 BAT_SWAPPED 를 의심했던 것은 **오진**이었다.
+ *    2516mV 가 우연히 VBUS/2(2.5V)와 겹쳐 그렇게 보였을 뿐이다.
+ *  검산: 2516mV × 250/150 = 4193mV  vs 실측 4187mV (6mV 차) — 일치. */
+#define BOARD_BAT_DIV_TOP 100 // 상단(BAT→노드)
+#define BOARD_BAT_DIV_BOT 150 // 하단(노드→GND) — 실측 분압비 0.597 로 확정
