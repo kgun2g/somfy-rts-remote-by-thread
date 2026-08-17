@@ -17,6 +17,8 @@ onair_build_log.txt
 build/
 build-xiao-c6/
 build-esp32-h2/
+# 2026-08-17 테스트 보드(COM6) 별도 빌드 디렉터리
+build-xiao-c6-test/
 dist/
 build_test/
 kicad_backup/

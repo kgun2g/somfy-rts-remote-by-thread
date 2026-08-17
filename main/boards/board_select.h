@@ -25,6 +25,11 @@
 #if defined(BOARD_GNPE_C6) || defined(BOARD_ESP32_C6)
    /* GNPE ESP32-C6-0.42 (현 검증 보드). BOARD_ESP32_C6 은 구 키 backward 별칭. */
 #  include "boards/gnpe-c6.h"
+#elif defined(BOARD_XIAO_C6_TEST)
+   /* ★2026-08-16 XIAO C6 테스트 보드(COM6) — xiao-c6.h 를 상속해 차이만 덮는다.
+    *  ※BOARD_XIAO_C6 보다 **먼저** 검사한다. 보드 매크로가 두 개 다 정의되는
+    *    경우가 생겨도 테스트 프로파일이 이기도록. */
+#  include "boards/xiao-c6-test.h"
 #elif defined(BOARD_XIAO_C6)
 #  include "boards/xiao-c6.h"
 #elif defined(BOARD_ESP32_H2)
@@ -134,6 +139,14 @@ See main/boards/ for available boards."
  *
  *   ※(c) 는 컴파일 시 알 수 없으므로 **런타임에 한 번 더** 판정한다
  *     (button_handler.c). 여기서는 "이 보드가 시도해도 되는가"만 정한다. */
+/* ── 로터리 A/B 배선 스왑 (2026-08-17) ────────────────────────────────
+ *   0 (기본): P0=A, P1=B
+ *   1       : P0=B, P1=A — 엔코더 A/B 가 뒤바뀌게 배선된 기판(예: COM3 H2).
+ *   빌드에서 `-Rot ab|ba` 로 덮을 수 있다. 정의는 button_handler.h. */
+#ifndef BOARD_ROT_AB_SWAP
+#  define BOARD_ROT_AB_SWAP      0
+#endif
+
 #ifndef BOARD_PCF_LP_CORE
 #  define BOARD_PCF_LP_CORE      0
 #endif
@@ -177,6 +190,13 @@ See main/boards/ for available boards."
 #ifndef BOARD_CHG_STAT_EXT_PULLDOWN
 #  define BOARD_CHG_STAT_EXT_PULLDOWN 0
 #endif
+/* ★2026-08-16 배터리·충전회로가 아예 없는 보드 — 항상 USB 급전으로 본다.
+ *  이게 없으면 CHG_STAT 이 플로팅이라 '배터리 구동'으로 오판하고, 배터리
+ *  규칙(유휴 10초 화면 OFF)이 걸려 부팅하자마자 화면이 꺼진다. */
+#ifndef BOARD_ALWAYS_USB_POWERED
+#  define BOARD_ALWAYS_USB_POWERED    0
+#endif
+
 #ifndef BOARD_HAS_BAT_ADC
 #  define BOARD_HAS_BAT_ADC           0
 #endif
@@ -301,6 +321,24 @@ See main/boards/ for available boards."
 #ifdef BOARD_OVR_HAS_LR_BUTTONS
 #  undef  BOARD_HAS_LR_BUTTONS
 #  define BOARD_HAS_LR_BUTTONS    BOARD_OVR_HAS_LR_BUTTONS
+#endif
+/* ★2026-08-16 LP 코어 사용 여부 — `-Lp on|off`.
+ *  공유 I2C 배선 개체나 PCF8574 개체(LP 는 2바이트 고정이라 assert 로 막힌다)에서
+ *  끈다. 끄면 HP 가 직접 폴링한다(런타임 폴백과 같은 경로). */
+#ifdef BOARD_OVR_ROT_AB_SWAP
+#  undef  BOARD_ROT_AB_SWAP
+#  define BOARD_ROT_AB_SWAP       BOARD_OVR_ROT_AB_SWAP
+#endif
+#ifdef BOARD_OVR_PCF_LP_CORE
+#  undef  BOARD_PCF_LP_CORE
+#  define BOARD_PCF_LP_CORE       BOARD_OVR_PCF_LP_CORE
+#endif
+/* ★2026-08-16 배터리 ADC 유무 — `-Bat on|off`.
+ *  충전/배터리 측정 회로가 없는 테스트 보드에서 끈다. 켜 두면 플로팅 핀을 읽어
+ *  잔량%가 무의미한 값으로 뜨고, 무배터리 판정 로직도 헛돈다. */
+#ifdef BOARD_OVR_HAS_BAT_ADC
+#  undef  BOARD_HAS_BAT_ADC
+#  define BOARD_HAS_BAT_ADC       BOARD_OVR_HAS_BAT_ADC
 #endif
 #ifdef BOARD_OVR_ROT_HALF_STEP
 #  undef  BOARD_ROT_HALF_STEP

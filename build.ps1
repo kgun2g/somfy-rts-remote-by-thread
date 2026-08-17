@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # Somfy RTS 블라인드 컨트롤러 — 빌드/플래시 스크립트.
 # esp-idf · esp-matter 는 외부 SDK(환경변수 참조). 프로젝트 루트를 빌드한다.
 #
@@ -32,6 +32,9 @@ param(
     [string]$Oled   = "",   # "" | 72x40 | 128x64 | 64x128  (OLED 해상도; 64x128=세로 패널)
     [string]$Rotate = "",   # "" | 0 | 180 | m0 | m180  (OLED 회전; m 접두=좌우반전)
     [string]$Freq   = "",   # "" | 447.70 | 447.72  (기본 송신 주파수 register; 미지정=보드 기본 447.70)
+    [string]$Lp     = "",   # "" | on | off   (LP 코어 PCF 폴링; off = HP 직접 폴링)
+    [string]$Bat    = "",   # "" | on | off   (배터리 ADC; off = 측정회로 없는 테스트보드)
+    [string]$Rot    = "",   # "" | ab | ba   (로터리 A/B 배선; ba = 뒤바뀐 기판)
     [switch]$OledTest       # OLED 단독 부팅 테스트 (Matter/RF/버튼/배터리 전부 비활성, OLED만 구동)
 )
 
@@ -44,6 +47,15 @@ $BoardMap = @{
         EspMatterDevice  = "device_hal/device/esp32c6_devkit_c"
     }
     "xiao-c6" = @{                 # Seeed XIAO ESP32-C6 (PID 0x8003 오버레이)
+        IdfTarget        = "esp32c6"
+        SdkconfigDef     = "sdkconfig.defaults;sdkconfig.defaults.c6_thread;sdkconfig.defaults.xiao_c6"
+        EspMatterDevice  = "device_hal/device/esp32c6_devkit_c"
+    }
+    "xiao-c6-test" = @{            # ★2026-08-16 XIAO C6 테스트 보드(COM6)
+        #  PCF8574 / LP 미적용(공유 I2C) / 447.72MHz / 배터리·충전회로 없음.
+        #  실기(xiao-c6, COM7)와 **빌드 디렉터리·sdkconfig 를 분리**해 오갈 때
+        #  전체 재빌드가 나지 않게 한다. 핀맵은 boards/xiao-c6-test.h 가
+        #  xiao-c6.h 를 include 해 상속(복사본을 두지 않는다).
         IdfTarget        = "esp32c6"
         SdkconfigDef     = "sdkconfig.defaults;sdkconfig.defaults.c6_thread;sdkconfig.defaults.xiao_c6"
         EspMatterDevice  = "device_hal/device/esp32c6_devkit_c"
@@ -164,6 +176,9 @@ elseif ($Rotate -in @('90','270'))  { $rot90 = $Rotate; $rotBase = '0' }
 if ($Rotate -ne '' -and $rotBase -notin @('0','180'))         { Write-Host "[ovr] -Rotate 는 0|180|m0|m180|90|270" -ForegroundColor Red; exit 1 }
 if ($Oled   -and $Oled   -notin @('72x40','128x64','64x128')) { Write-Host "[ovr] -Oled 는 72x40|128x64|64x128"  -ForegroundColor Red; exit 1 }
 if ($Freq   -and $Freq   -notmatch '^44[0-9]\.\d{2}$')        { Write-Host "[ovr] -Freq 는 447.xx 형식(예 447.70|447.72)" -ForegroundColor Red; exit 1 }
+if ($Lp     -and $Lp     -notin @('on','off'))                { Write-Host "[ovr] -Lp 는 on|off"  -ForegroundColor Red; exit 1 }
+if ($Bat    -and $Bat    -notin @('on','off'))                { Write-Host "[ovr] -Bat 는 on|off" -ForegroundColor Red; exit 1 }
+if ($Rot    -and $Rot    -notin @('ab','ba'))                  { Write-Host "[ovr] -Rot 는 ab|ba"  -ForegroundColor Red; exit 1 }
 
 $ovrLR   = if ($Pcf -eq '8575') { '1' } elseif ($Pcf -eq '8574') { '0' } else { '' }
 $ovrROT  = if ($Rotary -eq 'ec05') { '1' } elseif ($Rotary -eq 'ec11') { '0' } else { '' }
@@ -171,6 +186,14 @@ $ovrR180  = if ($rotBase -eq '180') { '1' } elseif ($rotBase -eq '0') { '0' } el
 $ovrFLIPX = if ($Rotate -eq '') { '' } elseif ($rotMirror) { '1' } else { '0' }
 $ovrR90   = if ($rot90) { $rot90 } elseif ($Rotate -ne '') { '0' } else { '' }
 $ovrFreq  = if ($Freq -ne '') { "${Freq}f" } else { '' }   # 예 447.70f (CC1101 register 목표 주파수)
+# ★2026-08-16 -Lp / -Bat
+#  -Lp off : LP 프로그램을 빌드에서 뺀다. PCF8574(1바이트) 개체에서 필수 —
+#            lp_core/pcf_lp_config.h 의 LP_PCF_NBYTES 가 2 고정이라 _Static_assert 가 깨진다.
+#  -Bat off: 충전/배터리 측정 회로가 없는 보드. 켜 두면 플로팅 핀을 읽어 잔량%가 헛돈다.
+$ovrLp   = if ($Lp  -eq 'off') { '0' } elseif ($Lp  -eq 'on') { '1' } else { '' }
+$ovrBat  = if ($Bat -eq 'off') { '0' } elseif ($Bat -eq 'on') { '1' } else { '' }
+# -Rot ba : 엔코더 A/B 가 뒤바뀌게 배선된 기판(예: COM3 H2). 방향이 통째로 반대가 된다.
+$ovrRot  = if ($Rot -eq 'ba') { '1' } elseif ($Rot -eq 'ab') { '0' } else { '' }
 $ow=''; $oh=''; $ofx=''; $ooff=''
 switch ($Oled) {
     '72x40'  { $ow='72';  $oh='40';  $ofx='1'; $ooff='28' }
@@ -187,10 +210,13 @@ $OvrDefs = @(
     "-D","BOARD_OVR_OLED_HEIGHT=$oh",
     "-D","BOARD_OVR_OLED_FIXUP=$ofx",
     "-D","BOARD_OVR_OLED_COL_OFFSET=$ooff",
-    "-D","BOARD_OVR_FREQ=$ovrFreq"
+    "-D","BOARD_OVR_FREQ=$ovrFreq",
+    "-D","BOARD_OVR_PCF_LP_CORE=$ovrLp",
+    "-D","BOARD_OVR_HAS_BAT_ADC=$ovrBat",
+    "-D","BOARD_OVR_ROT_AB_SWAP=$ovrRot"
 )
-if ($Pcf -or $Rotary -or $Oled -or $Rotate -ne '' -or $Freq -ne '') {
-    Write-Host "[ovr] 변형 빌드: Pcf=$Pcf Rotary=$Rotary Oled=$Oled Rotate=$Rotate Freq=$Freq" -ForegroundColor Cyan
+if ($Pcf -or $Rotary -or $Oled -or $Rotate -ne '' -or $Freq -ne '' -or $Lp -or $Bat -or $Rot) {
+    Write-Host "[ovr] 변형 빌드: Pcf=$Pcf Rotary=$Rotary Oled=$Oled Rotate=$Rotate Freq=$Freq Lp=$Lp Bat=$Bat Rot=$Rot" -ForegroundColor Cyan
     if ($Oled) {
         Write-Host "[ovr] ⚠ OLED 해상도 override 는 렌더러·패널크기(ssd1306_init)만 -D 로 바꾼다." -ForegroundColor Yellow
         Write-Host "       물리 컬럼 오프셋은 SSD1306 라이브러리 Kconfig(CONFIG_OFFSETX, sdkconfig)라" -ForegroundColor Yellow

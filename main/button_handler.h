@@ -43,8 +43,21 @@ extern "C" {
 #define PCF8574_LP_I2C_SCL PCF8574_I2C_SCL
 
 /* PCF8574 비트맵 (active-LOW, 내부 pull-up) */
-#define PCF8574_BIT_ROT_A     0
-#define PCF8574_BIT_ROT_B     1
+/* ★★★2026-08-17 로터리 A/B 스왑을 보드/빌드 설정으로.
+ *  기판마다 엔코더 A/B 배선이 뒤바뀐 개체가 있다(COM3 H2 가 그렇다).
+ *  A/B 가 뒤집히면 쿼드러처 방향이 통째로 반대가 된다.
+ *    BOARD_ROT_AB_SWAP 0 (기본) : P0=A, P1=B
+ *    BOARD_ROT_AB_SWAP 1        : P0=B, P1=A  ← 배선이 뒤바뀐 기판
+ *  빌드에서 `-Rot ab|ba` 로도 덮을 수 있다(board_select.h 의 오버라이드).
+ *  ※LP 코어를 쓰는 보드는 lp_core/pcf_lp_config.h 의 LP_BIT_ROT_A/B 도
+ *    같이 맞춰야 한다 — 어긋나면 button_handler.c 의 _Static_assert 가 잡는다. */
+#if BOARD_ROT_AB_SWAP
+#  define PCF8574_BIT_ROT_A     1
+#  define PCF8574_BIT_ROT_B     0
+#else
+#  define PCF8574_BIT_ROT_A     0
+#  define PCF8574_BIT_ROT_B     1
+#endif
 #define PCF8574_BIT_ROT_BTN   2
 #define PCF8574_BIT_SETUP_BTN 3
 #define PCF8574_BIT_BTN_UP    4

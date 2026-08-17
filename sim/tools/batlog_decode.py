@@ -9,7 +9,7 @@ C6 에서도 **측정 데이터를 지킬 때** 이쪽이 안전하다.
     python sim/tools/batlog_decode.py nvs.bin
 
 main/somfy_app.c 의 bat_sample_t (packed, 8B) 와 짝을 이룬다:
-    uint16 t_s / uint16 mv / uint8 pct / uint8 flags / uint8 sp / uint8 ls
+    uint16 t_s / uint16 mv / uint8 pct / uint8 flags / uint8 sp / uint8 ls / int8 rssi
     flags: bit0=무선ON bit1=화면ON bit2~3=PM상태 bit4~7=이벤트코드
 """
 import struct
@@ -20,7 +20,7 @@ from nvs_parse import parse   # noqa: E402
 
 EVN = ["주기", "LEFT", "RIGHT", "SEL", "UP", "DOWN", "ROT", "PROG", "기타",
        "세션시작", "권외-", "미등록X", "?", "?", "?"]
-SAMPLE = struct.Struct('<HHBBBB')
+SAMPLE = struct.Struct('<HHBBBBb')   # ★2026-08-16 rssi(int8) 추가 → 9B
 
 
 def decode(path, div_top=100, div_bot=100, capacity_mah=700):
@@ -56,10 +56,10 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700):
         off = ((start + i) % maxn) * SAMPLE.size
         rows.append(SAMPLE.unpack_from(buf, off))
 
-    print('%4s %8s %8s %5s %8s %6s %6s %5s %8s'
-          % ('#', '+초', 'mV', '%', '평균mA', '무선', '화면', 'pm', 'sleep%'))
+    print('%4s %8s %8s %5s %8s %6s %6s %5s %8s %6s'
+          % ('#', '+초', 'mV', '%', '평균mA', '무선', '화면', 'pm', 'sleep%', 'rssi'))
     p0 = t0 = None
-    for i, (t_s, mv, pct, flags, sp, ls) in enumerate(rows):
+    for i, (t_s, mv, pct, flags, sp, ls, rssi) in enumerate(rows):
         ev = (flags >> 4) & 0x0F
         if ev == 9 or p0 is None:          # 세션 경계에서 기준 재설정
             p0, t0 = pct, t_s
@@ -68,9 +68,10 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700):
         dt = t_s - t0
         ma = ((p0 - pct) * capacity_mah * 36) // dt if dt > 0 else 0
         sp_mv = sp * 3100 // div_bot * (div_top + div_bot) // 4095
-        print('%4d %8d %8d %5d %8d %6d %6d %5d %8d   산포%d(%dmV) %s'
+        print('%4d %8d %8d %5d %8d %6d %6d %5d %8d %6s   산포%d(%dmV) %s'
               % (i, t_s, mv, pct, ma, flags & 1, (flags >> 1) & 1,
-                 (flags >> 2) & 3, ls, sp, sp_mv, EVN[ev]))
+                 (flags >> 2) & 3, ls, ('-' if rssi == 127 else rssi),
+                 sp, sp_mv, EVN[ev]))
 
     v = [r[1] for r in rows]
     t = [r[0] for r in rows]
@@ -80,6 +81,12 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700):
              v[-1] - v[0]))
     print('      최저 %dmV / 최고 %dmV   sleep 평균 %.1f%%'
           % (min(v), max(v), sum(r[5] for r in rows) / len(rows)))
+    rs = [r[6] for r in rows if r[6] != 127]
+    if rs:
+        print('      RSSI  최저 %ddBm / 최고 %ddBm / 평균 %.1fdBm  (표본 %d)'
+              % (min(rs), max(rs), sum(rs) / float(len(rs)), len(rs)))
+    else:
+        print('      RSSI  기록 없음(127=측정불가 이거나 옛 형식)')
 
     # ── light sleep 진입 계측 (2026-08-16 추가) ────────────────────────────
     #  `rt` 실측에서 전 태스크 작업 합이 1.02%(somfy_app 회당 703µs) 로 나왔다.

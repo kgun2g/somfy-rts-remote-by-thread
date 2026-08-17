@@ -183,3 +183,46 @@ CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=32
+
+# ═══ ★★★2026-08-16 heap 확보 — 채널(블라인드 3개)을 줄이지 않는 방법 ═══════
+#  실측: OLEDMON 의 free heap 이 **1,324B**. 이 상태로는 BLE 페어링(PASE 피크
+#  20~30KB)이 불가능하다. 가장 큰 덩어리를 추적하니 **NimBLE mbuf 풀이 heap**
+#  에서 나온다(CONFIG_BT_NIMBLE_MSYS_BUF_FROM_HEAP=y):
+#      MSYS_1: 24 × 128B = 3,072B      MSYS_2: 24 × 320B = 7,680B   합 10.7KB
+#  기록된 진단("병목=NimBLE mbuf heap")과 일치한다.
+#  → 이 기기는 **BLE peripheral 전용**(커미셔닝 때만 광고)이므로 아래를 줄인다.
+#  ※너무 줄이면 BLE 처리량이 떨어져 페어링이 다른 이유로 실패할 수 있다.
+#    적용 후 반드시 free heap 과 실제 페어링을 함께 확인할 것.
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=12
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=16
+#  커미셔닝은 BLE 연결 1개면 충분하다(기본 3).
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+#  peripheral 전용 — central/observer 는 쓰지 않는다.
+# CONFIG_BT_NIMBLE_ROLE_CENTRAL is not set
+# CONFIG_BT_NIMBLE_ROLE_OBSERVER is not set
+#  SED 는 메시지 버퍼가 많이 필요 없다.
+CONFIG_OPENTHREAD_NUM_MESSAGE_BUFFERS=16
+CONFIG_MDNS_TASK_STACK_SIZE=2048
+
+# ═══ 2026-08-17 미사용 Matter 클러스터 제거 — DRAM 확보 ═══════════════
+#  map 실측(build-esp32-h2/somfy_blinds.map)으로 DRAM 소비처를 뽑아보니
+#  로그가 아니라 **쓰지도 않는 클러스터**가 자리를 먹고 있었다:
+#      color-control 3,088B / level-control 1,616B / on-off 1,088B
+#  이 기기는 window_covering 엔드포인트만 만든다(app_main.cpp).
+#  → 조명용·무관 클러스터를 끄고 그 자리를 PacketBuffer 풀에 돌린다.
+#  ※esp_matter 는 클러스터를 CONFIG_SUPPORT_*_CLUSTER 로 개별 선택한다
+#    (ICD 때와 같은 메커니즘). 내부 참조가 있으면 링크가 깨지므로
+#    빌드 실패 시 해당 항목만 되살릴 것.
+# CONFIG_SUPPORT_COLOR_CONTROL_CLUSTER is not set
+# CONFIG_SUPPORT_LEVEL_CONTROL_CLUSTER is not set
+# CONFIG_SUPPORT_ON_OFF_CLUSTER is not set
+CONFIG_SUPPORT_SCENES_CLUSTER=y  # ★Groups 가 참조 — 끄면 링크 실패(groups-server.cpp)
+# CONFIG_SUPPORT_CAMERA_AV_STREAM_MANAGEMENT_CLUSTER is not set
+# CONFIG_SUPPORT_SOIL_MEASUREMENT_CLUSTER is not set
+# CONFIG_SUPPORT_BOOLEAN_STATE_CLUSTER is not set
+# CONFIG_SUPPORT_ETHERNET_NETWORK_DIAGNOSTICS_CLUSTER is not set
+# CONFIG_SUPPORT_JOINT_FABRIC_DATASTORE_CLUSTER is not set
+# CONFIG_SUPPORT_JOINT_FABRIC_ADMINISTRATOR_CLUSTER is not set
+# CONFIG_SUPPORT_TLS_CERTIFICATE_MANAGEMENT_CLUSTER is not set
+# CONFIG_SUPPORT_ACTIONS_CLUSTER is not set
+CONFIG_CHIP_TASK_STACK_SIZE=6144

@@ -113,7 +113,20 @@ CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
 # ★2026-08-14 802.15.4 라디오를 light sleep 중 전원차단 (절전)
 #  "allows the IEEE802.15.4 module to be powered down during automatic light sleep"
 #  ※light sleep 이 실제로 진입해야 의미가 있다 — 위 bt 락 해제와 세트다.
-CONFIG_IEEE802154_SLEEP_ENABLE=y
+#
+# ★★★2026-08-16 **끈다(진단 겸 후보 수정)**.
+#  사용자 신고: USB 연결 시 안테나 2칸, 분리하면 1칸.
+#  실측 [PWR] rssi: USB=-75dBm / 배터리=-83dBm → **8dB 차이**.
+#  전원별로 달라지는 설정은 PM(light sleep + DFS) 뿐이다(무선 게이팅은
+#  등록/페어링 기준이라 전원과 무관하고, TX 파워를 바꾸는 코드도 없다).
+#  → 그중 라디오에 직접 닿는 것이 이 옵션이다. CPU light sleep 은 그대로 두고
+#    **802.15.4 모듈 전원차단만** 꺼서, 8dB 가 라디오 절전 탓인지 아니면
+#    USB 케이블이 접지면(카운터포이즈) 역할을 해서인지 가른다.
+#  · 배터리에서 2칸(-75 수준)으로 회복 → 라디오 절전이 원인. 이대로 유지한다
+#    (약간의 소비 증가를 감수하고 링크 마진 8dB 를 얻는 게 이득이다).
+#  · 그대로 1칸 → 케이블 접지 효과(물리) → 펌웨어로는 해결 불가,
+#    안테나 주변 배치를 봐야 한다.
+# CONFIG_IEEE802154_SLEEP_ENABLE is not set
 
 # ★진단용 — 전류 측정 빌드에서는 **끌 것**(런타임 오버헤드).
 #  콘솔 `pm` 이 lock 보유시간 + 절전모드 체류시간을 출력한다.
@@ -139,3 +152,23 @@ CONFIG_PM_LIGHT_SLEEP_CALLBACKS=y
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+
+# ═══ 2026-08-17 미사용 Matter 클러스터 제거 ═══════════════════════════
+#  H2 에서 map 실측으로 확인한 DRAM 소비를 C6 에도 적용한다:
+#      color-control 3,088B / level-control 1,616B / on-off 1,088B …
+#  이 기기는 window_covering 엔드포인트만 만든다(app_main.cpp).
+#  C6 는 heap 여유(180KB+)가 있어 급하진 않지만, 안 쓰는 코드를 링크할
+#  이유가 없다(flash·RAM 동시 절감).
+#  ★SCENES 는 끄지 말 것 — Groups 가 참조해 groups-server.cpp 에서
+#    undefined reference 로 링크가 깨진다(H2 에서 실제로 겪음).
+# CONFIG_SUPPORT_COLOR_CONTROL_CLUSTER is not set
+# CONFIG_SUPPORT_LEVEL_CONTROL_CLUSTER is not set
+# CONFIG_SUPPORT_ON_OFF_CLUSTER is not set
+# CONFIG_SUPPORT_CAMERA_AV_STREAM_MANAGEMENT_CLUSTER is not set
+# CONFIG_SUPPORT_SOIL_MEASUREMENT_CLUSTER is not set
+# CONFIG_SUPPORT_BOOLEAN_STATE_CLUSTER is not set
+# CONFIG_SUPPORT_ETHERNET_NETWORK_DIAGNOSTICS_CLUSTER is not set
+# CONFIG_SUPPORT_JOINT_FABRIC_DATASTORE_CLUSTER is not set
+# CONFIG_SUPPORT_JOINT_FABRIC_ADMINISTRATOR_CLUSTER is not set
+# CONFIG_SUPPORT_TLS_CERTIFICATE_MANAGEMENT_CLUSTER is not set
+# CONFIG_SUPPORT_ACTIONS_CLUSTER is not set

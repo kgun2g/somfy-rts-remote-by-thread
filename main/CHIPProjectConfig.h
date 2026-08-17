@@ -17,7 +17,17 @@
  *     boot loop 를 유발(Kconfig 경고대로 "코드가 고정 풀 크기를 가정") → 사용 불가.
  *   해결: 고정 풀 크기를 키워 BTP+PASE 동시 수용.
  */
-#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 18
+/* ★★★2026-08-17 18 → 22.
+ *   18 로도 여전히 같은 지점에서 막혔다(실측: BLE 연결 3회 → 3회 모두
+ *     E chip[CSL]: PacketBuffer: pool EMPTY  → err = b(NO_MEMORY) → 연결 종료,
+ *     PASE 는 한 번도 시작 못 함. SmartThings 39-100).
+ *   그때 free heap 은 4.6KB 로 여유가 있었다 → **heap 이 아니라 이 고정 풀** 이
+ *   병목임이 확정. 풀은 BSS 라 늘리려면 다른 정적 메모리를 내줘야 한다.
+ *   → map 실측으로 찾은 미사용 Matter 클러스터(color-control/level-control/
+ *     on-off 등 12개, 약 5.8KB+)를 끄고 그 자리를 여기에 돌린다.
+ *   22 × 1,583B ≈ 34.8KB (18개 대비 +6.3KB).
+ *   ※그래도 부족하면 남는 길은 블라인드 채널을 3 → 2 로 줄이는 것뿐이다. */
+#define CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE 22
 
 /* ── Device Instance Info: Vendor/Product Name ──────────────────────
  *   sdkconfig 의 CONFIG_EXAMPLE_DEVICE_INSTANCE_INFO_PROVIDER=y 가 이 두 상수를

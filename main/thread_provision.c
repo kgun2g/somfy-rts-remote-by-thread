@@ -188,9 +188,21 @@ int8_t thread_prov_get_parent_rssi(void)
         if (role == OT_DEVICE_ROLE_CHILD || role == OT_DEVICE_ROLE_ROUTER ||
             role == OT_DEVICE_ROLE_LEADER) {
             int8_t r = THREAD_RSSI_INVALID;
-            /* child: 부모 평균 RSSI. router/leader: 부모 없음 → INVALID 유지
-             * (그 경우 호출측이 'connected' 만으로 풀바 표시). */
-            if (otThreadGetParentAverageRssi(inst, &r) == OT_ERROR_NONE) {
+            /* ★★★2026-08-16 Average → **Last** 로 바꿨다.
+             *  사용자 신고: "라우터 바로 옆인데 안테나가 1칸".
+             *  실측 [MTDIAG] rssi=-83 → -75 (role=2 CHILD, 붙어 있는 상태).
+             *  1m 이내면 -30~-40 이어야 하는데 -83 이 나온 이유는
+             *  otThreadGetParentAverageRssi 가 **평균**이라, 10m 지점에서 쌓인
+             *  약한 표본이 아직 안 빠졌기 때문이다(그래서 천천히 오르고 있었다).
+             *  신호 세기 표시는 "지금 얼마나 강한가" 라 평균이 아니라 순시값이
+             *  맞다 → otThreadGetParentLastRssi 를 먼저 쓰고, 실패하면 평균으로
+             *  폴백한다(막 붙어 아직 수신 표본이 없을 때 등).
+             *  ※SED 는 7초 폴 때 프레임을 받으므로 Last 도 그 주기로 갱신된다.
+             *  router/leader: 부모 없음 → INVALID 유지(호출측이 풀바 처리). */
+            if (otThreadGetParentLastRssi(inst, &r) == OT_ERROR_NONE &&
+                r != 0 && r != THREAD_RSSI_INVALID) {
+                rssi = r;
+            } else if (otThreadGetParentAverageRssi(inst, &r) == OT_ERROR_NONE) {
                 rssi = r;
             }
         }

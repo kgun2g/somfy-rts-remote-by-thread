@@ -48,6 +48,8 @@
 #include "matter_blinds.h"
 #include "oled_ui.h"
 #include "somfy_config.h"
+/* CHIP PacketBuffer 풀 크기 매크로 — 순수 #define 이라 C 에서도 안전 */
+#include "CHIPProjectConfig.h"
 #include "app_log.h"
 #ifdef SOMFY_SELFTEST
 #include "somfy_selftest.h"
@@ -75,6 +77,11 @@
 #endif
 #include "somfy_rts.h"
 #include "build_epoch.h"   /* ★ CMake 가 매 빌드 생성: BUILD_EPOCH_UNIX (UTC) */
+
+/* ★2026-08-16 안테나 진단 이벤트 코드 — 배터리 가드 **밖**에 둔다.
+ *  BOARD_HAS_BAT_ADC=0 보드에서도 호출부가 참조한다(위 #else 스텁이 받는다). */
+#define BLEV_NOSIG  10   /* '-' 등록 유지 + 권외(detach) */
+#define BLEV_UNPAIR 11   /* 'X' 미등록(FabricCount==0) — 이게 찍히면 예상 밖이다 */
 
 #if BOARD_HAS_BAT_ADC
 #include "esp_adc/adc_oneshot.h"
@@ -618,6 +625,12 @@ static volatile bool s_usb_sim_off = false;
 
 /* USB 모드 여부 — 충전 중이거나 최근(USB_DETECT_HOLD_MS) 충전 감지됨 */
 static inline bool _is_usb_powered(void) {
+#if BOARD_ALWAYS_USB_POWERED
+  /* ★2026-08-16 배터리·충전회로가 없는 보드(테스트 보드). CHG_STAT 이 플로팅이라
+   *  읽어봐야 의미가 없고, 배터리로 오판하면 유휴 10초에 화면이 꺼져
+   *  "화면이 안 나온다"가 된다(실측). 전원은 항상 USB 뿐이므로 참으로 고정. */
+  return true;
+#else
   if (s_usb_sim_off) return false;          /* 시뮬: 배터리 모드로 강제 */
   if (btn_handler_is_charging()) return true;
 #if BOARD_CHG_STAT_ACTIVE_HIGH
@@ -638,6 +651,7 @@ static inline bool _is_usb_powered(void) {
   int64_t ago = esp_timer_get_time() - s_last_chg_active_us;
   return (ago < (int64_t)USB_DETECT_HOLD_MS * 1000);
 #endif
+#endif /* BOARD_ALWAYS_USB_POWERED */
 }
 
 /* ═══════════════════════════════════════════════
@@ -1169,6 +1183,9 @@ static int      s_bat_last_raw_mv = 0;  /* 최신 원본 전압(평활 전) — 
  *      넓음(15카운트≈31mV) = **ADC 교란**(ADC1 채널 간섭이 남아 있다)
  *  배터리 구동 중엔 시리얼이 없으므로 NVS 방전기록에도 같이 넣는다. */
 static uint8_t  s_bat_last_spread = 0;
+/* ★2026-08-16 부모 RSSI 캐시 — 방전 로그(bat_sample_t.rssi)가 읽는다.
+ *  갱신은 7초 Matter 상태 블록과 60초 [PWR] 두 곳(둘 다 이미 OT 락을 잡는다). */
+static volatile int8_t s_last_rssi_cache = 127;
 static int64_t  s_bat_last_us = 0;      /* 마지막 측정 시각 — 진단용 */
 static int64_t  s_dis_t0_us      = 0;   /* 방전 세션 시작(USB 분리) 시각. 0=세션 없음 */
 static int      s_dis_mv0        = 0;   /* 세션 시작 전압 */
@@ -1820,7 +1837,17 @@ static void _enable_pm_light_sleep(void) {
   /* ★PM 만은 **물리 VBUS** 를 본다(시뮬 무시). 시뮬 중에 DFS 가 켜지면 USB-JTAG 가
    *  죽어 관찰 자체가 불가능해지기 때문이다(실제로 겪은 문제). 시뮬은 "배터리 모드
    *  로직"을 보려는 것이지 전력 자체를 재현하려는 게 아니다. */
-  const bool on_usb = btn_handler_is_charging();
+  /* ★★★2026-08-16 BOARD_ALWAYS_USB_POWERED 를 여기서도 본다.
+   *  PM 은 일부러 _is_usb_powered() 를 우회해 물리 CHG_STAT 을 직접 읽는다
+   *  (usbsim 에 속지 않으려고). 그런데 **충전 감지 회로가 없는 보드**는 그 핀이
+   *  플로팅이라 항상 '배터리'로 읽혀, USB 에 꽂힌 채 DFS+light sleep 이 돌았다.
+   *  실측(테스트 보드, 2026-08-16): `[PWR] light_sleep=ON (PM상태 3) VBUS=0` 상태로
+   *  45분/3541페이지를 정상 전송하다 I2C 페리페럴이 고착
+   *    (라인 idle 1/1 인데 검출실패 → 9클럭 복구 → i2c_del_master_bus 가
+   *     ESP_ERR_INVALID_STATE). 같은 공유 I2C 인 H2 는 VBUS=1 이라 PM상태 0
+   *    (light sleep OFF)이고 멀쩡했다 — 공유 방식이 아니라 **절전이 차이**였다.
+   *  → 배터리가 아예 없는 보드는 전원이 USB 뿐이므로 참으로 고정한다. */
+  const bool on_usb = BOARD_ALWAYS_USB_POWERED ? true : btn_handler_is_charging();
   /* ★★★2026-08-16 BOARD_DISABLE_LIGHT_SLEEP — **패닉 임시 차단**.
    *  H2 에서 절전 빌드(①MTD ②tick ③PM)를 넣은 뒤 배터리 구동 중 패닉이 반복됐다.
    *  부팅진단 근거: 리셋사유가 PM 적용 전 `USB리셋` → 적용 후 `★패닉/예외` 로 바뀌고
@@ -2038,6 +2065,37 @@ static void _start_app_tasks_once(void) {
            (unsigned)esp_get_minimum_free_heap_size(),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT),
            BLIND_MAX_COUNT, BLIND_MAX_COUNT + 1);
+  /* ★★★2026-08-17 CHIP PacketBuffer 풀이 **정적으로 얼마를 먹는지** 같이 찍는다.
+   *  이 풀은 .bss 라 heap 에는 안 잡히지만, DRAM 총량을 나눠 쓰므로 늘리면
+   *  그만큼 heap(특히 **연속 블록**)이 줄어든다. 실측에서 NOC 검증이
+   *  `VerifyCredentials: b`(NO_MEMORY)로 실패할 때 free 4.9KB 인데
+   *  largest_block 은 3.4KB 뿐이었다 — 총량이 아니라 조각 크기가 벽이다.
+   *  두 값을 나란히 봐야 "풀을 키울지 줄일지" 를 근거로 정할 수 있다.
+   *  ※per-buffer 크기는 CHIP SystemConfig.h 의 PACKETBUFFER_CAPACITY_MAX(1583)
+   *    기준이다. CHIP 헤더를 C 파일에서 직접 include 하지 않으므로 여기 상수로
+   *    둔다 — CHIP 쪽 값이 바뀌면 이 숫자도 같이 고칠 것. */
+#ifndef PBUF_ENTRY_BYTES
+#define PBUF_ENTRY_BYTES 1583
+#endif
+  ESP_LOGW(TAG, "[HEAP] CHIP PacketBuffer 풀: %d개 × %dB = %dB (.bss, heap 아님)",
+           CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE, PBUF_ENTRY_BYTES,
+           CHIP_SYSTEM_CONFIG_PACKETBUFFER_POOL_SIZE * PBUF_ENTRY_BYTES);
+}
+
+/* ★2026-08-17 페어링 중 heap 추적 — 실패 순간의 **연속 블록**을 잡기 위함.
+ *  60초 주기 [OLEDMON] 으로는 5초 만에 끝나는 NOC 검증 실패를 놓친다.
+ *  페어링 화면일 때만 2초 간격으로 찍는다(평상시 부담 없음). */
+static void _heap_watch_tick(int64_t now_us, bool pairing_screen)
+{
+  static int64_t last_us = 0;
+  static uint32_t min_largest = 0xFFFFFFFFu;
+  if (!pairing_screen) { last_us = 0; min_largest = 0xFFFFFFFFu; return; }
+  if (last_us && (now_us - last_us) < 2LL * 1000000LL) return;
+  last_us = now_us;
+  const uint32_t lb = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+  if (lb < min_largest) min_largest = lb;
+  ESP_LOGW(TAG, "[HEAPW] free=%uB  largest=%uB  (페어링 중 최저 largest=%uB)",
+           (unsigned)esp_get_free_heap_size(), (unsigned)lb, (unsigned)min_largest);
 }
 
 /* 커미셔닝이 완료되면 즉시, 아니면 '활성 페어링이 없는 상태가 유예시간
@@ -2481,8 +2539,6 @@ static uint8_t _bat_mv_to_pct(int mv) {
 /* ★2026-08-16 (①진단) 안테나 표시가 CONNECTED 를 벗어난 순간을 기록한다.
  *  사용자 신고가 배터리 구동 중(콘솔 없음) 상황이라 시리얼 로그로는 못 잡는다.
  *  → 방전 로그에 남겨 NVS 덤프로 나중에 읽는다(sim/tools/batlog_decode.py). */
-#define BLEV_NOSIG  10   /* '-' 등록 유지 + 권외(detach) */
-#define BLEV_UNPAIR 11   /* 'X' 미등록(FabricCount==0) — 이게 찍히면 예상 밖이다 */
 /* ★NVS 쓰기 합치기: 버튼 연타 중 누름마다 1.8KB blob 을 쓰면 플래시 마모가 크고
  *  쓰기(10~20ms)가 버튼 태스크를 붙잡는다. RAM 링에는 **즉시** 넣고, NVS 는
  *  BATLOG_FLUSH_MS 마다 한 번만 쓴다. 전원이 갑자기 끊기면 최대 그만큼 잃지만,
@@ -2506,6 +2562,13 @@ typedef struct __attribute__((packed)) {
                       *  → 배터리 로그와 같은 NVS 경로로 실어 리셋에 견디게 한다.
                       *  값은 esp_pm_light_sleep_register_cbs 의 exit 콜백이 누적한
                       *  실제 sleep_time_us 로 계산한다(추정 아님). */
+  int8_t   rssi;     /* ★★★2026-08-16 부모 RSSI(dBm). 127=측정불가.
+                      *  왜 필요한가: RSSI 는 [PWR]/[MTDIAG] **시리얼로만** 나가서
+                      *  배터리 구동 중엔 통째로 사라졌다. 사용자가 "특정 위치의
+                      *  신호세기 이력"을 물었을 때 줄 게 없었다(권외 이벤트만 남음).
+                      *  → 방전 로그에 같이 실어 NVS 덤프로 위치·시간별 세기를 본다.
+                      *  값은 7초 Matter 갱신/60초 [PWR] 이 갱신하는 캐시를 쓴다
+                      *  (여기서 OT 락을 잡으면 버튼 이벤트마다 락이 걸린다). */
 } bat_sample_t;
 /* ※구조체가 6→7바이트로 바뀌었다. _batlog_load() 가 blob 길이를 검사하므로
  *  예전 형식으로 저장된 기록은 자동 폐기된다(오해석 없음). */
@@ -2708,6 +2771,7 @@ static void _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int
                        (((ev < 0 ? 0 : ev) & 0x0F) << 4));
   e->sp   = s_bat_last_spread;      /* ★A 직전 측정의 ADC 표본 산포 */
   e->ls   = _ls_take_pct(esp_timer_get_time());  /* ★직전 샘플 이후 light sleep 비율 */
+  e->rssi = s_last_rssi_cache;                   /* ★부모 RSSI(dBm), 127=불가 */
   s_bl_head = (uint16_t)((s_bl_head + 1) % BATLOG_MAX);
   if (s_bl_n < BATLOG_MAX) s_bl_n++;
   s_bl_dirty = true;       /* NVS 반영은 _batlog_flush_if_due 가 합쳐서 한다 */
@@ -2770,6 +2834,9 @@ static void _batlog_flush_if_due(int64_t now_us, bool force) { (void)now_us; (vo
 static void _batlog_reset(void) {}
 static void _batlog_new_session(void) {}
 static void _batlog_ls_session_begin(bool resume) { (void)resume; }
+static void _ls_stats_init(void) {}   /* BATLOG 끔 — light sleep 계측 없음 */
+/* 버튼/안테나 이벤트 기록 — BATLOG 끔이면 no-op (호출부는 가드 밖에 있다). */
+void somfy_app_batlog_button(int ev) { (void)ev; }
 static void _batlog_add(int t_s, int mv, int pct, bool radio, bool panel, int pm) {
   (void)t_s; (void)mv; (void)pct; (void)radio; (void)panel; (void)pm;
 }
@@ -3222,6 +3289,34 @@ static void _nobat_track(int mv) {
   s_nobat_sum1 = s_nobat_sum2 = 0;
   s_nobat_n1   = s_nobat_n2   = 0;
 }
+#else  /* !BOARD_HAS_BAT_ADC — 배터리/충전 측정 회로가 없는 보드 ─────────────
+ *  ★2026-08-16 이 #else 가 없어서 BOARD_HAS_BAT_ADC=0 은 **컴파일조차 안 됐다**
+ *    (implicit declaration of '_batlog_load' / 's_bat_sm_seq' undeclared …).
+ *    배터리 기계는 전부 위 #if 안에 있는데 호출부는 가드 밖이었기 때문이다.
+ *    기본값이 0 인 gnpe-c6 도 같은 이유로 깨져 있었다.
+ *  → 밖에서 부르는 심볼만 무해한 스텁으로 채운다. 회로가 없으면 방전 세션·
+ *    잔량% 자체가 의미 없으므로 전부 no-op 이 정답이다. */
+static void     _batlog_load(void) {}
+static void     _vibelog_load(void) {}
+static bool     _batlog_try_resume(bool on_battery) { (void)on_battery; return false; }
+static void     _batlog_new_session(void) {}
+static void     _batlog_ls_session_begin(bool resume) { (void)resume; }
+static void     _batlog_flush_if_due(int64_t now_us, bool force) { (void)now_us; (void)force; }
+static void     _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int pm, int ev)
+                { (void)t_s; (void)mv; (void)pct; (void)radio; (void)panel; (void)pm; (void)ev; }
+static void     _bat_smooth_reset(void) {}
+static uint32_t s_bat_sm_seq      = 0;
+static int      s_bat_hist_n      = 0;
+void somfy_app_batlog_button(int ev) { (void)ev; }
+void somfy_app_batlog_dump(void)  { ESP_LOGW(TAG, "[BATLOG] 이 보드에는 배터리 측정 회로가 없다"); }
+void somfy_app_batlog_clear(void) { somfy_app_batlog_dump(); }
+void somfy_app_vibelog_dump(void)  { ESP_LOGW(TAG, "[VIBELOG] 이 보드에서는 비활성"); }
+void somfy_app_vibelog_clear(void) { somfy_app_vibelog_dump(); }
+/* 콘솔 명령이 링크 시 참조한다(app_main.cpp). 회로가 없으니 안내만 한다. */
+void somfy_app_console_usbsim(int off) { (void)off;
+  ESP_LOGW(TAG, "[USBSIM] 이 보드에는 배터리/충전 회로가 없어 의미 없다"); }
+void somfy_app_intpd_test(void) {
+  ESP_LOGW(TAG, "[INTPD] 이 보드에는 배터리/충전 회로가 없어 의미 없다"); }
 #endif /* BOARD_HAS_BAT_ADC */
 
 static uint8_t _estimate_battery_percent(void) {
@@ -3735,6 +3830,7 @@ void somfy_app_run(void *arg) {
         } else {
           mst  = OLED_MT_UNPAIRED;
         }
+        s_last_rssi_cache = rssi;      /* ★방전 로그가 읽는 캐시 */
         oled_ui_set_matter_status(&s_ui, mst, rssi);
 
         /* ★★★2026-08-16 (①진단) 표시가 바뀌는 순간 **판정 근거 3종**을 남긴다.
@@ -3745,8 +3841,15 @@ void somfy_app_run(void *arg) {
          *  배터리 구동 중엔 콘솔이 없으므로 방전 로그(NVS)에도 같이 남긴다. */
         {
           static oled_matter_state_t s_mt_prev = (oled_matter_state_t)0xFF;
-          if (mst != s_mt_prev) {
-            s_mt_prev = mst;
+          static int8_t s_rssi_prev = 0;
+          /* ★2026-08-16 RSSI 변화도 찍는다 — 사용자 신고 "라우터 바로 옆인데
+           *  안테나가 1칸". 상태는 CONNECTED 로 유지되므로 상태전이만 보면
+           *  영영 안 찍힌다. 5dB 이상 움직일 때만 남겨 스팸을 막는다. */
+          const int rssi_moved = (rssi > s_rssi_prev ? rssi - s_rssi_prev
+                                                     : s_rssi_prev - rssi) >= 5;
+          if (mst != s_mt_prev || rssi_moved) {
+            s_mt_prev   = mst;
+            s_rssi_prev = rssi;
             ESP_LOGW(TAG, "[MTDIAG] 표시=%s  fabric=%d  attached=%d  role=%d  rssi=%d",
                      (mst == OLED_MT_CONNECTED) ? "막대" :
                      (mst == OLED_MT_NO_SIGNAL) ? "-(권외)" :
@@ -3761,6 +3864,8 @@ void somfy_app_run(void *arg) {
       }
       }   /* mt_panel_on */
     }
+
+    _heap_watch_tick(esp_timer_get_time(), s_setup_screen == SETUP_MATTER_PAIR);
 
     /* v3.6: 페어링 화면 세부 단계 진행 (SETUP_MATTER_PAIR 일 때만).
      *   WAIT   : 대기 (광고만)
@@ -4091,6 +4196,11 @@ void somfy_app_run(void *arg) {
      *  USB 를 빼는 순간을 세션 시작으로 잡고, 1분마다 전압·%·추정전류를 남긴다.
      *  ※세션 시작 검출은 _is_usb_powered() 의 60초 hold 창 때문에 최대 1분 늦을 수
      *    있다(그 사이 값은 기준점에 포함된다) — 누적 평균에는 영향이 미미하다. */
+#if BOARD_HAS_BAT_ADC   /* ★2026-08-16 방전 세션 로직 — 배터리 ADC 가 있는 보드만.
+                         *  BAT_FLOOR_MIN_N·BAT_PCT_UNKNOWN·BATLOG_* 등이 모두
+                         *  #if BOARD_HAS_BAT_ADC 안에 있어, 회로 없는 보드에서
+                         *  이 블록만 밖에 있으면 빌드가 깨진다. 애초에 배터리가
+                         *  없으면 방전 세션 자체가 의미 없다. */
     {
       /* ★★★2026-08-15 `was_usb_pwr` 를 **부팅 시 실제 전원 상태로** 초기화한다.
        *
@@ -4256,6 +4366,7 @@ void somfy_app_run(void *arg) {
         s_dis_prev_pct = (uint8_t)pct;
       }
     }
+#endif /* BOARD_HAS_BAT_ADC — 방전 세션 로직 */
 
     /* ── ★2026-08-11 무선 게이팅 (배터리 절약, 사용자 요청) ──────────────────
      *  규칙:
@@ -4268,7 +4379,15 @@ void somfy_app_run(void *arg) {
      *    끄면 초기화와 경합할 수 있고, 사용자가 부팅 직후 커미셔닝하려는 경우도 있다. */
     {
 #ifndef RADIO_GRACE_SEC
-#define RADIO_GRACE_SEC 60      /* 부팅 후 이 시간 동안은 끄지 않는다 */
+/* ★★★2026-08-17 60 → 25초. **미등록 상태에서는 광고하지 않는다**(사용자 결정).
+ *  페어링은 필수 기능이 아니며, 필요할 때 설정 메뉴의 페어링 화면에 들어가면
+ *  아래 `pairing` 조건으로 무선이 다시 켜진다.
+ *  이 유예가 60초였을 때: 부팅(약 19초) 뒤 40초간 광고가 떠 있었고, 그 창이
+ *  닫힌 뒤 페어링을 시도하면 폰이 기기를 못 찾아 SmartThings 39-100 이 났다.
+ *  유예를 아예 없애지 않는 이유는 원 주석대로 **스택 초기화와의 경합** 때문이다.
+ *  부팅 완료가 ~19초, 이 검사가 5초 주기이므로 25초면 초기화는 지나고
+ *  광고 노출은 몇 초로 줄어든다. */
+#define RADIO_GRACE_SEC 25      /* 부팅 후 이 시간 동안은 끄지 않는다(초기화 보호) */
 #endif
       static int64_t last_chk_us = 0;
       if (now_us - last_chk_us >= 5LL * 1000000LL) {
@@ -4317,13 +4436,18 @@ void somfy_app_run(void *arg) {
          *  (실제로 캡처에서 통째로 안 보였다). 60초 주기 모니터에 실제 적용값을
          *  실어 **언제 접속해도** 확인할 수 있게 한다. 값은 전부 실측 상태이며
          *  문자열을 하드코딩하지 않는다. */
+        /* ★2026-08-16 RSSI 를 여기 실었다 — MTDIAG 는 '변화가 있을 때만' 찍혀
+         *  신호가 안정되면 영영 안 보인다. 안테나 칸수 신고를 확인하려면
+         *  **언제 접속해도** 현재값이 보여야 한다(60초 1회라 OT 락 부담 없음). */
+        const int _rssi_now = (int)thread_prov_get_parent_rssi();
+        s_last_rssi_cache = (int8_t)_rssi_now;   /* ★화면 OFF 구간에서도 갱신 */
         ESP_LOGW(TAG, "[PWR] light_sleep=%s (PM상태 %d)  무선=%s  등록=%d  화면=%s  "
-                      "VBUS=%d  유휴 %llds",
+                      "VBUS=%d  rssi=%d  유휴 %llds",
                  (g_pm_state_applied >= 2) ? "ON" : "OFF", g_pm_state_applied,
                  matter_blinds_get_radio_enabled() ? "ON" : "OFF",
                  matter_blinds_is_commissioning_complete() ? 1 : 0,
                  oled_ui_is_panel_on() ? "ON" : "OFF",
-                 btn_handler_is_charging() ? 1 : 0,
+                 btn_handler_is_charging() ? 1 : 0, _rssi_now,
                  (long long)((nu - s_last_activity_us) / 1000000));
         /* ★2026-08-13 (②) 버스트 폴링 깨우기 출처 — `~INT` 가 실제로 쓸 만한지 판정.
          *  int 이 0 에 가까우면 `~INT` 가 죽은 것이고, 그러면 안전망 주기

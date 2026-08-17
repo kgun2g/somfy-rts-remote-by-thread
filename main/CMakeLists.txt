@@ -67,6 +67,15 @@ set(_lp_core_enabled 0)
 if(BOARD STREQUAL "xiao-c6")
     set(_lp_core_enabled 1)
 endif()
+# ★2026-08-16 -Lp off 로 끌 수 있게 한다.
+#  왜: LP 프로그램은 lp_core/pcf_lp_config.h 의 LP_PCF_NBYTES 가 **2 고정**이라
+#  PCF8574(1바이트) 개체에서는 button_handler.c 의 _Static_assert 가 빌드를 깬다.
+#  ExternalProject 라 -D 로 폭을 넘길 수도 없다(위 주석 참조).
+#  → LP 를 안 쓰는 개체(공유 I2C 배선 등)는 아예 빌드에서 빼는 게 유일한 방법이다.
+if(DEFINED BOARD_OVR_PCF_LP_CORE AND "${BOARD_OVR_PCF_LP_CORE}" STREQUAL "0")
+    set(_lp_core_enabled 0)
+    message(STATUS "LP core: -Lp off 로 비활성")
+endif()
 if(_lp_core_enabled AND CONFIG_ULP_COPROC_TYPE_LP_CORE)
     set(ulp_app_name lp_core_${COMPONENT_NAME})
     set(ulp_lp_core_sources "lp_core/pcf_poll.c")
@@ -103,7 +112,8 @@ foreach(_ovr
         BOARD_OVR_HAS_LR_BUTTONS BOARD_OVR_ROT_HALF_STEP
         BOARD_OVR_OLED_WIDTH BOARD_OVR_OLED_HEIGHT BOARD_OVR_OLED_COL_OFFSET
         BOARD_OVR_OLED_FIXUP BOARD_OVR_OLED_ROTATE_180 BOARD_OVR_OLED_FLIP_X
-        BOARD_OVR_OLED_ROTATE_90 BOARD_OVR_FREQ)
+        BOARD_OVR_OLED_ROTATE_90 BOARD_OVR_FREQ
+        BOARD_OVR_PCF_LP_CORE BOARD_OVR_HAS_BAT_ADC BOARD_OVR_ROT_AB_SWAP)
     if(DEFINED ${_ovr} AND NOT "${${_ovr}}" STREQUAL "")
         target_compile_definitions(${COMPONENT_LIB} PRIVATE "${_ovr}=${${_ovr}}")
         message(STATUS "Variant override: ${_ovr}=${${_ovr}}")

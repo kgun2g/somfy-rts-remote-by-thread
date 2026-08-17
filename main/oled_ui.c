@@ -1386,7 +1386,8 @@ static void _draw_matter_status(int x, int y, const oled_ui_ctx_t *ctx)
     case OLED_MT_NO_SIGNAL:
         /* ★가로줄 '-' — 등록은 유지되나 지금 신호가 안 잡힘.
          *  X(미등록)와 확실히 구분되도록 중앙 1줄만 그린다. */
-        for (int i = 0; i <= 6; i++) _fb_set_pixel(x + i, y + 3, true);
+        for (int i = 0; i <= 7; i++) { _fb_set_pixel(x + i, y + 3, true);
+                                       _fb_set_pixel(x + i, y + 4, true); }
         break;
     case OLED_MT_PAIRING:
         /* 'P' 점멸 (~0.4s 주기). 페어링 중임을 명확히. */
@@ -1427,14 +1428,31 @@ static void _render_normal(oled_ui_ctx_t *ctx)
 #if OLED_RENDER_128X64
     {   /* ══ 128×64 네이티브 (또렷한 1:1, 형태 유지) — 해상도 기준 선택 ══ */
         /* ── 상단 상태줄 (y=2): 좌=연결 · 중앙=주파수 · 우=배터리% ── */
-        if (ctx->matter_state == OLED_MT_CONNECTED) {        /* 신호바 3개 (맨 위) */
-            _pfill(2, 6, 2, 2, true);
-            _pfill(5, 3, 2, 5, true);
-            _pfill(8, 0, 2, 8, true);
+        /* ★★★2026-08-16 여기가 사용자 신고 두 건의 원인이었다.
+         *  ① "권외로 나가면 '-' 가 아니라 'X' 로 바뀐다"
+         *     → NO_SIGNAL 분기가 없어 else 로 떨어져 'x' 를 그렸다. 상태 판정은
+         *       옳았다(방전 로그에 `권외-` 2건 / `미등록X` 0건 기록됨) — 그리기만
+         *       틀렸던 것. _draw_matter_status 에만 NO_SIGNAL 을 넣고 이 렌더러를
+         *       놓쳤다.
+         *  ② "신호 세기별로 칸이 줄어들지 않는다"
+         *     → CONNECTED 면 parent_rssi 와 무관하게 **3칸을 무조건** 다 그렸다.
+         *  → NO_SIGNAL 은 '-' 로, 막대는 _rssi_to_level(0~4) 을 3칸에 매핑한다. */
+        if (ctx->matter_state == OLED_MT_CONNECTED) {
+            const int lv = _rssi_to_level(ctx->parent_rssi);   /* 0..4 */
+            const int bars = (lv >= 3) ? 3 : (lv == 2) ? 2 : 1;  /* 최소 1칸 = 연결됨 */
+            if (bars >= 1) _pfill(2, 6, 2, 2, true);
+            if (bars >= 2) _pfill(5, 3, 2, 5, true);
+            if (bars >= 3) _pfill(8, 0, 2, 8, true);
         } else if (ctx->matter_state == OLED_MT_PAIRING) {
             _pchar8(2, 0, 'P', true);
+        } else if (ctx->matter_state == OLED_MT_NO_SIGNAL) {
+            /* ★2026-08-16 '-' 를 **길고 두껍게**. 사용자 신고: "안테나 한 칸과
+             *  비슷해 구분이 안 된다". 고딕 '-' 는 4px 폭이라 막대 1칸(2px)과
+             *  혼동됐다. 막대(세로 2px, x=2/5/8)보다 확실히 넓은 가로 12×2 로
+             *  그려 **가로줄**임이 한눈에 보이게 한다. */
+            _pfill(0, 3, 12, 2, true);         /* 등록 유지 + 권외 */
         } else {
-            _pchar8(2, 0, 'x', true);
+            _pchar8(2, 0, 'x', true);          /* 미등록(FabricCount==0) 만 */
         }
         char fs[12]; _main_freq_str(ctx, fs, sizeof(fs));
         _pstr8((OLED_PANEL_W - _pstr8_w(fs)) / 2, 0, fs, true);
@@ -1523,8 +1541,10 @@ static void _render_normal(oled_ui_ctx_t *ctx)
             _pfill(8, 0, 2, 8, true);
         } else if (ctx->matter_state == OLED_MT_PAIRING) {
             _pchar8(2, 0, 'P', true);
+        } else if (ctx->matter_state == OLED_MT_NO_SIGNAL) {
+            _pfill(0, 3, 12, 2, true);         /* ★2026-08-16 등록 유지 + 권외 (가로 12×2) */
         } else {
-            _pchar8(2, 0, 'x', true);
+            _pchar8(2, 0, 'x', true);          /* 미등록만 */
         }
         char bs[8];
 #if BOARD_BAT_SWAPPED
@@ -2771,6 +2791,45 @@ static void _render_pairing(oled_ui_ctx_t *ctx)
             return;
         }
         /* QR 생성 실패 → 아래 PIN 폴백 진행 */
+    }
+
+    /* ★★★2026-08-17 진행(ACTIVE) 화면도 **네이티브로** 그린다.
+     *  왜: 아래 공통 경로는 72×40 **논리 캔버스**(OLED_WIDTH 72, FONT_W 6)라
+     *  한 줄에 12자뿐이다. 11자리 코드를 "XXXX-XXX-XXXX"(13자)로 끊으면 안 들어가
+     *  구분자 없이 붙여 찍혔다 — 사용자 신고 "pin 이 붙어있다".
+     *  128×64 실화면은 _pstr8(advance 8px)로 13자 = 104px 라 여유롭게 중앙에 온다.
+     *  진행 표시도 회전 문자(|/-\)는 폭이 글자마다 달라 문장이 흔들렸다 →
+     *  **좌우로 미끄러지는 막대**로 바꿔 글자는 고정하고 움직임만 준다. */
+    if (ctx->pair_phase == OLED_PAIR_ACTIVE) {
+        _pstr8((OLED_PANEL_W - _pstr8_w("MATTER PAIR")) / 2, 2, "MATTER PAIR", true);
+        _pfill(0, 13, OLED_PANEL_W, 1, true);
+
+        char code[16] = {0};
+        const int len = (int)strlen(ctx->pair_code);
+        if (len >= 11) {
+            /* 4-3-4 (11자리 manual pairing code) */
+            snprintf(code, sizeof(code), "%.4s-%.3s-%.4s",
+                     ctx->pair_code, ctx->pair_code + 4, ctx->pair_code + 7);
+        } else if (len > 0) {
+            snprintf(code, sizeof(code), "%.15s", ctx->pair_code);
+        }
+        if (code[0]) {
+            int cx = (OLED_PANEL_W - _pstr8_w(code)) / 2; if (cx < 0) cx = 0;
+            _pstr8(cx, 24, code, true);
+        }
+
+        _pstr8((OLED_PANEL_W - _pstr8_w("PAIRING")) / 2, 40, "PAIRING", true);
+
+        /* 진행 막대 — 트랙 위를 블록이 좌우로 왕복(핑퐁). */
+        const int tw = 96, tx = (OLED_PANEL_W - tw) / 2, ty = 54;
+        _pfill(tx, ty + 4, tw, 1, true);              /* 트랙(바닥 선) */
+        const int bw = 18, span = tw - bw;
+        int p = (int)((f * 3) % (unsigned)(span * 2));
+        if (p > span) p = span * 2 - p;
+        _pfill(tx + p, ty, bw, 3, true);              /* 미끄러지는 블록 */
+
+        _fb_flush();
+        return;
     }
 #endif
 

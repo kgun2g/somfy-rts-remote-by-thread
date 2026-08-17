@@ -140,7 +140,11 @@
  *  ①(FTD→MTD/SED, 최대 절감)과 DFS 는 그대로 유지된다. */
 #define BOARD_DISABLE_LIGHT_SLEEP 0
 
-#define BOARD_BATLOG_ENABLE 1
+/* ★★★2026-08-17 방전 로그 **끔** — 페어링 heap 확보(사용자 지시).
+ *  링버퍼 128건 × 9B = 1,152B(.bss) + NVS 코드가 통째로 빠진다.
+ *  H2 는 배터리로 살아남지 못해(USB 빼면 꺼짐) 방전 기록의 실익이 없다.
+ *  필요해지면 1 로 되돌리면 된다(가드는 #if BOARD_BATLOG_ENABLE 로 유지). */
+#define BOARD_BATLOG_ENABLE 0
 #define BOARD_BATLOG_MAX 128 // × 8B = 1,024B
 
 /* ════════════════════════════════════════════════════════
@@ -229,3 +233,9 @@
  *  검산: 2516mV × 250/150 = 4193mV  vs 실측 4187mV (6mV 차) — 일치. */
 #define BOARD_BAT_DIV_TOP 100 // 상단(BAT→노드)
 #define BOARD_BAT_DIV_BOT 150 // 하단(노드→GND) — 실측 분압비 0.597 로 확정
+
+/* ── 로터리 A/B 배선이 뒤바뀐 기판 (2026-08-17 사용자 확인) ──────────────
+ *  이 시제품은 엔코더 A/B 가 반대로 물려 있어 회전 방향이 뒤집혔다.
+ *  배선을 고치는 대신 소프트에서 비트 위치를 맞바꾼다(P0=B, P1=A).
+ *  ※H2 는 LP 코어가 없어 lp_core/pcf_lp_config.h 와의 정합성 문제는 없다. */
+#define BOARD_ROT_AB_SWAP      1
