@@ -1245,31 +1245,86 @@ int      btn_handler_vibe_level(void) { return gpio_get_level(VIBE_PIN); }
  *  → 최근 윈도우가 전부 HIGH(또는 전부 LOW)로 고정되면 배선/스위치 고장으로 보고
  *    진동 이벤트를 무시한다. 섞인 패턴이 돌아오면 자동으로 다시 인정한다. */
 #define VIBE_STUCK_WIN   200          /* 고장 판정 관찰 샘플 수 */
+/* ★2026-08-19 any-edge ISR 트리거 임계(폴 1회당 엣지 수).
+ *  실측 정지 상태 엣지율 0.00회/초(COM3 H2, 90초 관찰)라 1 이면 오검출이
+ *  없고 탭 1회에 바로 반응한다. 잡음 있는 개체가 나오면 2 로 올릴 것. */
+#define VIBE_ISR_TRIGGER 1
 /* ※s_vibe_stuck 선언은 파일 상단으로 옮겼다 — _vibe_isr_handler(②의 통지 게이트)가
  *   여기보다 앞서 참조하기 때문이다. */
 bool btn_handler_vibe_stuck(void) { return s_vibe_stuck; }
 
+/* ★★★2026-08-19 "두세번 두드려야 화면이 깨어난다" 수정 — 두 가지가 겹쳐 있었다.
+ *
+ *  ① **평상시(all-LOW)를 센서 고장으로 오판**하고 있었다.
+ *     X160 은 평상시 **닫힘 = LOW** 인데 판정식이 `st_high == 0` 도 고장으로 봤다.
+ *     → 가만히 두면 2초(200샘플)마다 "고장"으로 굳어 진동을 통째로 무시한다.
+ *     로그가 그대로 증언한다(여러 세션에서 반복):
+ *         [VIBE] 정상 복귀 (최근 200샘플 HIGH=1) — 진동 다시 인정
+ *         [VIBE] 센서 고장 판정(핀 고정) (최근 200샘플 HIGH=0) — 진동 무시함
+ *     즉 **첫 탭은 오판을 푸는 데 소모**되고, 그 다음 탭이라야 인정된다.
+ *     → all-HIGH 만 고장으로 본다. 핀이 LOW 로 죽은 경우는 엣지도 HIGH 도 없어
+ *       어차피 트리거가 0 이므로(시뮬 ③) 게이트로 막을 필요가 없다.
+ *     ※원래 이 판정을 넣은 이유는 C6 의 **HIGH 고정** 센서였다(2026-07-24,
+ *       `HIGH=300/300` + 잡음 33회/초 → 화면이 영영 안 꺼짐). 그 케이스는 그대로
+ *       잡힌다(시뮬 ②: 고장 판정 후 헛깨움 0회).
+ *
+ *  ② **접점이 성길 때 HIGH duty 경로가 원리적으로 발동 못 한다.**
+ *     실측 근거는 기기가 직접 남긴 NVS `vibelog`(3초 창 통계) 128건이다.
+ *     접점이 움직인 20개 창 중 **3개**가 "300ms 안에 HIGH 2표본"을 못 채운다:
+ *         (polls 310, HIGH  1, ISR 29)   ← HIGH 가 3초에 딱 1번. 원리적으로 불가
+ *         (polls 300, HIGH  1, ISR  4)
+ *         (polls 301, HIGH  2, ISR  2)   ← 두 표본이 같은 30폴에 들 확률 10%
+ *     반면 any-edge ISR 은 접점 폭과 무관해 **20/20 창 전부** 발동한다.
+ *     → 엣지 1개를 트리거로 추가한다. 정지 시 엣지는 0.00회/초라
+ *       (COM3 90초 관찰 [VIBE-stat] ISR 증가 0 / HIGH 0/9000, vibelog 정지창도
+ *       전부 0/0) 임계 1 로도 헛깨움 압력이 없다.
+ *     ※①이 주원인이고 ②는 성긴 접점을 메우는 보조다. HIGH 경로는 나머지
+ *       17/20 창에서 정상 동작하므로 **지우지 않고 남긴다**.
+ *
+ *  검증: sim/tools/vibe_wake_sim.py
+ *      · 접점폭 3모델 × 200시행 — 현재 평균 2.48번째 탭(= 신고 "두세번")
+ *                                 수정 후 1.00번째 탭(세 모델 모두 100%)
+ *      · 실측 vibelog 교정 — HIGH 경로 17/20 창, ISR 경로 20/20 창
+ *      · 헛깨움 — 정지 0회 / LOW고정 0회 / C6 HIGH고정은 판정 후 0회 */
 static void _vibration_track(bool high_now) {
   static int s_win_cnt = 0;
   static int s_win_high = 0;
-  /* ── 고장(stuck) 감지: 최근 VIBE_STUCK_WIN 샘플이 한쪽으로만 고정인가 ── */
+  static uint32_t s_isr_prev = 0;
+  /* ── 고장(stuck) 감지: 최근 VIBE_STUCK_WIN 샘플이 **전부 HIGH** 인가 ── */
   {
     static int st_cnt = 0, st_high = 0;
     st_cnt++;
     if (high_now) st_high++;
     if (st_cnt >= VIBE_STUCK_WIN) {
-      bool stuck = (st_high == st_cnt) || (st_high == 0);   /* 전부 HIGH 또는 전부 LOW */
+      bool stuck = (st_high == st_cnt);   /* ★전부 HIGH 만 고장(all-LOW 는 정상 대기) */
       if (stuck != s_vibe_stuck) {
         s_vibe_stuck = stuck;
         ESP_LOGW(TAG, "[VIBE] %s (최근 %d샘플 HIGH=%d) — 진동 %s",
-                 stuck ? "센서 고장 판정(핀 고정)" : "정상 복귀",
+                 stuck ? "센서 고장 판정(핀 HIGH 고정)" : "정상 복귀",
                  st_cnt, st_high, stuck ? "무시함" : "다시 인정");
       }
       st_cnt = 0; st_high = 0;
     }
   }
+
+  /* ISR 엣지 델타는 **고장 중에도 따라가야** 한다 — 안 그러면 고장이 풀리는 순간
+   *  그동안 쌓인 잡음 엣지가 한꺼번에 델타로 잡혀 헛깨움이 된다. */
+  const uint32_t isr_now = s_vibe_isr_count;
+  const uint32_t isr_delta = isr_now - s_isr_prev;
+  s_isr_prev = isr_now;
+
   if (s_vibe_stuck) return;           /* 고장 상태 — 진동으로 인정하지 않음 */
 
+  /* ★① any-edge ISR — 접점 폭과 무관. 정지 시 0.00회/초라 1개면 충분하다. */
+  if (isr_delta >= VIBE_ISR_TRIGGER) {
+    s_last_vibration_us = esp_timer_get_time();
+    s_win_cnt = 0;
+    s_win_high = 0;
+    return;
+  }
+
+  /* ★② 기존 HIGH duty-cycle 경로도 남긴다 — 폭이 긴 접점에서 보조로 동작하고,
+   *  ISR 등록이 실패한 개체에서도 최소 동작이 유지된다. */
   s_win_cnt++;
   if (high_now) s_win_high++;
   if (s_win_high >= 2) {              /* 임계값 도달 — 즉시 timestamp 갱신 */
