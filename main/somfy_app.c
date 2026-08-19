@@ -1491,6 +1491,50 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
        *  ※되돌리기(연속 송신):
        *      _send_command_ex(SOMFY_CMD_PROG, CFG_BTN_MAX_HOLD_MS, true, false);
        *    로 바꾸고 _hold_repeat_task 의 PROG 블록을 지우면 된다. */
+      /* ★★★2026-08-17 PROG 폭주 차단 — 두 번째 안전망.
+       *
+       *  PROG 는 모터를 **프로그래밍 모드**로 넣는 명령이라, 오작동으로 반복
+       *  송신되면 블라인드 설정이 바뀔 수 있다. 실제로 LP 코어가 멈춰 PCF 값이
+       *  얼어붙자 기기가 하루 동안 혼자 PROG 를 계속 쏜 사고가 있었다
+       *  (근본 원인은 button_handler.c 의 LP 신선도 검사로 막았다).
+       *
+       *  사람은 PROG 를 1분에 몇 번씩 반복해 누르지 않는다. 그런 패턴이 보이면
+       *  고장으로 보고 **송신을 막는다**. 조용해지면(PROG_GUARD_CALM_MS) 자동 해제.
+       *  ※막는 것은 RF 송신뿐이고 화면·로그는 그대로라 원인 추적에 지장이 없다. */
+#ifndef PROG_GUARD_MAX
+#define PROG_GUARD_MAX      5           /* 이 횟수를 넘기면 고장으로 본다 */
+#endif
+#ifndef PROG_GUARD_WINDOW_MS
+#define PROG_GUARD_WINDOW_MS 60000      /* 판정 창(1분) */
+#endif
+#ifndef PROG_GUARD_CALM_MS
+#define PROG_GUARD_CALM_MS   300000     /* 5분간 조용하면 해제 */
+#endif
+      {
+        static int64_t s_pg_first_us = 0;
+        static int64_t s_pg_last_us  = 0;
+        static int     s_pg_count    = 0;
+        static bool    s_pg_blocked  = false;
+        const int64_t nowp = esp_timer_get_time();
+
+        if (s_pg_last_us && (nowp - s_pg_last_us) > (int64_t)PROG_GUARD_CALM_MS * 1000) {
+          if (s_pg_blocked) ESP_LOGW(TAG, "[PROGGUARD] 조용해짐 — PROG 차단 해제");
+          s_pg_blocked = false; s_pg_count = 0; s_pg_first_us = 0;
+        }
+        s_pg_last_us = nowp;
+        if (!s_pg_first_us ||
+            (nowp - s_pg_first_us) > (int64_t)PROG_GUARD_WINDOW_MS * 1000) {
+          s_pg_first_us = nowp; s_pg_count = 0;
+        }
+        if (++s_pg_count > PROG_GUARD_MAX && !s_pg_blocked) {
+          s_pg_blocked = true;
+          ESP_LOGE(TAG, "★[PROGGUARD] PROG 가 %d초에 %d회 — 고장으로 판단해 송신 차단. "
+                        "버튼/PCF 상태를 확인할 것",
+                   PROG_GUARD_WINDOW_MS / 1000, s_pg_count);
+        }
+        if (s_pg_blocked) break;         /* RF 송신하지 않음 */
+      }
+
       oled_ui_notify_action_start(&s_ui, OLED_ACTION_PROG);
       somfy_rts_abort = false;
       /* ★2026-08-15 연속 송신 — 정품과 동일. 누르는 동안 계속 쏘고, 프레임마다
@@ -2546,7 +2590,13 @@ static uint8_t _bat_mv_to_pct(int mv) {
 #define BATLOG_FLUSH_MS 2000
 
 typedef struct __attribute__((packed)) {
-  uint16_t t_s;      /* 세션 시작 후 경과 초 */
+  uint32_t t_s;      /* 세션 시작 후 경과 초.
+                      *  ★★★2026-08-17 uint16 → uint32. 16비트는 **18.2시간
+                      *  (65535초)에서 포화**한다. 실제로 37.8시간짜리 배터리
+                      *  세션에서 300건 전부 t_s=65535 로 뭉개져 "언제 무슨 일이
+                      *  있었는지" 시간축이 통째로 사라졌다(PROG 281건이 언제부터
+                      *  시작됐는지 못 봄). 레코드가 9→11B 로 늘지만 C6 는
+                      *  300건×11B=3.3KB 로 여유가 충분하다. */
   uint16_t mv;       /* 평활 전압 */
   uint8_t  pct;      /* 표시 % */
   uint8_t  flags;    /* bit0=무선ON bit1=화면ON bit2~3=PM상태 bit4~7=이벤트코드
@@ -2763,7 +2813,7 @@ static void _batlog_flush_if_due(int64_t now_us, bool force) {
 static void _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int pm,
                            int ev) {
   bat_sample_t *e = &s_bl_buf[s_bl_head];
-  e->t_s  = (uint16_t)(t_s > 65535 ? 65535 : t_s);
+  e->t_s  = (uint32_t)(t_s < 0 ? 0 : t_s);   /* ★포화 없음(uint32) */
   e->mv   = (uint16_t)mv;
   e->pct  = (uint8_t)pct;
   e->flags = (uint8_t)((radio ? 1 : 0) | (panel ? 2 : 0) |

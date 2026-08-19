@@ -9,7 +9,7 @@ C6 에서도 **측정 데이터를 지킬 때** 이쪽이 안전하다.
     python sim/tools/batlog_decode.py nvs.bin
 
 main/somfy_app.c 의 bat_sample_t (packed, 8B) 와 짝을 이룬다:
-    uint16 t_s / uint16 mv / uint8 pct / uint8 flags / uint8 sp / uint8 ls / int8 rssi
+    uint32 t_s / uint16 mv / uint8 pct / uint8 flags / uint8 sp / uint8 ls / int8 rssi
     flags: bit0=무선ON bit1=화면ON bit2~3=PM상태 bit4~7=이벤트코드
 """
 import struct
@@ -20,7 +20,7 @@ from nvs_parse import parse   # noqa: E402
 
 EVN = ["주기", "LEFT", "RIGHT", "SEL", "UP", "DOWN", "ROT", "PROG", "기타",
        "세션시작", "권외-", "미등록X", "?", "?", "?"]
-SAMPLE = struct.Struct('<HHBBBBb')   # ★2026-08-16 rssi(int8) 추가 → 9B
+SAMPLE = struct.Struct('<IHBBBBb')   # ★2026-08-17 t_s uint32(18.2h 포화 해소) → 11B
 
 
 def decode(path, div_top=100, div_bot=100, capacity_mah=700):

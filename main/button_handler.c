@@ -506,9 +506,43 @@ static pcf_state_t _pcf8574_read(void) {
    *  넣어둔 값을 그대로 쓴다 — 비트뱅(0.44ms/회)이 통째로 사라진다.
    *  ※LP 가 아직 첫 읽기 전이면 0xFFFF 이므로 그때만 HP 가 직접 읽는다. */
   if (s_lp_active && ulp_pcf_state != 0xFFFFFFFFu) {
-    /* ★PCF8575(2바이트) 는 좌/우 버튼이 상위 바이트(P10=bit8, P11=bit9)에 있다.
-     *  여기서 0xFF 로 자르면 좌/우가 통째로 사라진다(실사용 신고로 드러난 버그). */
-    return (pcf_state_t)ulp_pcf_state;
+    /* ★★★2026-08-17 **신선도 검사** — 이게 없어서 실사용 사고가 났다.
+     *
+     *  증상(COM7 C6, 하루 방치): 버튼이 전혀 안 먹고 **혼자서 PROG 를 계속 송신**.
+     *  기전: LP 코어가 멈추면 공유 RAM(ulp_pcf_state)이 마지막 값에서 **얼어붙는다**.
+     *  HP 는 그걸 살아있는 값으로 계속 읽으므로,
+     *    · 그 값에 PROG 비트가 눌림이면 → 눌린 채로 고정 → PROG 연속 송신
+     *      (PROG 는 모터를 프로그래밍 모드로 넣는다 — 설정이 바뀔 위험)
+     *    · 어떤 버튼도 상태가 안 바뀌므로 실제 조작이 전부 무시된다
+     *  LP 는 이미 생존 카운터 poll_cnt 를 내보내고 있었는데 **HP 가 안 봤다**.
+     *
+     *  LP 는 2ms 주기, HP 는 유휴 25ms 주기라 정상이면 폴마다 카운터가 여러 번 는다.
+     *  연속 LP_STALE_POLLS 회(≈200ms) 동안 그대로면 LP 가 죽은 것으로 본다.
+     *  → 얼어붙은 값을 쓰지 않고 아래 HP 직접 읽기로 내려간다. 그마저 실패하면
+     *    각 read 함수가 s_pcf_last 를 돌려주므로 **없던 눌림을 만들어내지 않는다**. */
+#ifndef LP_STALE_POLLS
+#define LP_STALE_POLLS 8
+#endif
+    static uint32_t s_lp_cnt_prev = 0;
+    static uint32_t s_lp_stale    = 0;
+    const uint32_t lp_cnt = ulp_poll_cnt;
+    if (lp_cnt != s_lp_cnt_prev) { s_lp_cnt_prev = lp_cnt; s_lp_stale = 0; }
+    else if (s_lp_stale < LP_STALE_POLLS) { s_lp_stale++; }
+
+    if (s_lp_stale < LP_STALE_POLLS) {
+      /* ★PCF8575(2바이트) 는 좌/우 버튼이 상위 바이트(P10=bit8, P11=bit9)에 있다.
+       *  여기서 0xFF 로 자르면 좌/우가 통째로 사라진다(실사용 신고로 드러난 버그). */
+      return (pcf_state_t)ulp_pcf_state;
+    }
+    /* LP 정지 확정 — 두 번 다시 이 값을 믿지 않는다. LP 를 세우고 HP 폴링으로 전환. */
+    static bool s_lp_dead_logged = false;
+    if (!s_lp_dead_logged) {
+      s_lp_dead_logged = true;
+      ulp_enabled  = 0;        /* LP 가 깨어나 I2C 를 다시 만지지 않게 */
+      s_lp_active  = false;    /* 이후 폴은 HP 직접 읽기 */
+      ESP_LOGE(TAG, "★LP 코어 정지 감지(poll_cnt 고정 %u) — 공유 RAM 값 폐기, "
+                    "HP 직접 폴링으로 전환", (unsigned)lp_cnt);
+    }
   }
 #endif
   return (s_pcf_bus == PCF_BUS_LP) ? PCF_RD_BB() : PCF_RD_SHARED();
