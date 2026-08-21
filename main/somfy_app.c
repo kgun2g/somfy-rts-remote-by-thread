@@ -417,17 +417,8 @@ static time_t _time_persist_load(void) {
 }
 
 /* 주기적 시간 저장 태스크 */
-static void _time_persist_task(void *pv) {
-  while (1) {
-    vTaskDelay(pdMS_TO_TICKS(TIME_SAVE_INTERVAL_MS));
-    esp_err_t err = _time_persist_save();
-    if (err == ESP_OK) {
-      ESP_LOGI(TAG, "[TIME] NVS 저장: epoch=%lld", (long long)time(NULL));
-    } else if (err != ESP_FAIL) {
-      ESP_LOGW(TAG, "[TIME] NVS 저장 실패: %s", esp_err_to_name(err));
-    }
-  }
-}
+/* ★2026-08-20 `time_persist` 태스크 제거 — 메인 루프의 _time_persist_sched()
+ *  로 흡수했다(_time_tick 위 주석 참조). 스택 3,072B 회수. */
 
 static void _init_rtc_from_build_time(void) {
   /* ★ v3.8 근본수정: __DATE__/__TIME__ (somfy_app.c 재컴파일 시에만 갱신
@@ -1840,9 +1831,11 @@ static void _sntp_sync_cb(struct timeval *tv) {
 ═══════════════════════════════════════════════ */
 
 /* time_update 태스크 핸들 — 화면이 켜질 때 즉시 깨우기 위해 보관(위 5분 대기 참조). */
-static TaskHandle_t s_time_task_h = NULL;
+/* ★2026-08-20 `time_update` 태스크 제거 — 메인 루프의 _time_tick_sched() 로
+ *  흡수했다. 통지로 즉시 깨우던 목적(화면이 켜지면 낡은 시각을 안 보이게)은
+ *  메인 루프가 어차피 100ms 마다 도는 것으로 대체된다 — 최대 100ms 지연.
+ *  호출부(_exit_sleep/_exit_screensaver)는 그대로 두고 여기서 무해화한다. */
 static inline void _wake_time_task(void) {
-  if (s_time_task_h) xTaskNotifyGive(s_time_task_h);
 }
 
 static void _enable_pm_light_sleep(void) {
@@ -2059,8 +2052,9 @@ static void _on_thread_attached(void) {
      굶기지 않도록 잠시 지연한다(_deferred_task_starter). 활성 페어링이
      없으면 부팅 후 짧은 유예 뒤 단독 동작을 시작한다.
 ═══════════════════════════════════════════════ */
-/* _time_task 는 아래에서 정의 — 전방 선언 */
-static void _time_task(void *pvParam);
+/* _time_tick_sched / _time_persist_sched 는 아래에서 정의 — 전방 선언 */
+static void _time_tick_sched(int64_t now_us);
+static void _time_persist_sched(int64_t now_us);
 
 /* 앱 태스크가 시작되었는지(=단독/페어링 무관 본격 동작 중). 메인 루프
  * 게이트가 이 플래그를 사용한다. */
@@ -2090,8 +2084,8 @@ static void _start_app_tasks_once(void) {
   /* 시계 폴링 + 시간 NVS 영속. BOARD_DISABLE_TIME(H2)=1 이면 BLE 커미셔닝 heap
    *  확보를 위해 time 태스크(스택 ~5KB)·SNTP 를 만들지 않는다. */
 #if !BOARD_DISABLE_TIME
-  xTaskCreate(_time_persist_task, "time_persist",3072, NULL, 2, NULL);
-  xTaskCreate(_time_task,         "time_update", 2048, NULL, 3, &s_time_task_h);
+  /* ★2026-08-20 time_persist(3072B)·time_update(2048B) 생성을 없앴다 —
+   *  둘 다 메인 루프 틱으로 흡수(_time_tick 위 주석). RAM 5,120B 회수. */
   _sntp_start_once();
 #endif
 
@@ -2232,10 +2226,29 @@ static void _deferred_task_starter(void *pv) {
   vTaskDelete(NULL);
 }
 
-static void _time_task(void *pvParam) {
-  int last_min = -1;
-  time_t prev = 0;
-  while (1) {
+/* ★★2026-08-20 태스크 통합 — `time_update`(2048B)·`time_persist`(3072B) 를
+ *  메인 루프로 흡수한다(사용자 요청: "task 가 너무 많지 않어?").
+ *
+ *  왜 이 둘인가: 메인 루프가 이미 100ms 로 돌고 있어 **추가 깨어남이 0** 이다.
+ *    · time_update  — 화면 ON 1초 / OFF 300초. 100ms 루프 안의 경과 검사로 동일.
+ *      통지(xTaskNotifyGive)로 즉시 깨우던 것도 불필요해진다 — 메인 루프가
+ *      어차피 100ms 마다 도니 화면이 켜지면 최대 100ms 안에 시각이 갱신된다.
+ *    · time_persist — 5분마다 NVS 저장뿐. 경과 검사 한 줄이면 된다.
+ *  회수: **RAM 5,120B**(H2 는 free 13KB 라 재페어링 여유에 직접 도움), 깨어남 ~1/초.
+ *
+ *  ★합치지 **않은** 것들과 이유(조사 결과):
+ *    · hold_repeat → rf_worker : **불가**. hold_repeat 은 조합이 바뀌면
+ *      `somfy_rts_abort = true` 로 **진행 중인 송신을 프레임 경계에서 끊는다**.
+ *      _do_rf_send 는 somfy_rts.c:332 의 vTaskDelay 로 블로킹하므로, 지금은
+ *      prio 8 인 hold_repeat 이 그 틈에 끼어들어 abort 를 세울 수 있다.
+ *      rf_worker(prio 9) 안으로 합치면 송신이 끝나야 검사하므로 **조합 전환이
+ *      송신 종료(최대 CFG_BTN_MAX_HOLD_MS)까지 먹통**이 된다.
+ *    · oled_ui → 어디든  : **불가**. prio 3 격리가 버그 수정으로 확정된 값이고
+ *      (somfy_app(4) 이 선점할 수 있어야 한다), 주기도 50ms/500ms 로 안 맞는다. */
+static void _time_tick(void) {
+  static int last_min = -1;
+  static time_t prev = 0;
+  {
     time_t now = 0;
     struct tm ti = {0};
     time(&now);
@@ -2273,8 +2286,30 @@ static void _time_task(void *pvParam) {
      *  깨울 이유가 없다. 단순히 길게 자면 화면이 켜졌을 때 최대 5분 낡은 시각이
      *  보이므로, **알림(notify)으로 즉시 깨어나게** 한다(_exit_sleep/_exit_screensaver
      *  가 화면을 켜면서 통지). 그래서 5분을 자도 표시는 늦지 않는다. */
-    ulTaskNotifyTake(pdTRUE,
-                     pdMS_TO_TICKS(oled_ui_is_panel_on() ? 1000 : 300000));
+  }
+}
+
+/* 메인 루프가 100ms 마다 부른다. 화면 ON 1초 / OFF 300초 주기를 여기서 만든다
+ *  (원래 태스크의 ulTaskNotifyTake 타임아웃과 같은 값). */
+static void _time_tick_sched(int64_t now_us) {
+  static int64_t last_us = 0;
+  const int64_t iv = (oled_ui_is_panel_on() ? 1000 : 300000) * 1000LL;
+  if (last_us != 0 && (now_us - last_us) < iv) return;
+  last_us = now_us;
+  _time_tick();
+}
+
+/* 5분마다 NVS 저장 — 원래 `time_persist` 태스크가 하던 일. */
+static void _time_persist_sched(int64_t now_us) {
+  static int64_t last_us = 0;
+  if (last_us == 0) { last_us = now_us; return; }   /* 부팅 직후엔 저장 안 함 */
+  if ((now_us - last_us) < (int64_t)TIME_SAVE_INTERVAL_MS * 1000) return;
+  last_us = now_us;
+  esp_err_t err = _time_persist_save();
+  if (err == ESP_OK) {
+    ESP_LOGI(TAG, "[TIME] NVS 저장: epoch=%lld", (long long)time(NULL));
+  } else if (err != ESP_FAIL) {
+    ESP_LOGW(TAG, "[TIME] NVS 저장 실패: %s", esp_err_to_name(err));
   }
 }
 
@@ -4707,6 +4742,9 @@ void somfy_app_run(void *arg) {
      *  btn_handler 가 버튼·진동을 잡아도 **화면을 켜는 처리는 이 루프**가 하므로,
      *  여기가 느리면 그만큼 켜지는 게 늦는다(150ms 폴링과 겹쳐 체감이 훨씬 나빴다).
      *  깨우기 경로에 지연을 넣지 않는다. */
+    /* ★2026-08-20 흡수한 두 태스크의 일 (_time_tick 위 주석 참조) */
+    _time_tick_sched(now_us);
+    _time_persist_sched(now_us);
     g_wake_iter[WI_MAIN]++;            /* ★깨어남 출처 계측 */
     vTaskDelay(pdMS_TO_TICKS(100));
   }
