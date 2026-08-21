@@ -153,3 +153,30 @@ CONFIG_SUPPORT_PUSH_AV_STREAM_TRANSPORT_CLUSTER=n
 CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=35
 CONFIG_BLE_DEVICE_NAME_PREFIX="MATTER-"
 CONFIG_CHIP_PROJECT_CONFIG="main/CHIPProjectConfig.h"
+
+# ★★2026-08-20 컴파일 최적화 -Og → -Os (절전).
+#  그동안 IDF 기본값인 -Og(디버그 최적화)로 빌드되고 있었다 — 어느 defaults 에도
+#  적어두지 않아 눈치채지 못했다.
+#  배터리 실측(NVS 계측): 깨어남 88회/초, 회당 깨어있음 1.52ms
+#      = 실작업 0.70ms + light sleep 진입/복귀 오버헤드 0.82ms
+#  -Os 는 그 **양쪽을 함께** 줄인다(코드가 빨라지므로). 주기를 건드리지 않으므로
+#  반응 지연이 생기지 않는다 — 폴 주기 25→100ms 시도는 "너무 느리다"로 되돌렸다.
+#  ★-O2(PERF)를 쓰지 않은 이유: 현재 .bin 이 앱 파티션의 92% 라 여유가 8% 뿐이다.
+#    -O2 는 코드가 커져 넘칠 위험이 있고, -Os 는 오히려 줄어든다.
+#  ★어서션은 그대로 켜 둔다(ASSERTION_LEVEL=2) — 미해결 건(2129mV 오독,
+#    인터럽트 워치독 리셋)이 남아 있어 진단 능력을 포기할 때가 아니다.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# ★★2026-08-20 상시 계측 끄기 (절전 ②).
+#  측정하려고 켜 뒀던 것들인데, 켜져 있는 동안 **모든 태스크 전환·모든 PM lock
+#  획득/해제·sleep 진입마다** 타이머를 읽어 누적한다. 측정은 끝났다.
+#    · PM_PROFILING            : PM lock 보유시간 통계 (콘솔 `pm` 이 덜 자세해짐)
+#    · GENERATE_RUN_TIME_STATS : 태스크별 CPU 점유 (콘솔 `rt` 비활성 — 이미 #if 가드 있음)
+#    · USE_STATS_FORMATTING_FUNCTIONS : 위 통계의 문자열 포맷 함수
+#  ★USE_TRACE_FACILITY 는 **켜 둔다** — uxTaskGetSystemState 가 이걸 요구하고,
+#    per-switch 비용이 없다(TCB 필드만 늘린다). 끄면 app_main.cpp 의 `rt` 가
+#    가드로 빠지긴 하지만, 굳이 기능을 더 없앨 이유가 없다.
+#  다시 재려면 이 세 줄을 지우고 재빌드하면 된다.
+CONFIG_PM_PROFILING=n
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=n
+CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=n

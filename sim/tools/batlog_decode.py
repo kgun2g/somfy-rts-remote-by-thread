@@ -115,6 +115,62 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700):
                  '오버헤드 작음 — 루프 주기를 늘려도 이득이 작다'))
     else:
         print('  (light sleep 계측 없음 — ls_cnt/ls_us 를 남기는 펌웨어가 아니다)')
+
+    # ── 수면 길이 히스토그램 (2026-08-20) ─────────────────────────────────
+    #  태스크 주기 전수조사로는 유휴 54회/초가 나오는데 실측이 93.8회/초였다.
+    #  분포의 봉우리가 어느 주기인지 보면 지배 요인이 그대로 드러난다.
+    hb = ns.get('ls_hist')
+    if isinstance(hb, (bytes, bytearray)) and len(hb) >= 32:
+        import struct as _st
+        h8 = _st.unpack_from('<8I', hb)
+        lbl = ['<2ms', '2~5ms', '5~8ms', '8~12ms', '12~20ms',
+               '20~30ms', '30~60ms', '>=60ms']
+        tot = sum(h8) or 1
+        print()
+        print('── 수면 길이 분포 (깨어남 출처) ──')
+        print('  LP 코어=%s  버튼 폴 주기=%sms'
+              % ('ON' if ns.get('lp_on') else 'OFF', ns.get('poll_ms')))
+        for l, v in zip(lbl, h8):
+            bar = '#' * int(40.0 * v / tot)
+            print('  %-9s %9d  %5.1f%%  %s' % (l, v, 100.0 * v / tot, bar))
+        top = lbl[h8.index(max(h8))]
+        print('  ★지배 구간 %s — 버튼 폴 주기(%sms)와 %s'
+              % (top, ns.get('poll_ms'),
+                 '일치' if str(ns.get('poll_ms')) in top else '**불일치**'))
+
+    # ── 깨어난 원인 + 태스크별 실제 반복 (2026-08-20) ─────────────────────
+    import struct as _st
+    wcb = ns.get('wc_hist')
+    wib = ns.get('wi_cnt')
+    el2 = ns.get('dis_el')
+    if isinstance(wcb, (bytes, bytearray)) and len(wcb) >= 36:
+        wc = _st.unpack_from('<9I', wcb)
+        nm = ['TIMER', 'GPIO', 'ULP', 'UART', 'BT', 'WIFI(802.15.4)',
+              'EXT1', 'UNDEFINED', '표에 없음']
+        tot = sum(wc) or 1
+        print()
+        print('── 깨어난 원인 (esp_sleep_get_wakeup_cause) ──')
+        for n, v in zip(nm, wc):
+            if v:
+                print('  %-16s %9d  %5.1f%%' % (n, v, 100.0 * v / tot))
+    if isinstance(wib, (bytes, bytearray)) and len(wib) >= 16 and el2:
+        it = _st.unpack_from('<4I', wib)
+        nm = ['btn_handler', 'somfy_app 메인', 'oled_ui', 'hold_repeat']
+        exp = [40.0, 10.0, 2.0, 2.0]
+        print()
+        print('── 태스크별 실제 반복 (부팅 후 누적 / 세션 %ds) ──' % el2)
+        tot = 0.0
+        for n, v, e in zip(nm, it, exp):
+            r = v / float(el2)
+            tot += r
+            print('  %-16s %9d  = %6.2f회/초   (예상 %.1f)' % (n, v, r, e))
+        print('  %-16s %9s  = %6.2f회/초' % ('우리 태스크 합', '', tot))
+        cnt = ns.get('ls_cnt')
+        if cnt:
+            w = cnt / float(el2)
+            print('  %-16s %9s  = %6.2f회/초' % ('실제 깨어남', '', w))
+            print('  ★남의 몫(스택 등) %6.2f회/초  = 전체의 %.0f%%'
+                  % (w - tot, 100.0 * (w - tot) / w if w else 0))
     return 0
 
 

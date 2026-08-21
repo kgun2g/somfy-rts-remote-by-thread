@@ -203,6 +203,11 @@ SemaphoreHandle_t btn_handler_get_i2c_mutex(void);
  * 판단한다. `int_cnt` 비율이 높으면 유휴 주기를 더 늘려도 되고, 0 에 가까우면
  * `~INT` 가 죽은 것이라 안전망 주기가 곧 버튼 반응 지연이 된다.
  */
+/* ★2026-08-20 절전 진단: LP 코어 폴링이 실제로 붙었는지 / 현재 폴 주기(ms). */
+bool btn_handler_lp_active(void);
+void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq);
+int  btn_handler_poll_ms(void);
+
 void btn_handler_wake_stats(uint32_t *int_cnt, uint32_t *vibe_cnt,
                             uint32_t *tmo_cnt, uint32_t *idle_cnt);
 

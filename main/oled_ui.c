@@ -1,4 +1,5 @@
 #include "oled_ui.h"
+#include "wake_diag.h"   /* ★2026-08-20 깨어남 출처 계측 */
 #include "boot_diag.h"   /* 부팅 세부 진행도 — 배터리 부팅 멈춤 진단 */
 #include "ssd1306.h"     // esp-idf-ssd1306 라이브러리
 #include "font8x8_basic.h"
@@ -2961,6 +2962,7 @@ static void _ui_task(void *pvParam)
         /* ★패널이 꺼져 있으면 그려도 안 보인다 → 주기를 늘려 CPU 를 재운다.
          *  (렌더 자체는 위에서 이미 dirty-page 로 전송을 안 하지만, 20fps 로 깨어나는
          *   것만으로도 light sleep 진입을 방해한다 — 배터리 모드에서 특히 손해.) */
+        g_wake_iter[WI_OLED]++;        /* ★깨어남 출처 계측 */
         vTaskDelay(pdMS_TO_TICKS(s_panel_on ? OLED_TASK_INTERVAL_MS
                                             : OLED_TASK_INTERVAL_OFF_MS));
     }

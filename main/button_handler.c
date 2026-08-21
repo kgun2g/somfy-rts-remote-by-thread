@@ -1,4 +1,5 @@
 #include "button_handler.h"
+#include "wake_diag.h"   /* ★2026-08-20 깨어남 출처 계측 */
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_rom_sys.h"       // esp_rom_delay_us — bit-bang timing
@@ -60,6 +61,34 @@ static TaskHandle_t      s_btn_task_h = NULL;
      실제로 `~INT` 가 쓸 만한지는 아래 카운터(인터럽트 깨움 vs 타임아웃 깨움)로
      **측정해서** 판단한다 — 되면 유휴 주기를 더 늘릴 수 있다.                */
 #define BTN_ACTIVE_POLL_MS  10    /* 활동 중 — 기존과 동일 */
+/* ★★2026-08-20 LP 경로의 **유휴** 폴 주기. 25 → 100 (사용자 지시, 시험 중).
+ *
+ *  근거(실측, NVS 계측): 배터리 세션 1,557초에서 깨어남 88.07회/초 중
+ *  btn_handler 가 46.81회/초로 **혼자 53%** 였다. 여기가 최대 지렛대다.
+ *      100ms 로: btn 10.0회/초 → 전체 51.3회/초(-42%), 깨어있는 시간 13.4%→7.8%
+ *
+ *  ★★위험(반드시 알고 있을 것): LP 는 PCF 변화 시
+ *  `ulp_lp_core_wakeup_main_processor()` 로 HP **CPU** 를 깨우지만, 그것이
+ *  `vTaskDelay` 로 블록된 이 **태스크를 조기 해제하지는 않는다**. 태스크는 주기를
+ *  다 잔다. 게다가 LP 는 `pcf_state = rx` 로 **현재 상태만** 쓰고 눌림을 래치하지
+ *  않는다. → 누름이 폴 사이에 통째로 들어가면 **그 누름은 사라진다**.
+ *  계산(sim/tools/btn_poll_period_sim.py, P_miss = 1 - 누름길이/주기):
+ *      누름 40ms → 60% 놓침 / 60ms → 40% / 80ms → 20% / 100ms 이상 → 0%
+ *  코드 이력에도 "150ms 는 예전에 실패" 가 남아 있다(그 계산으로 80ms 탭 47% 놓침).
+ *
+ *  → 짧은 탭이 씹히면 두 갈래다:
+ *     (a) 50 으로 후퇴 — 절감 -30%, 60ms 탭까지 안전
+ *     (b) LP 프로그램이 **눌림을 래치**하게 고친다(pressed 마스크를 OR 누적하고
+ *         HP 가 읽을 때 소비). 그러면 주기와 무관하게 누락 0 이라 100ms 유지 가능.
+ *         rot_delta 를 이미 같은 방식(누적→HP 가 소비)으로 처리하고 있으므로
+ *         구조는 그대로 따라 하면 된다. */
+/* ★★★2026-08-20 **100 → 25 즉시 되돌림** — 사용자 실사용 판정: "너무 느리다".
+ *  위 계산은 "누름 100ms 이상이면 놓침 0%" 였지만, 놓치지 않는 것과 **빠르게
+ *  느껴지는 것**은 다르다. 눌러서 반응까지 최대 100ms 지연이 그대로 체감된다.
+ *  → 25 로 복귀(기존 검증값). 절전은 −42% 를 포기한다.
+ *  ※다시 시도하려면 **먼저 LP 가 눌림을 래치**하도록 고칠 것(아래 (b)).
+ *    주기만 늘리는 방식은 지연이 그대로 남으므로 다시 같은 결과가 된다. */
+#define BTN_LP_IDLE_POLL_MS 25
 #define BTN_IDLE_POLL_MS    50    /* 유휴 안전망. ~INT 가 죽어도 이 주기로는 반응 */
 #define BTN_ACTIVE_HOLD_MS 300    /* 마지막 활동 후 이 시간 조용하면 유휴로 */
 
@@ -840,11 +869,18 @@ static void _btn_task(void *pvParam) {
       s_vibe_poll_total++;
       if (lvl == 1) s_vibe_high_total++;
 
-      /* 진단 로그(3초 주기) — HIGH 샘플 비율 / ISR 누적 */
+      /* ★2026-08-20 [VIBE-stat] 진단 로그 **OFF**(사용자 지시).
+       *  3초마다 한 줄이라 로그를 가장 많이 차지했다. 끄더라도 진단 능력은
+       *  유지된다 — 위 s_vibe_poll_total/s_vibe_high_total/s_vibe_isr_count 는
+       *  계속 누적되고, somfy_app 의 **NVS vibelog 가 3초 창 통계를 그대로
+       *  기록**한다(2026-08-19 진동센서 원인도 이 vibelog 로 찾았다).
+       *  다시 보려면 아래를 1 로. */
+#define VIBE_STAT_LOG_ENABLE 0
+      static uint8_t  s_vibe_reenable_cd = 0;
+#if VIBE_STAT_LOG_ENABLE
       static uint32_t s_vibe_isr_seen = 0;
       static int      s_vibe_high_cnt = 0;
       static int      s_vibe_periodic_cnt = 0;
-      static uint8_t  s_vibe_reenable_cd = 0;
 
       if (lvl == 1) s_vibe_high_cnt++;
       uint32_t isr_cnt = s_vibe_isr_count;
@@ -856,6 +892,7 @@ static void _btn_task(void *pvParam) {
         s_vibe_periodic_cnt = 0;
         s_vibe_high_cnt = 0;
       }
+#endif
 
       /* ISR 재활성(chatter 폭주 cap) */
       if (s_vibe_isr_disabled_flag) {
@@ -912,7 +949,9 @@ static void _btn_task(void *pvParam) {
       bool any_held = false;
       for (int i = 0; i < BTN_COUNT; i++)
         if (!s_btns[i].last_state) { any_held = true; break; }
-      vTaskDelay(pdMS_TO_TICKS(any_held ? BTN_ACTIVE_POLL_MS : 25));
+      g_wake_iter[WI_BTN]++;           /* ★깨어남 출처 계측 */
+      vTaskDelay(pdMS_TO_TICKS(any_held ? BTN_ACTIVE_POLL_MS
+                                        : BTN_LP_IDLE_POLL_MS));
     } else
 #endif
     vTaskDelay(pdMS_TO_TICKS(BTN_ACTIVE_POLL_MS));
@@ -1335,6 +1374,48 @@ static void _vibration_track(bool high_now) {
     s_win_cnt = 0;
     s_win_high = 0;
   }
+}
+
+/* ★2026-08-20 LP 코어 폴링 상태 노출 — 절전 진단용.
+ *  왜 필요했나: LP 가 붙으면 HP 폴 주기가 10ms → 25ms 로 늘어 깨어남이 절반 이하가
+ *  된다(아래 btn_handler_poll_ms 참조). 그런데 그 판정은 **부팅 초반**에만 로그로
+ *  남는데, USB-JTAG 재열거가 그보다 늦어 캡처에서 매번 놓쳤다(2026-08-20 3회 시도).
+ *  → 60초 주기 [PWR] 줄에 실어 언제든 읽을 수 있게 한다. */
+/* ★★2026-08-20 LP → HP 깨우기 계측 — 깨어남 출처 확정용.
+ *  실측(배터리 38분, 85,227표본)에서 수면 길이가 **한 번도 20ms 를 넘지 않았다**.
+ *  버튼 폴이 25ms 인데 그 간격이 한 번도 안 나온다는 건, 그 전에 **다른 무언가가
+ *  반드시 깨운다**는 뜻이다. LP 프로그램(lp_core/pcf_poll.c)은 2ms 마다 PCF 를 읽고
+ *  `rx != last` 이면 ulp_lp_core_wakeup_main_processor() 를 부른다 — 가만히 있으면
+ *  변할 리 없는 값이다. 즉 **PCF 입력이 떨고 있다**면 이것이 곧 깨어남의 정체다.
+ *  (어제 PROG 자동 송신 폭주의 미확인 원인과 같은 현상일 가능성이 높다.)
+ *  seq 는 rx 변화·로터리 디텐트마다 증가하므로, 정지 상태의 seq 증가율이 곧 답이다.
+ *  USB 구동에서도 LP 는 계속 돌므로 **배터리 없이 즉시 측정된다**. */
+void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq) {
+#if SOMFY_LP_CORE_PATH
+  if (s_lp_active) {
+    if (poll_cnt) *poll_cnt = ulp_poll_cnt;
+    if (seq)      *seq      = ulp_seq;
+    return;
+  }
+#endif
+  if (poll_cnt) *poll_cnt = 0;
+  if (seq)      *seq      = 0;
+}
+
+bool btn_handler_lp_active(void) {
+#if SOMFY_LP_CORE_PATH
+  return s_lp_active;
+#else
+  return false;
+#endif
+}
+
+/* 현재 유휴 폴링 주기(ms) — 깨어남 빈도의 실제 지배 요인이다. */
+int btn_handler_poll_ms(void) {
+#if SOMFY_LP_CORE_PATH
+  if (s_lp_active) return 25;
+#endif
+  return BTN_ACTIVE_POLL_MS;
 }
 
 SemaphoreHandle_t btn_handler_get_i2c_mutex(void) { return s_i2c_mutex; }

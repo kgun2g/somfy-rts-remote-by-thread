@@ -22,7 +22,8 @@
 #include "esp_sntp.h"
 #include "esp_system.h"       /* esp_reset_reason — boot 시 panic 감지 */
 #include "esp_heap_caps.h"    /* heap_caps_get_largest_free_block — heap 진단 */
-#include "esp_task_wdt.h"     /* Task WDT — 메인 루프 hang 자동 리부트 */
+#include "esp_task_wdt.h"
+#include "wake_diag.h"   /* ★2026-08-20 깨어남 출처 계측 */     /* Task WDT — 메인 루프 hang 자동 리부트 */
 #include "esp_attr.h"         /* RTC_NOINIT_ATTR — 리부트 살아남는 메모리 */
 #include "thread_provision.h"
 #include "boot_diag.h"        /* 부팅 단계 NVS 기록 — 배터리 부팅 멈춤 진단 */
@@ -1055,6 +1056,7 @@ static void _hold_repeat_task(void *pvParam) {
         period = COMBO_SWITCH_POLL_MS;
       }
     }
+    g_wake_iter[WI_HOLD]++;            /* ★깨어남 출처 계측 */
     vTaskDelay(pdMS_TO_TICKS(period));
   }
 }
@@ -2330,9 +2332,12 @@ static void _bat_adc_init(void) {
 
 /* ★2026-08-12 진단 모드: 배터리 로그 주기(측정 몇 회마다 1줄).
  *  1 = 매 측정(5초). 버튼 연타 구간의 전압 추이를 보려면 촘촘해야 한다.
- *  진단이 끝나면 12(=60초)로 되돌릴 것. */
+ *  ★2026-08-20 **120(=10분)으로 되돌린다**(사용자 지시).
+ *    측정 주기가 5초이므로 120회 = 600초. 촘촘한 진단이 다시 필요하면 1 로.
+ *    ※절전 기여는 작다(초당 0.01% 수준). 주 목적은 로그를 읽을 수 있게 하는 것이고,
+ *      **전압 추이 자체는 NVS batlog 가 120초마다 계속 남기므로 손실이 없다.** */
 #ifndef BAT_DBG_EVERY
-#define BAT_DBG_EVERY 1
+#define BAT_DBG_EVERY 120
 #endif
 
 /* BAT 단자 전압(mV). 실패 시 -1 (8회 평균). */
@@ -2654,6 +2659,9 @@ static uint32_t s_dis_ls_base_cnt = 0;   /* 이전 부팅들에서 누적된 진
 static int64_t  s_dis_ls_base_us  = 0;   /* 〃 sleep 시간 */
 static uint32_t s_bl_saved_lscnt  = 0;   /* NVS 에서 읽어온 값 */
 static uint64_t s_bl_saved_lsus   = 0;
+/* 세션 기준점 — 실제 정의는 아래 g_wake_iter 옆. C 의 tentative definition
+ *  이라 두 번 나와도 같은 객체다(이 함수가 정의보다 앞서 나오기 때문). */
+static uint32_t s_wi_sess0[WI_COUNT];
 static void _batlog_ls_session_begin(bool resume);   /* 정의는 아래(_batlog_new_session 뒤) */
 
 /* ═══ light sleep 실측 누적 — NVS 로 남기기 위한 계측기 ═══════════════════════
@@ -2663,13 +2671,69 @@ static void _batlog_ls_session_begin(bool resume);   /* 정의는 아래(_batlog
  *  설계상 light sleep 을 끄므로(USB-JTAG 보호) 0 이 정상이다. */
 static volatile int64_t  s_ls_total_us = 0;   /* 부팅 후 누적 light sleep 시간 */
 static volatile uint32_t s_ls_count    = 0;   /* 진입 횟수 */
+
+/* ★★★2026-08-20 **수면 길이 히스토그램** — 깨어남이 어디서 오는지 가르는 계측.
+ *
+ *  문제: 배터리 세션 실측이 **93.8회/초**인데, 태스크 주기를 전수 조사해 더하면
+ *      btn_handler 25ms(LP=ON) 40 + oled_ui(화면OFF) 500ms 2 +
+ *      hold_repeat 500ms 2 + somfy_app 메인루프 100ms 10  =  54회/초
+ *    뿐이다(coalescing 은 줄이기만 하므로 초과분을 설명 못 한다).
+ *    약 40회/초가 우리 태스크가 아닌 곳에서 온다 — CHIP/OpenThread 타이머,
+ *    또는 **LP 코어가 배터리 구간에 멈춰 btn 이 10ms 로 되돌아간 것**이 후보다.
+ *    (LP=ON 은 USB 구동일 때 확인한 값이고, 배터리 구간은 확인된 적이 없다.)
+ *
+ *  추정을 그만두고 잰다: 잠든 길이의 분포를 보면 **지배 주기가 그대로 보인다**.
+ *    ~10ms 봉우리 → btn 이 10ms(=LP 정지). ~25ms 봉우리 → LP 정상.
+ *    그 어느 쪽도 아닌 짧은 봉우리 → 우리 태스크가 아닌 타이머.
+ *  IDLE 컨텍스트에서 도는 콜백이라 배열 증가 한 번만 한다(블로킹·나눗셈 없음). */
+#define LS_HIST_N 8
+/* 경계(us): <2ms, 2~5, 5~8, 8~12, 12~20, 20~30, 30~60, ≥60 */
+static const int32_t s_ls_hist_edge[LS_HIST_N - 1] = {
+    2000, 5000, 8000, 12000, 20000, 30000, 60000 };
+static volatile uint32_t s_ls_hist[LS_HIST_N];
+/* ★2026-08-20 **재부팅 누적용 base** — 이게 없으면 부팅마다 0 에서 시작한 배열이
+ *  저장본을 덮어써 기록이 통째로 날아간다. 실제로 첫 시도에서 그랬다:
+ *  배터리 22분(깨어남 118,710회) 뒤 USB 를 꽂자 리셋이 걸렸고, 갓 부팅한
+ *  히스토그램(40표본)이 저장본을 덮어써 분포를 못 봤다.
+ *  (batlog 본체는 2026-08-15 에 같은 이유로 이미 이어받기를 넣어 뒀다.) */
+static uint32_t s_ls_hist_base[LS_HIST_N];
+
+/* ★2026-08-20 태스크별 실제 반복 횟수 (wake_diag.h 주석 참조) */
+volatile uint32_t g_wake_iter[WI_COUNT];
+/* ★2026-08-20 **세션 기준점** — 이게 없으면 비교가 불가능하다.
+ *  실제로 -Os 회차에서 틀렸다: 카운터는 부팅 후 누적인데 세션(596초)은 리셋돼
+ *  회/초가 부풀려졌고, "남의 몫 -9%" 라는 불가능한 값이 나왔다.
+ *  light sleep 계측(s_dis_ls_cnt0)이 이미 쓰는 방식을 그대로 따른다. */
+static uint32_t s_wi_sess0[WI_COUNT];
+
+/* ★2026-08-20 깨어난 원인 분포 — esp_sleep_get_wakeup_cause() 를 그대로 센다.
+ *  IDF 상수는 값이 흩어져 있어 표를 두고 선형 탐색한다(8개, IDLE 에서 무해). */
+#define WC_N 8
+static const uint8_t s_wc_id[WC_N] = {
+    ESP_SLEEP_WAKEUP_TIMER, ESP_SLEEP_WAKEUP_GPIO, ESP_SLEEP_WAKEUP_ULP,
+    ESP_SLEEP_WAKEUP_UART,  ESP_SLEEP_WAKEUP_BT,   ESP_SLEEP_WAKEUP_WIFI,
+    ESP_SLEEP_WAKEUP_EXT1,  ESP_SLEEP_WAKEUP_UNDEFINED };
+static volatile uint32_t s_wc_hist[WC_N + 1];   /* 마지막 칸 = 표에 없는 값 */
+static uint32_t s_wc_base[WC_N + 1];
 static int64_t s_ls_mark_us   = 0;            /* 직전 배터리 샘플 시점의 누적값 */
 static int64_t s_ls_mark_wall = 0;            /* 그때의 벽시계 */
 
 #if CONFIG_PM_ENABLE && CONFIG_FREERTOS_USE_TICKLESS_IDLE
 static esp_err_t _ls_exit_cb(int64_t sleep_time_us, void *arg) {
   (void)arg;
-  if (sleep_time_us > 0) { s_ls_total_us += sleep_time_us; s_ls_count++; }
+  if (sleep_time_us > 0) {
+    s_ls_total_us += sleep_time_us; s_ls_count++;
+    int b = 0;
+    while (b < LS_HIST_N - 1 && sleep_time_us >= s_ls_hist_edge[b]) b++;
+    s_ls_hist[b]++;
+    /* ★2026-08-20 깨어난 원인도 함께 센다 */
+    {
+      const esp_sleep_wakeup_cause_t wc = esp_sleep_get_wakeup_cause();
+      int i = 0;
+      while (i < WC_N && s_wc_id[i] != (uint8_t)wc) i++;
+      s_wc_hist[i]++;
+    }
+  }
   return ESP_OK;
 }
 static void _ls_stats_init(void) {
@@ -2726,6 +2790,25 @@ static void _batlog_save(void) {
   nvs_set_u32(h, "ls_cnt", s_dis_ls_base_cnt + (s_ls_count - s_dis_ls_cnt0));
   nvs_set_u64(h, "ls_us",  (uint64_t)(s_dis_ls_base_us +
                                       (s_ls_total_us - s_dis_ls_us0)));
+  /* ★2026-08-20 수면 길이 히스토그램 + LP 상태 — 깨어남 출처 판별용.
+   *  부팅 후 누적(세션 기준 차감 안 함) — 분포의 **모양**만 보면 되므로 충분하다.
+   *  blob 한 덩어리로 저장해 NVS 엔트리 낭비를 줄인다(8×u32 = 32B). */
+  {
+    uint32_t hist[LS_HIST_N];
+    for (int i = 0; i < LS_HIST_N; i++)
+      hist[i] = s_ls_hist_base[i] + s_ls_hist[i];   /* ★재부팅 누적 */
+    nvs_set_blob(h, "ls_hist", hist, sizeof(hist));
+    {
+      uint32_t wc[WC_N + 1], it[WI_COUNT];
+      for (int i = 0; i <= WC_N; i++) wc[i] = s_wc_base[i] + s_wc_hist[i];
+      /* ★세션 시작 이후분만 — 위 s_wi_sess0 주석 참조 */
+      for (int i = 0; i < WI_COUNT; i++) it[i] = g_wake_iter[i] - s_wi_sess0[i];
+      nvs_set_blob(h, "wc_hist", wc, sizeof(wc));
+      nvs_set_blob(h, "wi_cnt",  it, sizeof(it));
+    }
+    nvs_set_u8  (h, "lp_on", btn_handler_lp_active() ? 1 : 0);
+    nvs_set_u16 (h, "poll_ms", (uint16_t)btn_handler_poll_ms());
+  }
   nvs_commit(h);
   nvs_close(h);
 }
@@ -2747,6 +2830,19 @@ static void _batlog_load(void) {
     nvs_get_u8 (h, "dis_pc0", &s_bl_saved_pct0);
     nvs_get_u32(h, "ls_cnt", &s_bl_saved_lscnt);
     nvs_get_u64(h, "ls_us",  &s_bl_saved_lsus);
+    /* ★2026-08-20 수면 히스토그램 이어받기 — 선언부 주석의 덮어쓰기 사고 대응 */
+    {
+      size_t hl = sizeof(s_ls_hist_base);
+      if (nvs_get_blob(h, "ls_hist", s_ls_hist_base, &hl) != ESP_OK ||
+          hl != sizeof(s_ls_hist_base)) {
+        for (int i = 0; i < LS_HIST_N; i++) s_ls_hist_base[i] = 0;
+      }
+      size_t wl = sizeof(s_wc_base);
+      if (nvs_get_blob(h, "wc_hist", s_wc_base, &wl) != ESP_OK ||
+          wl != sizeof(s_wc_base)) {
+        for (int i = 0; i <= WC_N; i++) s_wc_base[i] = 0;
+      }
+    }
   }
   nvs_close(h);
 }
@@ -2796,6 +2892,10 @@ static void _batlog_ls_session_begin(bool resume) {
   s_dis_ls_us0      = s_ls_total_us;
   s_dis_ls_base_cnt = resume ? s_bl_saved_lscnt : 0;
   s_dis_ls_base_us  = resume ? (int64_t)s_bl_saved_lsus : 0;
+  /* ★2026-08-20 태스크 반복 카운터도 같은 시점에 기준을 잡는다.
+   *  이게 없어서 -Os 회차 비교가 통째로 틀렸다(부팅 후 누적을 세션 초로 나눠
+   *  회/초가 부풀려지고 "남의 몫 -9%" 라는 불가능한 값이 나왔다). */
+  for (int i = 0; i < WI_COUNT; i++) s_wi_sess0[i] = g_wake_iter[i];
 }
 
 static bool     s_bl_dirty = false;
@@ -4545,14 +4645,33 @@ void somfy_app_run(void *arg) {
          *  **언제 접속해도** 현재값이 보여야 한다(60초 1회라 OT 락 부담 없음). */
         const int _rssi_now = (int)thread_prov_get_parent_rssi();
         s_last_rssi_cache = (int8_t)_rssi_now;   /* ★화면 OFF 구간에서도 갱신 */
+        /* ★2026-08-20 LP·폴주기 추가 — 깨어남 빈도(≈1000/폴주기)의 지배 요인이라
+         *  절전 진단에 매번 필요한데, LP 판정 로그는 부팅 초반에만 나와 USB 재열거가
+         *  늦으면 캡처에서 놓친다. 여기 실어 언제든 읽을 수 있게 한다. */
         ESP_LOGW(TAG, "[PWR] light_sleep=%s (PM상태 %d)  무선=%s  등록=%d  화면=%s  "
-                      "VBUS=%d  rssi=%d  유휴 %llds",
+                      "VBUS=%d  rssi=%d  LP=%s 폴%dms  유휴 %llds",
                  (g_pm_state_applied >= 2) ? "ON" : "OFF", g_pm_state_applied,
                  matter_blinds_get_radio_enabled() ? "ON" : "OFF",
                  matter_blinds_is_commissioning_complete() ? 1 : 0,
                  oled_ui_is_panel_on() ? "ON" : "OFF",
                  btn_handler_is_charging() ? 1 : 0, _rssi_now,
+                 btn_handler_lp_active() ? "ON" : "OFF", btn_handler_poll_ms(),
                  (long long)((nu - s_last_activity_us) / 1000000));
+        /* ★2026-08-20 LP 깨우기 계측 — 위 btn_handler_lp_counters 주석 참조.
+         *  seq 증가 = LP 가 HP 를 깨운 횟수(정지 상태면 0 이어야 정상). */
+        {
+          static uint32_t s_lp_p0 = 0, s_lp_s0 = 0;
+          static int64_t  s_lp_t0 = 0;
+          uint32_t pc = 0, sq = 0;
+          btn_handler_lp_counters(&pc, &sq);
+          const double dt = s_lp_t0 ? (double)(nu - s_lp_t0) / 1e6 : 0.0;
+          if (dt > 0.5)
+            ESP_LOGW(TAG, "[LPWAKE] 폴 %.1f회/초  ★HP 깨우기 %.2f회/초 "
+                          "(seq +%u / %.0f초)  — 정지 상태면 0 이어야 정상",
+                     (pc - s_lp_p0) / dt, (sq - s_lp_s0) / dt,
+                     (unsigned)(sq - s_lp_s0), dt);
+          s_lp_p0 = pc; s_lp_s0 = sq; s_lp_t0 = nu;
+        }
         /* ★2026-08-13 (②) 버스트 폴링 깨우기 출처 — `~INT` 가 실제로 쓸 만한지 판정.
          *  int 이 0 에 가까우면 `~INT` 가 죽은 것이고, 그러면 안전망 주기
          *  (BTN_IDLE_POLL_MS)가 곧 버튼 반응 지연이 된다. 코드 주석에 "현 HW 는
@@ -4588,6 +4707,7 @@ void somfy_app_run(void *arg) {
      *  btn_handler 가 버튼·진동을 잡아도 **화면을 켜는 처리는 이 루프**가 하므로,
      *  여기가 느리면 그만큼 켜지는 게 늦는다(150ms 폴링과 겹쳐 체감이 훨씬 나빴다).
      *  깨우기 경로에 지연을 넣지 않는다. */
+    g_wake_iter[WI_MAIN]++;            /* ★깨어남 출처 계측 */
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
