@@ -3284,6 +3284,27 @@ static bool    s_nobat_judged   = false;
 /* ★2026-08-12 방전 중 표시 % 하한 (근거는 _bat_smooth_mv 위 주석 참고).
  *  255 = 미설정. USB 연결 중에는 충전이므로 255 로 되돌려 상승을 허용한다. */
 static uint8_t s_pct_floor     = BAT_PCT_UNKNOWN;
+/* ★★2026-08-20 하한 **조건부 해제** — 잠김 사고 대응.
+ *  신고: COM7 C6 장시간 방치 후 잔량 0%. NVS 방전기록(세션 #2, 300건/13.5시간)이
+ *  원인을 그대로 보여준다.
+ *      #0~39    4085 → 4068 mV   95%
+ *      #40~59   4069 → 2651 mV    0%   ← 급락
+ *      #60~99   2129 mV 바닥       0%
+ *      #100~299 2656 → 3845 mV    0%   ← 8시간에 걸쳐 회복해도 0% 고정
+ *  하한이 단조 비증가라 **한 번 0% 가 되면 세션 내내 못 풀린다**. 원래 의도는
+ *  "31mV 두 무리" 때문에 표시가 야금야금 오르는 것을 막는 것인데, 센서가 크게
+ *  거짓말했을 때의 탈출구가 없었다.
+ *  ※낮은 값이 측정 오류라는 근거: (a) 사용자 확인 — 그동안 USB 를 꽂은 적이 없다.
+ *    충전 없이 전압이 오르는 건 물리적으로 불가능하다. (b) 기기가 계속 돌았다 —
+ *    셀이 2.1V 면 LDO 드롭아웃으로 죽는다. (c) ADC 산포는 전 구간 2~3카운트로
+ *    깨끗했다(잡음 아님). **기전은 아직 미확정** — 아래 해제 로그가 다음 단서다.
+ *  → 하한을 건 시점의 전압보다 RELEASE_MV 이상 높은 값이 RELEASE_N 표본 연속이면
+ *    해제한다. 잡음 무리(31mV)의 3배 이상이라 원래 막으려던 상승은 그대로 막힌다.
+ *  검증: sim/tools/bat_floor_release_sim.py — 실측 300건 입력 시 최종 0% → 35%. */
+#define BAT_FLOOR_RELEASE_MV 100   /* 잡음 무리 31mV 의 3배 초과 */
+#define BAT_FLOOR_RELEASE_N    5   /* 5초 주기 × 5 = 25초 연속 유지 */
+static int     s_pct_floor_mv  = 0;    /* 하한을 건 시점의 평활 전압 */
+static uint8_t s_floor_up_run  = 0;    /* 연속 상승 표본 수 */
 /* ★2026-08-16 (③) 충전 중 표시% 천장 — 방전 중 하한(s_pct_floor)의 대칭.
  *  milli-percent(0~100000) 로 들고 있어야 분 단위 상승률이 정수 절사로 죽지 않는다.
  *  -1 = 비활성(방전 중). 자세한 배경은 사용 지점 주석 참조. */
@@ -4067,8 +4088,28 @@ void somfy_app_run(void *arg) {
              *  그게 저전압 무리에 걸렸을 때 세션 내내 5%p 낮게 고정된다). */
             if (!_is_usb_powered()) {
               if (s_bat_hist_n >= BAT_FLOOR_MIN_N) {
-                if (s_pct_floor <= 100 && _pct > (int)s_pct_floor) _pct = (int)s_pct_floor;
-                else                                              s_pct_floor = (uint8_t)_pct;
+                /* ★2026-08-20 (A) 조건부 해제 — 선언부 주석의 잠김 사고 대응.
+                 *  하한을 건 시점보다 확실히 높은 전압이 연속으로 유지되면,
+                 *  하한을 만든 낮은 측정이 틀렸던 것이므로 놓아준다. */
+                if (s_pct_floor <= 100 &&
+                    _sm >= s_pct_floor_mv + BAT_FLOOR_RELEASE_MV) {
+                  if (++s_floor_up_run >= BAT_FLOOR_RELEASE_N) {
+                    ESP_LOGW(TAG, "[BAT%%] ★하한 해제 — %d%%(%dmV) 에서 걸렸는데 "
+                                  "%dmV 가 %d표본 연속. 그 낮은 측정이 틀렸다",
+                             (int)s_pct_floor, s_pct_floor_mv, _sm,
+                             (int)s_floor_up_run);
+                    s_pct_floor    = BAT_PCT_UNKNOWN;
+                    s_floor_up_run = 0;
+                  }
+                } else {
+                  s_floor_up_run = 0;
+                }
+                if (s_pct_floor <= 100 && _pct > (int)s_pct_floor) {
+                  _pct = (int)s_pct_floor;
+                } else {
+                  s_pct_floor    = (uint8_t)_pct;
+                  s_pct_floor_mv = _sm;        /* 해제 판정의 기준 전압 */
+                }
               }
               s_pct_ceil_mpct = -1;            /* 방전 복귀 → 충전 천장 해제 */
             } else {
@@ -4086,7 +4127,20 @@ void somfy_app_run(void *arg) {
                *    빠르게 오르지 못하게 하고, 표시 = min(전압환산%, 천장) 으로 한다.
                *    700mAh 를 0.5C 로 충전하면 약 2시간 → 0.85%p/분. */
               if (s_pct_ceil_mpct < 0) {
-                s_pct_ceil_mpct = (int)s_ui.chg_percent * 1000;   /* 직전 표시값에서 출발 */
+                /* ★★2026-08-20 (B) 출발점을 **직전 표시값 → 연결 순간의 전압환산%**
+                 *  로 바꾼다.
+                 *  사고: 방전 중 하한이 0% 로 잠긴 채 USB 를 꽂으면, 천장이 그 0% 에서
+                 *  출발해 0.85%/분으로 기어오른다. 실측(2026-08-20) 연결 316초 뒤 4%,
+                 *  376초 뒤 5% — 참값(약 75%)까지 1.5시간이 걸린다.
+                 *  왜 전압환산이 옳은가: 단자전압이 들뜨는 것은 **충전 전류가 흐른
+                 *  뒤**다. USB 를 꽂은 그 순간의 평활 전압은 아직 방전 구간 값이라
+                 *  참 OCV 에 가깝다. 게다가 평활(중앙값5+EMA α=1/4)이 지연을 주므로
+                 *  들뜬 표본 하나가 들어와도 25% 만 반영된다(약 3%p).
+                 *  → 원래 막으려던 "84% → 연결 즉시 100%" 점프는 그대로 막힌다
+                 *    (연결 순간 전압환산이 곧 84% 이므로 천장도 84% 에서 출발).
+                 *  검증: sim/tools/bat_floor_release_sim.py — 0% 출발 시 90분 걸려
+                 *        76%, 전압환산 출발 시 **즉시 78%**. 84% 케이스는 점프 없음. */
+                s_pct_ceil_mpct = _pct * 1000;   /* 연결 순간의 전압환산 % 에서 출발 */
                 s_pct_ceil_us   = now_us;
               } else {
                 const int64_t dms = (now_us - s_pct_ceil_us) / 1000;
