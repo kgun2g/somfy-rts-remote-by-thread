@@ -22,10 +22,11 @@
 #include "esp_sntp.h"
 #include "esp_system.h"       /* esp_reset_reason — boot 시 panic 감지 */
 #include "esp_heap_caps.h"    /* heap_caps_get_largest_free_block — heap 진단 */
-#include "esp_task_wdt.h"
-#include "wake_diag.h"   /* ★2026-08-20 깨어남 출처 계측 */     /* Task WDT — 메인 루프 hang 자동 리부트 */
+#include "esp_task_wdt.h"    /* Task WDT — 메인 루프 hang 자동 리부트 */
+#include "wake_diag.h"        /* ★2026-08-20 깨어남 출처 계측 */
 #include "esp_attr.h"         /* RTC_NOINIT_ATTR — 리부트 살아남는 메모리 */
 #include "thread_provision.h"
+
 #include "boot_diag.h"        /* 부팅 단계 NVS 기록 — 배터리 부팅 멈춤 진단 */
 #include "esp_timer.h"
 /* WiFi 헤더 제거 — v3.0 Thread 전환.
@@ -89,6 +90,16 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_rom_sys.h"   /* esp_rom_delay_us — tick 무관 busy-wait */
 #include "esp_adc/adc_cali_scheme.h"
+
+/* ★★2026-08-22 g_wake_iter 정의는 **가드 밖**에 둔다.
+ *  처음엔 batlog 블록(`#if BOARD_BATLOG_ENABLE`) 안에 뒀는데, H2 는 그 값이 0 이라
+ *  정의가 통째로 빠져 링크가 깨졌다:
+ *      undefined reference to `g_wake_iter`  (somfy_app.c / oled_ui.c 여러 곳)
+ *  카운터를 올리는 쪽(button_handler·oled_ui·메인 루프·hold_repeat)은 보드 설정과
+ *  무관하게 항상 컴파일되므로 정의도 무조건 있어야 한다.
+ *  ※NVS 로 남기는 쪽만 batlog 가드 안에 있으면 된다(배터리 없는 보드는 저장 안 함). */
+volatile uint32_t g_wake_iter[WI_COUNT];
+
 #endif
 /* WiFi → Thread 전환. wifi_provision.h 제거, thread_provision.h 사용. */
 
@@ -2734,7 +2745,6 @@ static volatile uint32_t s_ls_hist[LS_HIST_N];
 static uint32_t s_ls_hist_base[LS_HIST_N];
 
 /* ★2026-08-20 태스크별 실제 반복 횟수 (wake_diag.h 주석 참조) */
-volatile uint32_t g_wake_iter[WI_COUNT];
 /* ★2026-08-20 **세션 기준점** — 이게 없으면 비교가 불가능하다.
  *  실제로 -Os 회차에서 틀렸다: 카운터는 부팅 후 누적인데 세션(596초)은 리셋돼
  *  회/초가 부풀려졌고, "남의 몫 -9%" 라는 불가능한 값이 나왔다.
