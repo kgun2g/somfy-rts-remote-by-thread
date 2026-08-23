@@ -2777,6 +2777,13 @@ static esp_err_t _ls_exit_cb(int64_t sleep_time_us, void *arg) {
       int i = 0;
       while (i < WC_N && s_wc_id[i] != (uint8_t)wc) i++;
       s_wc_hist[i]++;
+      /* ★★★2026-08-23 ULP 깨움이면 **버튼 태스크를 즉시 깨운다**.
+       *  LP 코어가 PCF 변화를 보고 ulp_lp_core_wakeup_main_processor() 로 HP CPU 를
+       *  꺼냈다는 뜻이다. 그런데 그것만으로는 vTaskDelay 로 블록된 버튼 태스크가
+       *  풀리지 않아, 폴 주기를 늘리면 그만큼 반응이 늦어진다(25→100ms 시도가
+       *  "너무 느리다"로 되돌아간 이유). IDF 에 LP→HP 인터럽트 API 가 없어
+       *  이 콜백이 유일한 통로다. 자세한 배경은 btn_handler_notify_from_lp 주석. */
+      if (wc == ESP_SLEEP_WAKEUP_ULP) btn_handler_notify_from_lp();
     }
   }
   return ESP_OK;
@@ -3456,6 +3463,12 @@ static uint8_t s_floor_up_run  = 0;    /* 연속 상승 표본 수 */
 static int     s_pct_ceil_mpct = -1;
 static int64_t s_pct_ceil_us   = 0;
 #ifndef BAT_CHG_RISE_MPCT_PER_MIN
+/* ★2026-08-23 급락 표본 거부 임계 (사용 지점 주석 참조).
+ *  300mV: 실측 급락(1,053mV·1,418mV)은 잡고, 정상 방전(5초당 수 mV)과
+ *  USB 연결/해제로 단자전압이 움직이는 폭(≤120mV)은 통과시킨다.
+ *  3회: 측정 주기 5초 × 3 = 15초. 진짜 급락은 그 뒤 인정된다. */
+#define BAT_SPIKE_MAX_DROP_MV  300
+#define BAT_SPIKE_REJECT_MAX     3
 #define BAT_CHG_RISE_MPCT_PER_MIN 850   /* 0.85%p/분 = 700mAh 를 약 2시간에 충전 */
 #endif
 static int64_t s_nobat_t0_us   = 0;
@@ -4224,6 +4237,40 @@ void somfy_app_run(void *arg) {
         else
           {
             int _sm = _bat_smooth_mv(_bat_mv);
+            /* ★★★2026-08-23 **급락 표본 거부** — 0% 갇힘의 근본 방어.
+             *
+             *  같은 사고가 두 번 났고 둘 다 NVS 방전기록에 남아 있다:
+             *      08-20  4069 → 2651 → 2129 mV  (8시간 걸쳐 3845mV 로 "회복")
+             *      08-23  4055 → 3002 mV         (리셋하니 4078mV 로 즉시 정상)
+             *  둘 다 **산포 1~6카운트로 깨끗**했다 = ADC 잡음이 아니라 측정 전체가
+             *  낮게 나왔다. 그리고 그 값이 0% 로 환산돼 표시가 0% 에 갇혔다.
+             *
+             *  앞서 넣은 방어 둘로는 부족했다:
+             *    · 하한 조건부 해제  → 갇힌 **뒤에** 푸는 것이라 그 사이 0% 를 본다
+             *    · 천장 출발점 교정  → **그 전압 자체가 틀리면** 0% 출발은 마찬가지
+             *  → 여기서 표본을 아예 버린다. 700mAh 셀이 5초에 1,000mV 떨어지는 건
+             *    불가능하다(그 전압이면 LDO 드롭아웃으로 죽는데 기기는 계속 돌았다).
+             *  ★영원히 거부하면 안 된다 — 진짜 급락(셀 수명 끝·보호회로)도 있다.
+             *    연속 BAT_SPIKE_REJECT_MAX 회까지만 버리고 그 뒤엔 인정한다(15초).
+             *  검증: sim/tools/bat_spike_reject_sim.py — 실측 급락 2건을 잡고,
+             *        정상 방전·USB 전환(≤120mV)은 통과. 5개 항목 전부 의도대로.
+             *  ※근본 원인(왜 낮게 읽히는가)은 **아직 미해결**이다. 아래 로그가 단서다. */
+            {
+              static int s_bat_ok_mv = 0;
+              static int s_bat_rej   = 0;
+              if (s_bat_ok_mv > 0 && _sm < s_bat_ok_mv - BAT_SPIKE_MAX_DROP_MV
+                  && s_bat_rej < BAT_SPIKE_REJECT_MAX) {
+                s_bat_rej++;
+                ESP_LOGW(TAG, "[BAT%%] ★급락 표본 거부 %d/%d — %dmV 에서 %dmV "
+                              "(낙차 %dmV, 산포 %d카운트). 물리적으로 불가능하다",
+                         s_bat_rej, BAT_SPIKE_REJECT_MAX, s_bat_ok_mv, _sm,
+                         s_bat_ok_mv - _sm, (int)s_bat_last_spread);
+                _sm = s_bat_ok_mv;          /* 직전 정상값 유지 */
+              } else {
+                s_bat_rej   = 0;
+                s_bat_ok_mv = _sm;
+              }
+            }
             s_bat_last_sm_mv = _sm;   /* 1분 방전 로거가 읽는다 */
             s_bat_last_raw_mv = _bat_mv;
             s_bat_last_us = now_us;
@@ -4702,6 +4749,18 @@ void somfy_app_run(void *arg) {
                  btn_handler_is_charging() ? 1 : 0, _rssi_now,
                  btn_handler_lp_active() ? "ON" : "OFF", btn_handler_poll_ms(),
                  (long long)((nu - s_last_activity_us) / 1000000));
+        /* ★2026-08-23 배터리 **표시값**을 여기 싣는다.
+         *  사고: 화면은 0% 인데 NVS batlog 의 pct 는 96% 였다 — 표시 경로에서
+         *  갈린다는 뜻인데, [BAT%] 진단 로그는 사용자 지시로 10분 주기라 창을 계속
+         *  놓쳤다. 60초 [PWR] 은 어차피 찍히므로 여기 붙이면 추가 비용이 없다.
+         *  표시(chg_percent) / 평활 / 원본 / 하한 / 천장을 한 줄로 본다. */
+        ESP_LOGW(TAG, "[PWR2] 표시=%d%%  평활=%dmV  원본=%dmV  하한=%d  천장=%d%%  "
+                      "nobat=%d judged=%d",
+                 (s_ui.chg_percent == BAT_PCT_UNKNOWN) ? -1 : (int)s_ui.chg_percent,
+                 s_bat_last_sm_mv, s_bat_last_raw_mv,
+                 (s_pct_floor <= 100) ? (int)s_pct_floor : -1,
+                 (s_pct_ceil_mpct < 0) ? -1 : (s_pct_ceil_mpct / 1000),
+                 s_nobat ? 1 : 0, s_nobat_judged ? 1 : 0);
         /* ★2026-08-20 LP 깨우기 계측 — 위 btn_handler_lp_counters 주석 참조.
          *  seq 증가 = LP 가 HP 를 깨운 횟수(정지 상태면 0 이어야 정상). */
         {
@@ -4710,11 +4769,14 @@ void somfy_app_run(void *arg) {
           uint32_t pc = 0, sq = 0;
           btn_handler_lp_counters(&pc, &sq);
           const double dt = s_lp_t0 ? (double)(nu - s_lp_t0) / 1e6 : 0.0;
+          uint32_t ntf = 0, lat = 0;
+          btn_handler_lp_latch_stats(&ntf, &lat);
           if (dt > 0.5)
             ESP_LOGW(TAG, "[LPWAKE] 폴 %.1f회/초  ★HP 깨우기 %.2f회/초 "
-                          "(seq +%u / %.0f초)  — 정지 상태면 0 이어야 정상",
+                          "(seq +%u / %.0f초)  태스크통지 누적 %u  래치 0x%04X",
                      (pc - s_lp_p0) / dt, (sq - s_lp_s0) / dt,
-                     (unsigned)(sq - s_lp_s0), dt);
+                     (unsigned)(sq - s_lp_s0), dt,
+                     (unsigned)ntf, (unsigned)lat);
           s_lp_p0 = pc; s_lp_s0 = sq; s_lp_t0 = nu;
         }
         /* ★2026-08-13 (②) 버스트 폴링 깨우기 출처 — `~INT` 가 실제로 쓸 만한지 판정.

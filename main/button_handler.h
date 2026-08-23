@@ -204,8 +204,12 @@ SemaphoreHandle_t btn_handler_get_i2c_mutex(void);
  * `~INT` 가 죽은 것이라 안전망 주기가 곧 버튼 반응 지연이 된다.
  */
 /* ★2026-08-20 절전 진단: LP 코어 폴링이 실제로 붙었는지 / 현재 폴 주기(ms). */
+/* ★2026-08-23 light sleep 복귀 콜백이 ULP 깨움일 때 호출 — 버튼 태스크 즉시 깨움 */
+void btn_handler_notify_from_lp(void);
+
 bool btn_handler_lp_active(void);
 void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq);
+void btn_handler_lp_latch_stats(uint32_t *notify_cnt, uint32_t *latch_now);
 int  btn_handler_poll_ms(void);
 
 void btn_handler_wake_stats(uint32_t *int_cnt, uint32_t *vibe_cnt,

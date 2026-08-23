@@ -469,6 +469,26 @@ static int scmd_freq(int argc, char **argv){  /* freq [idx mhz] : set(+NVS저장
     somfy_app_console_printfreq();
     printf("OK freq\n"); return 0;
 }
+/* ★★2026-08-23 `tmr` — 등록된 esp_timer 전부 덤프.
+ *
+ *  왜 필요한가: 배터리 유휴 실측에서 **125만 회 수면 중 20ms 를 넘은 것이 한 번도
+ *  없다**. 버튼 폴을 100ms 로 늘린 뒤에도 그렇다. 깨어난 원인은 99.97% 가 TIMER —
+ *  즉 "예약된 알람"이고 외부 인터럽트가 아니다. 그런데 우리 태스크 주기는
+ *  100/100/500/500ms 뿐이라 12~20ms 를 만들 수 있는 게 없다.
+ *  → 남은 후보는 CHIP/OpenThread/IEEE802154 내부 타이머다. esp_timer_dump 는
+ *    등록된 타이머와 주기를 전부 찍어주므로 12~20ms 짜리가 있으면 바로 드러난다.
+ *  ※CONFIG_ESP_TIMER_PROFILING 이 꺼져 있어 호출 횟수·실행시간은 안 나오지만,
+ *    주기(period)와 이름은 나온다. 프로파일링을 켜면 상시 오버헤드가 붙으므로
+ *    지금은 켜지 않는다(그게 바로 절전 ②로 껐던 종류다). */
+static int scmd_tmr(int argc, char **argv){
+  (void)argc; (void)argv;
+  printf("=== esp_timer 목록 ===\n");
+  esp_err_t e = esp_timer_dump(stdout);
+  if (e != ESP_OK) printf("esp_timer_dump 실패: %s\n", esp_err_to_name(e));
+  printf("=== 끝 ===\n");
+  return 0;
+}
+
 static int scmd_reboot(int argc, char **argv){ (void)argc; (void)argv; printf("rebooting\n"); esp_restart(); return 0; }
 /* ★부팅 진단 조회 — "bd" 로 언제든 직전/보관된 실패 부팅 기록을 다시 찍는다.
  *  부팅 직후 몇 초짜리 로그 창을 놓쳐도 되도록(실제로 놓쳐서 증거를 날렸다).
@@ -723,8 +743,9 @@ extern "C" void app_main()
      *   충돌("No free interrupt inputs for RMT")한다. 본 제품엔 WS2812 LED
      *   가 없으므로 LED 드라이버 init 을 하지 않는다. 버튼은
      *   app_reset(공장초기화)용으로만 유지. */
-    app_driver_handle_t button_handle = app_driver_button_init();
-    app_reset_button_register(button_handle);
+    /* ★2026-08-23 공장초기화 버튼(iot_button) 제거 — app_driver.cpp 주석 참조.
+     *  20ms 주기 esp_timer 가 상시 돌아 깨어남의 78% 를 차지하고 있었다.
+     *  (배터리 오독과의 무관함은 A/B 로 확인 — 같은 주석 참조) */
 
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
@@ -954,6 +975,8 @@ extern "C" void app_main()
       esp_console_cmd_register(&frq);
       const esp_console_cmd_t rbt={ .command="reboot", .help="재부팅(esp_restart)", .hint=NULL, .func=&scmd_reboot, .argtable=NULL };
       esp_console_cmd_register(&rbt);
+      const esp_console_cmd_t tmc={ .command="tmr", .help="esp_timer 목록 덤프 (깨어남 출처 추적)", .hint=NULL, .func=&scmd_tmr, .argtable=NULL };
+      esp_console_cmd_register(&tmc);
       const esp_console_cmd_t bdc={ .command="bd", .help="부팅 진단 조회 (bd / bd clear)", .hint=NULL, .func=&scmd_bd, .argtable=NULL };
       esp_console_cmd_register(&bdc);
       const esp_console_cmd_t blc={ .command="bl", .help="배터리 방전 기록 조회 (bl / bl clear)", .hint=NULL, .func=&scmd_bl, .argtable=NULL };

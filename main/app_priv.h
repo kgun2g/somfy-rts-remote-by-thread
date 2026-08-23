@@ -48,7 +48,7 @@ app_driver_handle_t app_driver_light_init();
  * @return Handle on success.
  * @return NULL in case of failure.
  */
-app_driver_handle_t app_driver_button_init();
+/* ★2026-08-23 app_driver_button_init 제거 (app_driver.cpp 주석 참조) */
 
 /** Driver Update
  *

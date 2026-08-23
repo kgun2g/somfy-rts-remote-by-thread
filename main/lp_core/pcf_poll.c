@@ -45,6 +45,19 @@
 volatile uint32_t pcf_state  = 0xFFFFFFFFu; /* 최신 원본(8/16비트). 0xFFFFFFFF = 아직 읽기 전 */
 volatile int32_t  rot_delta  = 0;        /* 누적 디텐트(+CW/-CCW). HP 가 차감 */
 volatile uint32_t seq        = 0;        /* 변화 카운터 */
+/* ★★★2026-08-23 **눌림 래치** — HP 폴 주기를 늘려도 짧은 누름을 잃지 않게 한다.
+ *
+ *  왜 필요한가: HP 는 25ms 마다 `pcf_state`(=현재 상태)를 읽는다. 폴과 폴 사이에
+ *  눌렀다 뗀 누름은 **통째로 사라진다**. 그래서 주기를 못 늘렸고, 그게 전체
+ *  깨어남의 53%(46.8회/초)를 차지한다.
+ *  → LP 가 2ms 마다 보면서 **한 번이라도 눌렸던 비트를 OR 로 모아 둔다**.
+ *    HP 는 "지금 눌림 OR 그동안 눌렸음" 으로 판정하므로 누락이 없다.
+ *
+ *  버튼은 active-low(풀업, 눌림=0)라 `~rx` 의 1 비트가 '눌렸음' 이다.
+ *  소비 규약은 rot_delta 와 동일하게 **HP 가 본 것만 차감**한다:
+ *      uint32_t d = ulp_press_latch;  ...사용...  ulp_press_latch &= ~d;
+ *  (HP 가 통째로 0 을 쓰면, 읽기와 쓰기 사이에 LP 가 OR 한 비트를 잃는다.) */
+volatile uint32_t press_latch = 0;
 volatile uint32_t poll_cnt   = 0;        /* 폴링 누적(생존 확인) */
 volatile uint32_t i2c_err    = 0;        /* I2C 실패 누적 */
 volatile uint32_t enabled    = 1;        /* HP 가 0 으로 내리면 I2C 정지 */
@@ -105,6 +118,25 @@ int main(void)
             prev_ab = ab;
             if (accum >= 2)       { rot_delta++; accum = 0; seq++; }
             else if (accum <= -2) { rot_delta--; accum = 0; seq++; }
+        }
+
+        /* ★2026-08-23 눌림 래치 누적 (선언부 주석 참조).
+         *  ① 상위 8비트 마스크 — LP_PCF_NBYTES 가 1 이면 의미 없다.
+         *  ② **로터리(A/B) 제외** — 회전 중 계속 토글하므로 래치하면 영구히 눌림으로
+         *     굳는다. 실제로 첫 시험에서 `래치 0x0003`(= A/B 비트)이 지워지지 않고
+         *     남았다. 로터리는 rot_delta 로 이미 누적되므로 래치가 필요 없다.
+         *  ③ **2연속(4ms) 눌림만 인정** — 이게 없으면 2ms 짜리 글리치 하나가 그대로
+         *     '누름'으로 래치된다. 전에는 HP 가 25ms 로 띄엄띄엄 봐서 그런 글리치를
+         *     대부분 놓쳤는데, 래치는 **전부 잡아 버린다**. PROG 자동 송신 사고
+         *     (2026-08-17)의 원인이 PCF 읽기 흔들림으로 의심됐던 만큼, 여기서
+         *     한 번 걸러야 안전하다. */
+        {
+            static uint32_t prev_low = 0;
+            const uint32_t mask = ((LP_PCF_NBYTES == 2) ? 0xFFFFu : 0xFFu)
+                                & ~((1u << BIT_ROT_A) | (1u << BIT_ROT_B));
+            const uint32_t low = ((uint32_t)(~rx)) & mask;
+            press_latch |= (low & prev_low);
+            prev_low = low;
         }
 
         /* ── 버튼/전체 상태 변화 → HP 에게 알림 ── */

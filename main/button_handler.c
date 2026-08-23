@@ -1,5 +1,6 @@
 #include "button_handler.h"
 #include "wake_diag.h"   /* ★2026-08-20 깨어남 출처 계측 */
+#include "esp_sleep.h"   /* esp_sleep_enable_ulp_wakeup — LP→HP 깨움 등록 */
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_rom_sys.h"       // esp_rom_delay_us — bit-bang timing
@@ -82,13 +83,24 @@ static TaskHandle_t      s_btn_task_h = NULL;
  *         HP 가 읽을 때 소비). 그러면 주기와 무관하게 누락 0 이라 100ms 유지 가능.
  *         rot_delta 를 이미 같은 방식(누적→HP 가 소비)으로 처리하고 있으므로
  *         구조는 그대로 따라 하면 된다. */
-/* ★★★2026-08-20 **100 → 25 즉시 되돌림** — 사용자 실사용 판정: "너무 느리다".
- *  위 계산은 "누름 100ms 이상이면 놓침 0%" 였지만, 놓치지 않는 것과 **빠르게
- *  느껴지는 것**은 다르다. 눌러서 반응까지 최대 100ms 지연이 그대로 체감된다.
- *  → 25 로 복귀(기존 검증값). 절전은 −42% 를 포기한다.
- *  ※다시 시도하려면 **먼저 LP 가 눌림을 래치**하도록 고칠 것(아래 (b)).
- *    주기만 늘리는 방식은 지연이 그대로 남으므로 다시 같은 결과가 된다. */
-#define BTN_LP_IDLE_POLL_MS 25
+/* ★★★2026-08-20 100 → 25 되돌림 — 사용자 실사용 판정: "너무 느리다".
+ *  "누름 100ms 이상이면 놓침 0%" 계산은 맞았지만, **놓치지 않는 것과 빠르게
+ *  느껴지는 것은 다르다**. 눌러서 반응까지 최대 100ms 지연이 그대로 체감된다.
+ *
+ *  ★★★2026-08-23 **다시 100 으로 — 이번엔 전제가 갖춰졌다.**
+ *  그때 남긴 조건("먼저 LP 가 눌림을 래치할 것")을 포함해 셋을 만들었다:
+ *    ① LP 눌림 래치(lp_core/pcf_poll.c press_latch) — 폴 사이의 짧은 누름이
+ *       사라지지 않는다. 로터리 제외 + 2연속(4ms) 디바운스.
+ *    ② LP → **태스크** 즉시 깨움(btn_handler_notify_from_lp) — light sleep 복귀
+ *       콜백이 ULP 깨움을 보고 통지한다. IDF 에 LP→HP 인터럽트 API 가 없어
+ *       이 콜백이 유일한 통로다.
+ *    ③ `esp_sleep_enable_ulp_wakeup()` — **이게 빠져 있어 ②가 통째로 죽어 있었다.**
+ *       실기 검증: 등록 전 ULP 깨움 0건 → 등록 후 버튼 10회에 **11건**.
+ *  결과: 반응이 25ms → **약 3~5ms 로 오히려 빨라진다**(LP 검출 2ms + 복귀).
+ *        폴링은 백업 역할만 하므로 100ms 로 충분하다.
+ *  ※체감이 느리면 즉시 25 로. 그때는 ②의 통지가 안 도는 것이니
+ *    [LPWAKE] 의 `태스크통지 누적` 과 깨어남 원인의 ULP 건수를 먼저 볼 것. */
+#define BTN_LP_IDLE_POLL_MS 100
 #define BTN_IDLE_POLL_MS    50    /* 유휴 안전망. ~INT 가 죽어도 이 주기로는 반응 */
 #define BTN_ACTIVE_HOLD_MS 300    /* 마지막 활동 후 이 시간 조용하면 유휴로 */
 
@@ -561,7 +573,25 @@ static pcf_state_t _pcf8574_read(void) {
     if (s_lp_stale < LP_STALE_POLLS) {
       /* ★PCF8575(2바이트) 는 좌/우 버튼이 상위 바이트(P10=bit8, P11=bit9)에 있다.
        *  여기서 0xFF 로 자르면 좌/우가 통째로 사라진다(실사용 신고로 드러난 버그). */
-      return (pcf_state_t)ulp_pcf_state;
+      uint32_t st = ulp_pcf_state;
+      /* ★★★2026-08-23 **눌림 래치 소비** (LP 쪽 press_latch 주석 참조).
+       *  LP 가 2ms 마다 보면서 "한 번이라도 눌렸던" 비트를 모아 둔다. 여기서
+       *  그것을 현재 상태에 합쳐 주면, 폴과 폴 사이에 눌렀다 뗀 짧은 누름도
+       *  **한 폴 동안 눌림으로 보인다** — HP 폴 주기를 늘릴 수 있는 전제다.
+       *  버튼은 active-low 라 '눌림'은 0 이므로, 래치된 비트를 0 으로 내린다.
+       *
+       *  ★로터리(A/B)는 **반드시 제외**한다 — 회전 중 계속 토글하므로 래치하면
+       *    영구히 눌림으로 굳는다. 로터리는 LP 가 이미 rot_delta 로 누적해 주고
+       *    HP 는 그쪽을 소비하므로(아래 ulp_rot_delta) 래치가 필요 없다.
+       *  ★소비 규약은 rot_delta 와 동일 — **본 것만 차감**한다. 통째로 0 을 쓰면
+       *    읽기와 쓰기 사이에 LP 가 OR 한 비트를 잃는다. */
+      const uint32_t rot_mask = (1u << PCF8574_BIT_ROT_A) | (1u << PCF8574_BIT_ROT_B);
+      uint32_t lat = ulp_press_latch & ~rot_mask;
+      if (lat) {
+        ulp_press_latch &= ~lat;   /* 본 것만 차감 */
+        st &= ~lat;                /* 래치된 비트를 눌림(0)으로 */
+      }
+      return (pcf_state_t)st;
     }
     /* LP 정지 확정 — 두 번 다시 이 값을 믿지 않는다. LP 를 세우고 HP 폴링으로 전환. */
     static bool s_lp_dead_logged = false;
@@ -950,8 +980,13 @@ static void _btn_task(void *pvParam) {
       for (int i = 0; i < BTN_COUNT; i++)
         if (!s_btns[i].last_state) { any_held = true; break; }
       g_wake_iter[WI_BTN]++;           /* ★깨어남 출처 계측 */
-      vTaskDelay(pdMS_TO_TICKS(any_held ? BTN_ACTIVE_POLL_MS
-                                        : BTN_LP_IDLE_POLL_MS));
+      /* ★★2026-08-23 vTaskDelay → ulTaskNotifyTake.
+       *  vTaskDelay 는 **통지로 깨울 수 없다** — btn_handler_notify_from_lp() 가
+       *  아무리 통지해도 태스크는 주기를 다 잔다. 통지 기반으로 바꿔야 ②가
+       *  실제로 동작하고, 그래야 100ms 주기에서도 반응이 3~5ms 로 유지된다.
+       *  타임아웃은 백업(통지가 유실되거나 HP 가 깨어 있어 ULP 경로가 안 도는 경우). */
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(any_held ? BTN_ACTIVE_POLL_MS
+                                                      : BTN_LP_IDLE_POLL_MS));
     } else
 #endif
     vTaskDelay(pdMS_TO_TICKS(BTN_ACTIVE_POLL_MS));
@@ -1005,6 +1040,16 @@ static void _lp_core_try_start(void)
     return;
   }
   s_lp_active = true;
+  /* ★★★2026-08-23 **ULP 를 light sleep 깨움 소스로 등록**한다.
+   *  이게 없으면 LP 가 `ulp_lp_core_wakeup_main_processor()` 를 불러도
+   *  `RTC_LP_CORE_TRIG_EN` 이 안 서서 HP 가 깨지 않고, 깨어난 원인도 ULP 로
+   *  안 잡힌다. 실제로 첫 시험에서 **ULP 깨움 0건**이었다.
+   *  (C6 는 CONFIG_ULP_COPROC_TYPE_LP_CORE 라 sleep_modes.c 가 이 비트를 세운다.
+   *   ESP_SLEEP_WAKEUP_ULP 는 SOC_LP_CORE_SUPPORTED 경로로 정상 반환된다.) */
+  {
+    esp_err_t we = esp_sleep_enable_ulp_wakeup();
+    ESP_LOGW(TAG, "[LP] ULP 깨움 소스 등록: %s", esp_err_to_name(we));
+  }
   ESP_LOGW(TAG, "[LP] ★LP 코어 PCF 폴링 가동 — 50ms 간 %u회 폴링, HP 비트뱅 중단",
            (unsigned)(ulp_poll_cnt - p0));
 #endif
@@ -1390,6 +1435,17 @@ static void _vibration_track(bool high_now) {
  *  (어제 PROG 자동 송신 폭주의 미확인 원인과 같은 현상일 가능성이 높다.)
  *  seq 는 rx 변화·로터리 디텐트마다 증가하므로, 정지 상태의 seq 증가율이 곧 답이다.
  *  USB 구동에서도 LP 는 계속 돌므로 **배터리 없이 즉시 측정된다**. */
+/* ★2026-08-23 검증용: LP→태스크 통지가 실제로 몇 번 돌았나 + 래치 잔량 */
+void btn_handler_lp_latch_stats(uint32_t *notify_cnt, uint32_t *latch_now) {
+  extern uint32_t g_btn_lp_notify_cnt;
+  if (notify_cnt) *notify_cnt = g_btn_lp_notify_cnt;
+#if SOMFY_LP_CORE_PATH
+  if (latch_now) *latch_now = s_lp_active ? ulp_press_latch : 0;
+#else
+  if (latch_now) *latch_now = 0;
+#endif
+}
+
 void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq) {
 #if SOMFY_LP_CORE_PATH
   if (s_lp_active) {
@@ -1400,6 +1456,30 @@ void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq) {
 #endif
   if (poll_cnt) *poll_cnt = 0;
   if (seq)      *seq      = 0;
+}
+
+/* ★★★2026-08-23 LP 가 HP 를 깨웠을 때 **버튼 태스크까지** 깨운다.
+ *
+ *  문제: LP 는 PCF 가 바뀌면 `ulp_lp_core_wakeup_main_processor()` 로 HP **CPU** 를
+ *  light sleep 에서 꺼내지만, `vTaskDelay` 로 블록된 태스크는 조기 해제되지 않는다.
+ *  그래서 폴 주기를 늘리면 그만큼 반응이 늦어진다(25→100ms 시도가 "너무 느리다"로
+ *  되돌아간 이유).
+ *
+ *  IDF 에는 LP→HP 인터럽트 API 가 없다 — `ulp_lp_core_sw_intr_trigger()` 는
+ *  HP→LP 방향이고, LP→HP 는 `ulp_lp_core_wakeup_main_processor()` 뿐이다.
+ *  → 우회로: light sleep **복귀 콜백**에서 깨어난 원인이 ULP 인지 보고, 맞으면
+ *    여기로 통지한다(somfy_app.c `_ls_exit_cb`). HP 가 자고 있을 때만 동작하지만,
+ *    그 구간이 전체의 89.6% 라 실질적으로 충분하다.
+ *  지연: LP 검출 2ms + 복귀 → 대략 3~5ms. **지금의 25ms 폴링보다 오히려 빠르다.**
+ *
+ *  ※호출 문맥이 제한적(콜백)이라 FromISR 변형을 쓴다. */
+uint32_t g_btn_lp_notify_cnt = 0;   /* 계측: 이 경로가 실제로 도는지 */
+void IRAM_ATTR btn_handler_notify_from_lp(void) {
+  if (!s_btn_task_h) return;
+  g_btn_lp_notify_cnt++;
+  BaseType_t hpw = pdFALSE;
+  vTaskNotifyGiveFromISR(s_btn_task_h, &hpw);
+  if (hpw) portYIELD_FROM_ISR();
 }
 
 bool btn_handler_lp_active(void) {

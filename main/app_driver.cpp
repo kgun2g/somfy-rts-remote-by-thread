@@ -14,7 +14,6 @@
 
 #include <device.h>
 #include <led_driver.h>
-#include <button_gpio.h>
 
 using namespace chip::app::Clusters;
 using namespace esp_matter;
@@ -61,20 +60,6 @@ static esp_err_t app_driver_light_set_xy(led_driver_handle_t handle, uint16_t x,
     return led_driver_set_xy(handle, x, y);
 }
 
-static void app_driver_button_toggle_cb(void *arg, void *data)
-{
-    ESP_LOGI(TAG, "Toggle button pressed");
-    uint16_t endpoint_id = light_endpoint_id;
-    uint32_t cluster_id = OnOff::Id;
-    uint32_t attribute_id = OnOff::Attributes::OnOff::Id;
-
-    attribute_t *attribute = attribute::get(endpoint_id, cluster_id, attribute_id);
-
-    esp_matter_attr_val_t val = esp_matter_invalid(NULL);
-    attribute::get_val(attribute, &val);
-    val.val.b = !val.val.b;
-    attribute::update(endpoint_id, cluster_id, attribute_id, &val);
-}
 
 esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_t endpoint_id, uint32_t cluster_id,
                                       uint32_t attribute_id, esp_matter_attr_val_t *val)
@@ -167,18 +152,31 @@ app_driver_handle_t app_driver_light_init()
     return (app_driver_handle_t)handle;
 }
 
-app_driver_handle_t app_driver_button_init()
-{
-    /* Initialize button */
-    button_handle_t handle = NULL;
-    const button_config_t btn_cfg = {0};
-    const button_gpio_config_t btn_gpio_cfg = button_driver_get_config();
-
-    if (iot_button_new_gpio_device(&btn_cfg, &btn_gpio_cfg, &handle) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create button device");
-        return NULL;
-    }
-
-    iot_button_register_cb(handle, BUTTON_PRESS_DOWN, NULL, app_driver_button_toggle_cb, NULL);
-    return (app_driver_handle_t)handle;
-}
+/* ★★★2026-08-23 **공장초기화 버튼(iot_button) 경로 통째로 제거** — 사용자 지시.
+ *
+ *  왜 제거하나: 이게 **깨어남의 최대 단일 원인**이었다.
+ *  배터리 유휴 실측에서 125만 회 수면 중 20ms 를 넘은 것이 한 번도 없었다.
+ *  버튼 폴을 100ms 로 늘린 뒤에도 그대로였고, 깨어난 원인은 99.97% 가 TIMER 인데
+ *  우리 태스크 주기는 100/100/500/500ms 뿐이라 12~20ms 를 만들 게 없었다.
+ *  `esp_timer_dump()`(콘솔 `tmr`)로 찍어 보니 등록된 타이머가 딱 하나였다:
+ *        Name          Period   Times_trigg   Cb_exec_time
+ *        button_timer  20000    10743         60767 us
+ *  iot_button(espressif__button)이 CONFIG_BUTTON_PERIOD_TIME_MS(20ms) 주기
+ *  esp_timer 를 **상시** 돌리고 있었다 = 초당 50회. 당시 전체 깨어남 63.9회/초 중
+ *  **50회가 이것**이었다. 제거 후 `tmr` 출력은 **타이머 0개**로 비었다.
+ *
+ *  이 버튼은 esp-matter light 예제에서 복사돼 온 잔재로, 공장초기화(BOOT 5초
+ *  롱프레스) 하나에만 쓰였다. 실제 조작 버튼은 전부 PCF8575 → button_handler 가
+ *  처리한다. 사용자 확인: "공장초기화 버튼은 안 써" → 통째로 들어낸다.
+ *  (공장초기화가 필요하면 설정 메뉴의 Thread reset 경로가 있다.)
+ *
+ *  ※2026-08-23 배터리 오독(2,600mV) 원인 규명 중 이 제거를 잠시 되돌려 A/B 했다.
+ *    제거/복원 두 빌드가 2,604 / 2,600mV 로 동일 → **무관**. 원인은 하드웨어
+ *    (BAT_ADC 분압 하단 R5 접촉 불량)로 확정됐다. 그래서 제거를 유지한다.
+ *  ※iot_button 에 절전 모드(enable_power_save: 유휴 시 타이머 정지 + GPIO 인터럽트
+ *    재기동)가 있어 그걸 켜는 선택지도 있었으나, 쓰지 않는 기능이라 제거가 낫다.
+ *  ※되돌리려면 app_priv.h 선언과 함께 아래를 복원하면 된다:
+ *      app_driver_handle_t handle = ...iot_button_new_gpio_device(...)
+ *      iot_button_register_cb(handle, BUTTON_PRESS_DOWN, ..., toggle_cb, NULL);
+ *      app_reset_button_register(handle);
+ */
