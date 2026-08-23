@@ -180,3 +180,16 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 CONFIG_PM_PROFILING=n
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=n
 CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=n
+
+# ★★2026-08-22 802.15.4 무선을 light sleep 중 전원 차단 (절전 ④).
+#  근거: 실측상 **시간의 89.5% 가 수면**인데 그 동안 무선이 계속 켜져 있었다.
+#  지금까지의 절전(-Os, 계측 끄기)은 깨어있는 10.5% 만 깎은 것이라, 비중이
+#  8.5배 큰 쪽을 안 건드린 셈이었다.
+#  ★ESP_PHY_MAC_BB_PD 가 아니다 — 그쪽 도움말은 "Wi-Fi and Bluetooth" 이고
+#    RAM 을 2~4KB 더 먹는다. 우리는 Wi-Fi 미사용·BLE 는 페어링 때만 쓰므로
+#    이득 없이 RAM 만 낭비한다. Thread(802.15.4)에 작용하는 건 이 옵션이다.
+#  ★위험: SED/ICD 는 부모 라우터가 메시지를 버퍼링했다가 폴링 때 넘겨주므로
+#    이론상 명령 유실이 없다. 다만 IDF Kconfig 에 "Todo: Remove when support
+#    safe power-down of the power domain (IDF-7317)" 라는 단서가 붙어 있어
+#    **실기 검증이 필수**다. 명령 누락·지연·재접속 실패가 보이면 즉시 n 으로.
+CONFIG_IEEE802154_SLEEP_ENABLE=y
