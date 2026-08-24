@@ -105,14 +105,33 @@ static TaskHandle_t      s_btn_task_h = NULL;
 #define BTN_ACTIVE_HOLD_MS 300    /* 마지막 활동 후 이 시간 조용하면 유휴로 */
 
 static volatile uint32_t s_wake_int   = 0;  /* ~INT ISR 로 깨어난 횟수 */
+/* ★2026-08-25 `~INT` 수동 관찰 카운터 (ISR 없이 폴링이 센다 — 사용 지점 주석 참조) */
+static volatile uint32_t s_int_samples = 0;   /* 관찰 표본 수 */
+static volatile uint32_t s_int_low     = 0;   /* 그중 LOW 였던 수 */
+static volatile uint32_t s_int_edges   = 0;   /* 전이 횟수 — 눌렀을 때 늘어야 정상 */
 static volatile uint32_t s_wake_vibe  = 0;  /* 진동 ISR 로 깨어난 횟수 */
 static volatile uint32_t s_wake_tmo   = 0;  /* 안전망 타임아웃으로 깨어난 횟수 */
 static volatile uint32_t s_idle_enter = 0;  /* 유휴 진입 횟수 */
 
+/* ★2026-08-25 ISR 이 자기 인터럽트를 끈 상태인가 (태스크가 read 뒤 다시 켠다) */
+static volatile bool s_pcf_int_off = false;
+
 static void IRAM_ATTR _pcf_int_isr(void *arg) {
   (void)arg;
   /* PCF8574 `~INT` 는 입력이 바뀌면 LOW, **포트를 읽으면 해제**된다.
-   * 여기선 깨우기만 하고 해제는 태스크의 read 가 한다. */
+   *
+   *  ★★2026-08-25 **레벨 트리거 + 즉시 disable** 로 바꿨다.
+   *  지난 시도(NEGEDGE, disable 없음)는 **인터럽트 WDT 로 계속 재부팅**했다
+   *  (누적 44회). `~INT` 는 레벨 신호라 엣지로 걸면 (a) 이미 LOW 인 상태에서
+   *  등록하면 엣지가 안 와 영영 안 깨어나고, (b) read 로 해제되는 순간의 상승과
+   *  다음 하강이 겹치면 ISR 이 몰린다. 레벨 트리거는 LOW 인 동안 **계속** 발사되므로
+   *  ISR 안에서 **즉시 자기 인터럽트를 끄는 것이 필수**다.
+   *  재활성은 태스크가 포트를 읽어 `~INT` 가 HIGH 로 돌아온 뒤에 한다.
+   *  ※진동 ISR 이 X160 chatter 폭주를 막는 방식과 동일하다(검증된 패턴).
+   *  ※gpio_intr_disable 은 flash 거주라 NVS write 중 cache error 를 낸다 →
+   *    IRAM 인라인인 gpio_ll_intr_disable 을 직접 부른다. */
+  gpio_ll_intr_disable(&GPIO, PCF8574_INT_PIN);
+  s_pcf_int_off = true;
   s_wake_int++;
   if (s_btn_task_h) {
     BaseType_t hpw = pdFALSE;
@@ -989,7 +1008,47 @@ static void _btn_task(void *pvParam) {
                                                       : BTN_LP_IDLE_POLL_MS));
     } else
 #endif
+    /* ★★2026-08-25 `~INT` **수동 관찰** — ISR 은 걸지 않는다(폭주·WDT 위험 없음).
+     *
+     *  왜: 위 주석의 `intdiag` 실측은 "버튼을 눌러도 전이 0회 = 선이 안 움직인다"
+     *  였는데, 그게 어느 보드였는지 명시가 없다. H2 에서 ISR 을 걸어봤더니
+     *  **버튼이 가끔만 먹고 인터럽트 WDT 로 재부팅**했다(2026-08-25, 누적 44회).
+     *  ★내 해석 오류도 있었다: 정지 상태에서 `~INT` 0건인 것을 "조용하다"로 읽었는데,
+     *    **정지 상태의 0건은 아무것도 증명하지 못한다** — 눌렀을 때 움직이는지가 관건.
+     *  → 폴링하는 김에 핀 레벨을 같이 보고 전이·LOW 표본을 센다. 사용자가 버튼을
+     *    누르는 동안 이 숫자가 움직이면 `~INT` 가 살아 있는 것이고, 그때 비로소
+     *    레벨 트리거 ISR 을 검토한다. */
+    {
+      static int s_int_prev = -1;
+      const int lv = gpio_get_level(PCF8574_INT_PIN);
+      if (s_int_prev >= 0 && lv != s_int_prev) s_int_edges++;
+      s_int_prev = lv;
+      s_int_samples++;
+      if (lv == 0) s_int_low++;
+#if BOARD_PCF_INT_ISR
+      /* ★ISR 이 꺼둔 인터럽트를 **`~INT` 가 HIGH 로 돌아온 뒤에만** 다시 켠다.
+       *  아직 LOW 면(읽었는데도 다른 비트가 바뀐 상태) 다음 폴에서 재시도한다 —
+       *  LOW 인 채로 켜면 레벨 트리거가 즉시 재발사돼 폭주한다. */
+      if (s_pcf_int_off && lv == 1) {
+        s_pcf_int_off = false;
+        gpio_intr_enable(PCF8574_INT_PIN);
+      }
+#endif
+    }
+#if BOARD_PCF_INT_ISR
+    /* 눌린 게 없으면 통지를 기다리며 길게 잔다. `~INT` 가 누름/뗌 양쪽에서
+     *  즉시 깨우므로 짧은 탭도 놓치지 않는다. 타임아웃은 안전망. */
+    {
+      bool any_held = false;
+      for (int i = 0; i < BTN_COUNT; i++)
+        if (!s_btns[i].last_state) { any_held = true; break; }
+      if (any_held) vTaskDelay(pdMS_TO_TICKS(BTN_ACTIVE_POLL_MS));
+      else if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(BTN_IDLE_POLL_MS)) == 0)
+        s_wake_tmo++;
+    }
+#else
     vTaskDelay(pdMS_TO_TICKS(BTN_ACTIVE_POLL_MS));
+#endif
   }
 }
 
@@ -1183,7 +1242,16 @@ void btn_handler_init(btn_event_cb_t cb, void *user_data) {
 
   /* ★★2026-08-13 (②) PCF8574 `~INT` ISR 등록 — **제거함. 다시 넣지 말 것.**
    *
-   *  ┌ `~INT` 는 이 하드웨어에서 **쓸 수 없다**(콘솔 `intdiag` 실측 확정) ─────────┐
+   *  ┌ `~INT` 는 **이 보드(C6)에서** 쓸 수 없다 (콘솔 `intdiag` 실측) ────────────┐
+   *  │ ★★2026-08-25 정정: 아래 결론을 "이 하드웨어" 로 일반화해 적어 뒀는데        │
+   *  │   **H2 에서는 정반대였다.** 같은 관찰을 H2 에서 하니                        │
+   *  │       [INTOBS] 표본 16,675 / LOW 18(0.1%) / **전이 36**                     │
+   *  │   = 버튼을 누르면 선이 실제로 움직인다. → H2 는 `~INT` 를 쓴다              │
+   *  │     (BOARD_PCF_INT_ISR=1). 결과: 깨어남 113.9 → **33.2회/초**, 잠 96.6%.    │
+   *  │   차이의 근거: C6 는 비트뱅 I2C + GPIO2, H2 는 **HW I2C + GP11**.           │
+   *  │   ★교훈: 한 보드의 실측을 "이 하드웨어" 로 일반화하지 말 것.                │
+   *  └────────────────────────────────────────────────────────────────────────────┘
+   *  ┌ 아래는 **C6 실측** ─────────────────────────────────────────────────────────┐
    *  │  정지 상태        표본  38,765 → HIGH 100% / 전이 0회                      │
    *  │  버튼 조작 중 15초 표본 290,023 → HIGH 100% / **전이 0회**                  │
    *  │  폴링 동작 중     표본  33,198 → HIGH 100% / 전이 0회                      │
@@ -1201,14 +1269,39 @@ void btn_handler_init(btn_event_cb_t cb, void *user_data) {
    *  4,500/s 는 이 태스크의 비트뱅 I2C 클럭 에지 수와 자릿수가 맞는다
    *  (100 트랜잭션/초 × 약 44 에지). `~INT`(GPIO2) 가 실제로는 연결이 약하거나
    *  떠 있어 **인접 I2C 배선의 크로스토크를 줍는 것**으로 본다.
-   *  → 원인 규명 전에는 ISR 을 걸지 않는다. `~INT` 를 쓰려면 먼저 배선과 풀업을
-   *    확인하고, 핀 레벨이 조용한지 **측정**한 뒤에 다시 검토할 것.
+   *  → C6 에서는 ISR 을 걸지 않는다(BOARD_PCF_INT_ISR=0).
+   *  ★다른 보드에서 검토할 때의 절차(2026-08-25 에 확립):
+   *    ① **ISR 없이** 폴링이 핀 레벨을 같이 보게 해 전이를 센다([INTOBS]).
+   *       ISR 을 먼저 걸면 폭주 시 인터럽트 WDT 로 재부팅한다(실제로 44회 겪음).
+   *    ② **정지 상태의 0건은 아무것도 증명하지 않는다** — 반드시 **버튼을 누르는
+   *       동안** 전이가 늘어나는지 볼 것. 이걸 오독해 "조용하다=쓸 수 있다" 로
+   *       잘못 판단한 적이 있다.
+   *    ③ 살아 있으면 **레벨 트리거**로 건다. `~INT` 는 레벨 신호라 NEGEDGE 로 걸면
+   *       (a) 이미 LOW 면 엣지가 안 와 영영 안 깨어나고 (b) read 해제 순간의 상승과
+   *       다음 하강이 겹쳐 ISR 이 몰린다. ISR 안에서 **즉시 자기 인터럽트를 끄고**,
+   *       태스크가 포트를 읽어 HIGH 로 돌아온 뒤에만 재활성한다.
+   *       등록은 **초기 read 뒤**에 — LOW 인 채로 등록하면 레벨 트리거가 즉시 폭주한다.
    *  (진단 카운터·btn_handler_wake_stats 는 남겨둔다 — 등록이 없으니 전부 0.)      */
-  ESP_LOGI(TAG, "[BTN] ~INT IO%d ISR 미등록 — 10ms 고정 폴링 (HW ~INT 불안정: "
-                "실측 초당 4,500회 폭주)", PCF8574_INT_PIN);
+#if !BOARD_PCF_INT_ISR
+  ESP_LOGI(TAG, "[BTN] ~INT IO%d ISR 미등록 — 고정 폴링 (위 주석의 실측 근거)",
+           PCF8574_INT_PIN);
+#endif
 
   /* ── PCF8574 초기 read (~INT 래치 클리어 포함) ── */
   pcf_state_t pcf_init = _pcf8574_read();
+#if BOARD_PCF_INT_ISR
+  /* ★2026-08-25 **초기 read 뒤에** ISR 을 건다 — 그래야 `~INT` 래치가 풀린
+   *  HIGH 상태에서 시작한다. read 전에 걸면 LOW 인 채로 등록돼 레벨 트리거가
+   *  즉시 폭주한다(지난 시도의 재부팅 원인 중 하나).
+   *  H2 실측 근거: [INTOBS] 표본 16,675 / LOW 18(0.1%) / **전이 36** —
+   *  버튼을 누르면 선이 실제로 움직인다. (C6 는 같은 조건에서 전이 0회였다.) */
+  gpio_set_intr_type(PCF8574_INT_PIN, GPIO_INTR_LOW_LEVEL);
+  {
+    esp_err_t e = gpio_isr_handler_add(PCF8574_INT_PIN, _pcf_int_isr, NULL);
+    ESP_LOGW(TAG, "[BTN] ~INT IO%d 레벨트리거 ISR 등록: %s — 유휴 폴 %dms",
+             PCF8574_INT_PIN, esp_err_to_name(e), BTN_IDLE_POLL_MS);
+  }
+#endif
   if (s_pcf_present) {
     ESP_LOGI(TAG, "PCF8574 검출 OK (0x%02X, 초기=0x%02X)",
              PCF8574_I2C_ADDR, pcf_init);
@@ -1444,6 +1537,13 @@ void btn_handler_lp_latch_stats(uint32_t *notify_cnt, uint32_t *latch_now) {
 #else
   if (latch_now) *latch_now = 0;
 #endif
+}
+
+/* ★2026-08-25 `~INT` 수동 관찰 결과 (표본/LOW/전이) */
+void btn_handler_int_observe(uint32_t *samples, uint32_t *low, uint32_t *edges) {
+  if (samples) *samples = s_int_samples;
+  if (low)     *low     = s_int_low;
+  if (edges)   *edges   = s_int_edges;
 }
 
 void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq) {

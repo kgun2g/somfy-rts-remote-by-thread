@@ -294,6 +294,24 @@ See main/boards/ for available boards."
  *  "비활성" 안내만 출력한다(콘솔 등록은 유지 — 사용자 혼란 방지). */
 /* ★2026-08-16 light sleep 만 선택적으로 끈다(DFS·MTD/SED 는 유지).
  *  원인 미확정 크래시를 임시 차단할 때 쓴다 — somfy_app.c `_enable_pm_light_sleep` 참조. */
+/* ★★2026-08-25 PCF8574 `~INT` ISR 사용 여부.
+ *  0 = 등록 안 함(고정 폴링). 1 = ISR 로 버튼 태스크를 즉시 깨우고 유휴 폴을 늦춘다.
+ *
+ *  왜 보드별인가: C6 에서 ②(~INT 기반)를 시도했을 때 ISR 이 **초당 약 4,500회**
+ *  발사됐다. 그 값은 그 보드 비트뱅 I2C 의 클럭 에지 수와 자릿수가 같다
+ *  (100 트랜잭션/초 × 약 44 에지) — 즉 `~INT`(GPIO2)가 **인접 I2C 배선의
+ *  크로스토크를 줍는 것**으로 봤다. 그래서 전 보드에서 껐다.
+ *  ★그런데 그건 **C6 조건**이다. H2 는 다르다:
+ *      · PCF 를 **HW I2C** 로 읽는다(비트뱅 아님 — PM 락 덤프의 `I2C_0` 가 증거)
+ *      · `~INT` 핀이 GP11 로 다르다(C6 는 GPIO2)
+ *      · LP 코어가 없어 C6 에서 쓴 LP 눌림 래치를 못 쓴다 → `~INT` 가 유일한 대안
+ *  H2 에서 검증한 적이 **없으므로** 켜서 계측한다. 노이즈가 있으면
+ *  `[BTNWAKE]` 의 `~INT` 카운터가 즉시 폭증하므로 바로 드러난다.
+ *  판정: 정지 상태에서 `~INT` 깨움이 초당 수 회 이하면 성공, 수백~수천이면 실패. */
+#ifndef BOARD_PCF_INT_ISR
+#  define BOARD_PCF_INT_ISR          0
+#endif
+
 #ifndef BOARD_DISABLE_LIGHT_SLEEP
 #  define BOARD_DISABLE_LIGHT_SLEEP  0
 #endif

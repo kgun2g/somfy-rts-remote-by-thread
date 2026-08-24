@@ -57,7 +57,19 @@
 #define BOARD_PIN_OLED_SCL 14 // GP14  ─┤ 공유 SCL
 #define BOARD_PIN_PCF_SDA 13  // GP13  ─┘ (OLED 와 동일)
 #define BOARD_PIN_PCF_SCL 14  // GP14     (OLED 와 동일)
-#define BOARD_PIN_PCF_INT 11  // GP11  PCF8574 ~INT (active-LOW, wake)
+#define BOARD_PIN_PCF_INT 11
+/* ★★2026-08-25 `~INT` ISR **켠다(1)** — H2 에서는 검증한 적이 없다.
+ *  H2 는 LP 코어가 없어 버튼을 10ms 마다 HW I2C 로 읽고, 그 트랜잭션마다
+ *  NO_LIGHT_SLEEP 락을 잡았다 놓는다(PM 락 덤프: I2C_0 748,352회). 그래서
+ *  깨어남이 **113.9회/초**다(C6 는 23.7). C6 에서 쓴 LP 눌림 래치는 LP 코어가
+ *  전제라 H2 엔 못 쓰므로, `~INT` 가 유일한 대안이다.
+ *  C6 에서 4,500회/초로 실패했던 근거는 **그 보드의 비트뱅 I2C 크로스토크**였다
+ *  (board_select.h 주석 참조) — H2 는 HW I2C·다른 핀이라 조건이 다르다. */
+/* ★★★2026-08-25 **되돌림(0)** — 실사용 판정: "버튼이 가끔 눌려지고, 계속 재부팅한다".
+ *  정지 상태 계측은 깨끗했다([BTNWAKE] ~INT 0건 / 3분, C6 의 4,500회/초와 정반대).
+ *  즉 **크로스토크 가설은 맞았고**, 깨진 것은 다른 부분이다 — 원인 규명 전까지 끈다. */
+#define BOARD_PCF_INT_ISR 1
+  // GP11  PCF8574 ~INT (active-LOW, wake)
 
 /* ── OLED 디스플레이 규격 (외부 모듈 — 실제 구성: 0.96" 128×64) ──
  *   128×64 표준 패널이라 COL_OFFSET=0 / FIXUP=0. sdkconfig.esp32-h2 의

@@ -209,6 +209,7 @@ void btn_handler_notify_from_lp(void);
 
 bool btn_handler_lp_active(void);
 void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq);
+void btn_handler_int_observe(uint32_t *samples, uint32_t *low, uint32_t *edges);
 void btn_handler_lp_latch_stats(uint32_t *notify_cnt, uint32_t *latch_now);
 int  btn_handler_poll_ms(void);
 

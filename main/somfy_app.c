@@ -4828,6 +4828,17 @@ void somfy_app_run(void *arg) {
         {
           uint32_t wi = 0, wv = 0, wt = 0, wid = 0;
           btn_handler_wake_stats(&wi, &wv, &wt, &wid);
+          /* ★2026-08-25 `~INT` 수동 관찰 — 선이 실제로 움직이는지 본다.
+           *  ISR 은 걸지 않았다(폭주·WDT 위험). 사용자가 버튼을 누르는 동안
+           *  `전이` 가 늘어야 `~INT` 가 살아 있는 것이다. 0 이면 죽은 선. */
+          {
+            uint32_t isam = 0, ilow = 0, iedg = 0;
+            btn_handler_int_observe(&isam, &ilow, &iedg);
+            ESP_LOGW(TAG, "[INTOBS] 표본 %u  LOW %u (%.1f%%)  ★전이 %u "
+                          "— 버튼 누를 때 전이가 늘면 ~INT 살아있음",
+                     (unsigned)isam, (unsigned)ilow,
+                     isam ? 100.0 * ilow / isam : 0.0, (unsigned)iedg);
+          }
           ESP_LOGW(TAG, "[BTNWAKE] 유휴진입 %u  깨움: ~INT %u / 진동 %u / 타임아웃 %u"
                         "   (~INT 비율 %u%%)",
                    (unsigned)wid, (unsigned)wi, (unsigned)wv, (unsigned)wt,
