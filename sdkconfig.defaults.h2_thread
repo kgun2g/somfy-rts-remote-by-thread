@@ -17,7 +17,27 @@ CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_EXT_ADV=n
 CONFIG_BT_NIMBLE_HCI_EVT_BUF_SIZE=70
-CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n
+# ★★★2026-08-24 n → y. **이것 때문에 H2 는 light sleep 을 한 번도 못 했다.**
+#  실측(배터리 13.9시간): sleep **0.0%**. 그런데 batlog 의 pm 열은 3
+#  (= light sleep ON + 배터리) — 즉 esp_pm_configure 는 정상이었다.
+#  NVS 로 받은 esp_pm_dump_locks 가 범인을 이름으로 찍어줬다:
+#        Name  Type            Active  Total_count  Time(%)
+#        bt    APB_FREQ_MAX      1          1        100%   ← 부팅부터 한 번 잡고 안 놓음
+#        Mode: APB_MAX 94% / SLEEP 0%
+#        light_sleep_counts:0  reject_counts:0       ← 시도조차 안 함
+#  APB_FREQ_MAX 락이 걸려 있으면 automatic light sleep 은 진입 자체를 못 한다.
+#
+#  ★이건 **회귀가 아니라 적용 누락**이다. 2026-08-15 에 이미 같은 락을 찾아
+#    이 옵션으로 고쳤는데, 그 수정이 **C6 오버레이(sdkconfig.defaults.xiao_c6)에만**
+#    들어갔다. h2_thread/c6_thread 는 n 그대로였다.
+#    → 보드별 오버레이 구조에서 "고쳤다"는 한 보드에서만 참일 수 있다.
+#      공통 결함을 고치면 **모든 보드의 defaults 를 확인할 것.**
+#
+#  동작: 등록 완료 후 BLE deinit, 이미 provisioned 면 부팅 시 초기화조차 안 함.
+#  ※대가: 이미 등록된 기기는 BLE 광고를 안 한다. 재페어링은 공장초기화(미등록
+#    상태 복귀) 후에 하면 된다 — C6 는 2026-08-15 부터 이 설정으로 운용 중이고
+#    문제가 없었다. heap 도 함께 회복된다(C6 때 164→184KB).
+CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
 
 # Enable OpenThread (H2 는 802.15.4 라디오 내장)
 CONFIG_OPENTHREAD_ENABLED=y

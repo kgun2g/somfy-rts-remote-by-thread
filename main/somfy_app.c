@@ -2800,6 +2800,45 @@ static void _ls_stats_init(void) {
 static void _ls_stats_init(void) { ESP_LOGW(TAG, "[LS] PM/tickless 미사용 — 계측 없음"); }
 #endif
 
+/* ★★★2026-08-24 **PM 락 보유자 덤프를 NVS 로** — H2 가 안 자는 이유를 밝히려고.
+ *
+ *  실측: H2 는 배터리 13.9시간 동안 light sleep 이 **0.0%** 였다. 그런데 batlog 의
+ *  pm 열은 **3**(= light sleep ON + 배터리) — 즉 **펌웨어 설정은 정상**인데 실제로
+ *  안 잔다. 누군가 ESP_PM_NO_LIGHT_SLEEP 락을 계속 쥐고 있다는 뜻이다.
+ *  (같은 조건에서 C6 는 96.2% 잔다. USJ_NO_AUTO_LS_ON_CONNECTION 을 껐지만
+ *   변화가 없었으므로 그 가설은 틀렸다.)
+ *
+ *  `esp_pm_dump_locks()` 가 답을 갖고 있는데 **stdout 으로만** 출력한다. H2 는
+ *  배터리 구동 중 USB 콘솔이 죽고 write 도 불안정해(기록된 지뢰) 콘솔로는 못 받는다.
+ *  → open_memstream 으로 메모리에 받아 NVS 에 남긴다. 배터리에서 잡아 USB 로
+ *    돌아온 뒤 esptool 로 읽으면 된다.
+ *  ※CONFIG_PM_PROFILING 이 켜져 있으면 각 락의 보유 시간까지 나온다. H2 는 지금
+ *    절전이 0 이라 프로파일링 오버헤드로 잃을 것이 없다. */
+#if CONFIG_PM_ENABLE
+#define PMDUMP_MAX 1024
+static void _pmdump_save(void) {
+  char  *buf = NULL;
+  size_t len = 0;
+  FILE  *ms  = open_memstream(&buf, &len);
+  if (!ms) return;
+  esp_pm_dump_locks(ms);
+  fclose(ms);                       /* 여기서 buf/len 이 확정된다 */
+  if (buf) {
+    nvs_handle_t h;
+    if (nvs_open("pmdump", NVS_READWRITE, &h) == ESP_OK) {
+      if (len > PMDUMP_MAX - 1) len = PMDUMP_MAX - 1;
+      buf[len] = 0;
+      nvs_set_str(h, "locks", buf);
+      nvs_commit(h);
+      nvs_close(h);
+    }
+    free(buf);
+  }
+}
+#else
+static void _pmdump_save(void) {}
+#endif
+
 /* 직전 샘플 이후 light sleep 비율(0~100). 호출 시 기준점을 갱신한다. */
 static uint8_t _ls_take_pct(int64_t now_us) {
   const int64_t d_sleep = s_ls_total_us - s_ls_mark_us;
@@ -4754,6 +4793,9 @@ void somfy_app_run(void *arg) {
          *  갈린다는 뜻인데, [BAT%] 진단 로그는 사용자 지시로 10분 주기라 창을 계속
          *  놓쳤다. 60초 [PWR] 은 어차피 찍히므로 여기 붙이면 추가 비용이 없다.
          *  표시(chg_percent) / 평활 / 원본 / 하한 / 천장을 한 줄로 본다. */
+        /* ★2026-08-24 배터리 구동 중이면 PM 락 보유자를 NVS 에 갱신 (위 주석 참조).
+         *  USB 중에는 어차피 light sleep 을 끄므로 의미가 없다. */
+        if (!_is_usb_powered()) _pmdump_save();
         ESP_LOGW(TAG, "[PWR2] 표시=%d%%  평활=%dmV  원본=%dmV  하한=%d  천장=%d%%  "
                       "nobat=%d judged=%d",
                  (s_ui.chg_percent == BAT_PCT_UNKNOWN) ? -1 : (int)s_ui.chg_percent,

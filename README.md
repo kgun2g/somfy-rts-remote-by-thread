@@ -52,8 +52,12 @@ ESP32-C6)·esp32-h2(ESP32-H2 SuperMini, I2C 공유).
   `rollcode` 파티션에도 보존 → Matter factory reset(기본 NVS 삭제) 후에도
   모터가 "롤링코드 역행"으로 거부하지 않음.
 - **3단계 화면보호기/절전**: 정상 → (유휴) 화면보호기 애니메이션(패널 ON)
-  → 패널 OFF/절전. 버튼/진동/Matter/USB 로 즉시 복귀. PCF8574 버튼은
-  150 ms 타이머 웨이크 백스톱으로 절전에서도 깨어남.
+  → 패널 OFF/절전. 버튼/진동/Matter/USB 로 즉시 복귀.
+- **배터리 절전(2026-08-24 실측, XIAO-C6)**: 깨어있는 시간 **13.4 % → 3.6 %**,
+  깨어남 **88.8 → 23.7 회/초**, 방전 **14.1 → 8.7 mV/시간** (700 mAh 로 **약 5일**).
+  버튼 폴링을 25 → 100 ms 로 늘렸는데도 **반응은 25 ms → 3~5 ms 로 오히려 빨라졌다**
+  — LP 코어가 눌림을 래치하고 light sleep 복귀 콜백이 태스크를 즉시 깨우기 때문.
+  자세한 근거·측정법은 [`HANDOFF.md`](HANDOFF.md) 「절전 측정 현황」.
 - **안전망**: 메인 루프 + 버튼 태스크 Task WDT 감시(hang 시 자동 리부트),
   RTC 메모리 crash breadcrumb(비정상 재부팅 시 부팅 직후 진단 로그).
 - **펌웨어 업데이트(Matter OTA over Thread)**: 듀얼 OTA 파티션 + Matter OTA
@@ -636,7 +640,11 @@ USB 전용이라 배터리 단독 동작에는 필요 없다.
 - **진동센서 오검출** — 핀이 고정 HIGH 인데 ISR 이 계속 발생해 화면이 저절로 켜지는 사례.
   `[VIBE-stat] 진동=1 HIGH=300/300` 로 확인. HW 로는 VIBE 핀·VS1 배선 점검 필요.
 - **ESP32-H2 메모리** — 블라인드 3개면 free heap 이 5 KB 미만까지 떨어진다(C6 는 171 KB).
-  H2 는 `BLIND_MAX_COUNT` 를 2 이하로 둘 것. BLE 커미셔닝은 사실상 불가.
+  H2 는 `BLIND_MAX_COUNT` 를 2 이하로 둘 것.
+  ※2026-08-22 태스크 통합(`time_update`·`time_persist` → 메인 루프)으로 **5 KB 이상
+  회수**했고(C6 실측 free +7.4 KB), 2026-08-19 에 H2 BLE 커미셔닝도 성공했다.
+  다만 벽은 **총량이 아니라 연속 블록**이다 — free 5.9 KB 가 남았는데도 최대 연속
+  블록이 2,112 B 라 NOC 인증서 검증이 실패한 적이 있다. 재페어링 마진은 여전히 빠듯하다.
 
 ## 안전 / 진단
 
@@ -665,6 +673,31 @@ USB Serial JTAG 콘솔로 **버튼 없이** RF 송신·블라인드 선택·순�
 | `cyc <-1 \| 1>` | 블라인드 선택 순환(`_blind_cycle`) — PCF8575 LEFT/RIGHT 의 콘솔 버전 |
 | `freq [idx mhz]` | 주파수 조회 / 설정(+NVS 저장, 447.20~447.79 클램프) |
 | `reboot` | `esp_restart` 재부팅 |
+| `bd` / `bl` / `vl` | 부팅 진단 / 배터리 방전 기록 / 진동센서 기록 (NVS) |
+| **`tmr`** | **등록된 `esp_timer` 덤프** — 깨어남 출처 추적. 이 한 줄이 "깨어남의 78 %" 범인(쓰지도 않는 `iot_button` 20 ms 타이머)을 찾아냈다 |
+| **`pm`** | **`esp_pm_dump_locks`** — 누가 light sleep 을 막는지 이름으로 나온다(`CONFIG_PM_PROFILING=y` 면 보유 시간 %까지) |
+| `rt` | 태스크별 CPU 점유(`CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` 필요) |
+
+### 절전 진단 — 추정하지 말고 찍을 것
+
+절전 원인 추적에서 가설이 **세 번 연속 틀렸고**(LP 코어 정지 / PCF 지터 /
+Matter 내부 타이머), `esp_timer_dump()` 한 줄이 그걸 끝냈다. 순서는 이렇게 한다:
+
+1. **`tmr`** — 12~20 ms 같은 짧은 주기 타이머가 있으면 그게 천장이다.
+   *신호*: 수면 길이가 **특정 값을 절대 안 넘으면** 그 주기의 타이머가 있다는 뜻.
+2. **`pm`** — `Active=1` 로 오래 잡힌 락이 있으면 light sleep 은 시도조차 못 한다
+   (`light_sleep_counts:0`). `batlog` 의 `pm=3` 은 "설정이 허용됐다"는 뜻일 뿐
+   **자고 있다는 증거가 아니다.**
+3. 배터리 구간은 USB 콘솔이 죽으므로 **NVS 로** 받는다 —
+   `sim/tools/batlog_decode.py`(수면 길이 히스토그램·깨어남 원인·태스크별 반복),
+   `sim/tools/pmdump_decode.py`(PM 락 보유자),
+   `sim/tools/bat_current_estimate.py`(방전 → 실효 전류).
+4. **비교는 같은 출발·도착 전압 구간으로.** OCV 기울기가 구간마다 2.3 배 다르다
+   (3850~3950 = 5.0 mV/%p vs 4080~4150 = 11.7 mV/%p). 어기면 수면 전류가
+   음수로 나오는 식의 헛계산이 된다.
+
+> ⚠️ **멀티미터 직렬 전류 측정은 이 기판에서 불가**(배터리 선을 끊을 수 없다).
+> 배터리 +/− 에 **전류계 모드로 직결하면 셀 단락** — 절대 금지. 전압만 잰다.
 
 > ★ **USB Serial JTAG 를 primary 콘솔**로 둬야 명령 입력이 먹는다(UART default 면 COM 에
 > stdin 이 없어 write 가 hang). 또 pyserial 로 포트를 **여러 번 여닫으면 DTR 토글로 리셋**되니

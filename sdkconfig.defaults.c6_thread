@@ -8,7 +8,12 @@ CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_EXT_ADV=n
 CONFIG_BT_NIMBLE_HCI_EVT_BUF_SIZE=70
-CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n
+# ★2026-08-24 n → y — h2_thread 와 같은 이유(그쪽 주석에 근거 전체).
+#  이 파일은 xiao-c6·gnpe-c6 가 공통으로 쓴다. xiao-c6 는 오버레이
+#  (sdkconfig.defaults.xiao_c6)에서 y 로 덮고 있었지만 **gnpe-c6 는 오버레이가
+#  없어 n 이 그대로 살아 있었다** — H2 와 똑같은 적용 누락이다.
+#  요지: `bt` 락(APB_FREQ_MAX)이 부팅부터 100% 잡혀 light sleep 이 진입조차 못 한다.
+CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
 
 # Enable OpenThread
 CONFIG_OPENTHREAD_ENABLED=y
