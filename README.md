@@ -650,10 +650,12 @@ USB 전용이라 배터리 단독 동작에는 필요 없다.
   `[VIBE-stat] 진동=1 HIGH=300/300` 로 확인. HW 로는 VIBE 핀·VS1 배선 점검 필요.
 - **ESP32-H2 메모리** — 블라인드 3개면 free heap 이 5 KB 미만까지 떨어진다(C6 는 171 KB).
   H2 는 `BLIND_MAX_COUNT` 를 2 이하로 둘 것.
-  ※2026-08-22 태스크 통합(`time_update`·`time_persist` → 메인 루프)으로 **5 KB 이상
-  회수**했고(C6 실측 free +7.4 KB), 2026-08-19 에 H2 BLE 커미셔닝도 성공했다.
-  다만 벽은 **총량이 아니라 연속 블록**이다 — free 5.9 KB 가 남았는데도 최대 연속
-  블록이 2,112 B 라 NOC 인증서 검증이 실패한 적이 있다. 재페어링 마진은 여전히 빠듯하다.
+  ※**2026-08-24 이후 사정이 크게 달라졌다.** `CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y`
+  로 등록 후 BLE 를 내리자 **free 11.3 KB → 40.5 KB (+29.2 KB)**. 여기에 2026-08-22
+  태스크 통합(`time_update`·`time_persist` → 메인 루프)으로 5 KB 이상을 더 회수했다.
+  ※단 벽은 **총량이 아니라 연속 블록**이다 — free 5.9 KB 가 남았는데도 최대 연속
+  블록이 2,112 B 라 NOC 인증서 검증이 실패한 적이 있다(2026-08-19).
+  ※대가: 이미 등록된 기기는 **BLE 광고를 하지 않는다.** 재페어링은 공장초기화 후.
 
 ## 안전 / 진단
 
@@ -790,7 +792,7 @@ somfy-blinds-things-by-claude/        ← ESP-IDF 프로젝트 루트
 |---|---|---|
 | `espressif/qrcode` | **0.2.0** | OLED 페어링 QR 인코더 (직접 선언 `*` → 잠금 0.2.0) |
 | `espressif/cmake_utilities` | 1.1.1 (`^1`) | 빌드 유틸 (직접 선언) |
-| `espressif/button` | 4.1.6 | 공장초기화 버튼 (esp-matter 경유) |
+| ~~`espressif/button`~~ | ~~4.1.6~~ | **2026-08-24 제거** — 20 ms 주기 `esp_timer` 를 상시 돌려 깨어남의 78 %를 차지했다. 공장초기화 BOOT 버튼 하나에만 쓰였고(사용 안 함), 실제 조작 버튼은 전부 PCF8575 → `button_handler` 가 처리한다 |
 | `espressif/mdns` | 1.11.1 | Matter mDNS / SRP |
 | `espressif/esp_secure_cert_mgr` | 2.9.2 | DAC 인증서 파티션 |
 | `espressif/esp_delta_ota` · `esp_encrypted_img` | 1.1.4 · 2.3.0 | OTA 델타 · 암호화 |

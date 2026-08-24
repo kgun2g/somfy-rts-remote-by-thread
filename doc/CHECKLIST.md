@@ -72,25 +72,33 @@
 | 851640 600 mAh LiPo (PCM 내장) + JST PH | `kicad/_add_battery.py` BAT1 | ✅ |
 | MCP73831 단일 셀 충전 IC (300 mA) | `kicad/_add_battery.py` U4 | ✅ |
 | SS14 Schottky 전원경로 | `kicad/_add_battery.py` D1 | ✅ |
-| 1분 무입력 light sleep ~~(~750 µA)~~ | `somfy_app.c` `_enter_sleep()` | ⚠ 아래 ★ |
+| 1분 무입력 light sleep ~~(~750 µA)~~ | `somfy_app.c` `_enter_sleep()` | ✅ 아래 ★ (2026-08-25 실측 완료) |
 | 충전/USB 감지 — GNPE: CHG_STAT(IO3 active-LOW) · XIAO/H2: VBUS 분압(active-HIGH) | `button_handler.c` `btn_handler_is_charging()` (`BOARD_CHG_STAT_ACTIVE_HIGH`) | ✅ |
-| 배터리 표시: **정상 배선=실측 %**(BAT 분압 ADC) / **현 시제품 H2·xiao 기판=`USB`/`BAT`/`LOW` 상태**(BAT_ADC↔CHG_STAT 핀 swap → CHG_STAT핀 ADC 불가, `BOARD_BAT_SWAPPED=1`) | `somfy_app.c` `_estimate_battery_percent()` / `usb_pwr`·`bat_low` | ✅ |
+| 배터리 표시: **실측 %**(BAT 분압 ADC) — H2·xiao-c6 모두 `BOARD_BAT_SWAPPED=0`. ~~구 기판의 BAT_ADC↔CHG_STAT 핀 swap(=1, `USB`/`BAT`/`LOW` 상태 표시)~~ 은 배선 개선판에서 해소됐다 | `somfy_app.c` `_read_bat_mv()` / `_bat_mv_to_pct()` | ✅ |
 | 충전 중 sleep 차단 + 1분 OLED 애니메이션 | `somfy_app.c` + `oled_ui_show_charging()` | ✅ |
 
-> ★ **`~750 µA` 는 설계 목표였고 실측된 적이 없다.** 2026-08-15 계측(`pm`) 결과
-> `bt`·`rmt_0_0` PM 락이 100% 잡혀 **light sleep 이 한 번도 진입하지 않았다**
-> (`Mode stats: CPU_MAX 99%`). 두 락은 해제했으나(→ CPU_MAX 5%) **락 해제 후
-> 배터리 방전 측정은 아직 미실시**다. 실측 소비는 아래 표 참조.
+> ★ **`~750 µA` 는 설계 목표였고 그 값으로 실측된 적은 없다.** 다만 2026-08-25 에
+> **두 보드 모두 light sleep 96%대**에 도달했다.
 >
-> | 세션 | 구성 | 3790~4000 mV 구간 |
+> | | XIAO-C6 | ESP32-H2 |
 > |---|---|---|
-> | #22 | 개선 전 (tick 100 Hz, LP 없음) | **47.4 mA** |
-> | #32 | tick 1000 Hz + LP 코어 | **52.7 mA** |
-> | #33 | tick 100 Hz + LP 코어 | 겹치는 구간에서 #32 와 구별 안 됨 |
+> | 잠 | **96.2 %** | **96.6 %** |
+> | 깨어남 | **23.7 회/초** | **33.2 회/초** |
+> | 방전 | **8.7 mV/시간** (700 mAh 로 약 5일) | — |
+> | 깨우기 | LP 코어 눌림 래치 + ULP 깨움 | PCF8574 `~INT` 레벨 트리거 |
 >
-> ①(tick)·③(LP 코어)이 세 번의 측정에서 전부 눈금에 안 잡힌 이유가 위 PM 락이다 —
-> **CPU 가 CPU_MAX 에서 내려온 적이 없으니 CPU 쪽 조치는 효과가 있을 수 없었다.**
-> 자세한 내용은 `HANDOFF.md` 의 「절전 측정 현황」.
+> 여기까지 온 경로(전부 **계측**으로 찾았다):
+>
+> | 발견 | 조치 | 효과 |
+> |---|---|---|
+> | `bt`·`rmt_0_0` PM 락 100% 점유(2026-08-15, 콘솔 `pm`) | `USE_BLE_ONLY_FOR_COMMISSIONING=y` / RMT 를 burst 동안만 | light sleep 진입 자체가 가능해짐 |
+> | ★그 수정이 **C6 오버레이에만** 적용됨(2026-08-24) | `h2_thread`·`c6_thread` 도 `y` | H2 **0.0 % → 88.8 %**, free +29.2 KB |
+> | 20 ms `button_timer` 가 깨어남의 78 %(콘솔 `tmr`) | 쓰지도 않던 `espressif/button` 제거 | C6 깨어있는 시간 **11.3 % → 3.6 %** |
+> | H2 만 113.9 회/초 — `I2C_0` 락 748,352회 | PCF `~INT` 레벨 트리거 ISR | H2 **33.2 회/초, 96.6 %** |
+>
+> **옛 측정(#22 47.4 mA / #32 52.7 mA)은 전부 PM 락에 갇힌 상태의 값**이므로
+> 현재와 비교하지 말 것. 그때 ①(tick)·③(LP 코어)이 눈금에 안 잡힌 이유도 이것이다.
+> 자세한 근거·측정법은 `HANDOFF.md` 의 「절전 측정 현황」.
 
 ### Sandwich 변형 (`_v2` / `_h2`)
 
