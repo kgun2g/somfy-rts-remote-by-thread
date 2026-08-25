@@ -92,3 +92,16 @@ CONFIG_CHIP_PROJECT_CONFIG="main/CHIPProjectConfig.h"
 # ── 기기 고유 커미셔닝: eFuse 기반 discriminator/passcode (efuse_commissionable.cpp) ──
 #   여러 대 제작 시 같은 QR/PIN 충돌 방지. DAC provider 는 별개라 유지.
 CONFIG_CUSTOM_COMMISSIONABLE_DATA_PROVIDER=y
+
+# ★★2026-08-25 절전 — light sleep 중 **플래시 전원 차단**.
+#  IDF: "chip will try to power down flash as part of esp_light_sleep_start(),
+#        which costs more time when chip wakes up."
+#  전제 충족: SPIRAM 없음(depends on !SPIRAM).
+#  ★부수 이득: 지금 켜둔 ESP_SLEEP_FLASH_LEAKAGE_WORKAROUND 는 수면 중 Flash CS 를
+#    풀업해 두는 대신 **수면 전류를 약 10uA 늘린다**. 플래시를 아예 내리면 그 누설
+#    자체가 사라진다(워크어라운드는 그대로 둬도 무해).
+#  ★위험: IDF 가 "there is a risk in powering down flash" 라고 명시한다. 깨어날 때
+#    플래시 재초기화가 필요해 **회당 깨어있는 시간이 늘 수 있다** — 그러면 순이득이
+#    없거나 마이너스다. 반드시 **깨어남 횟수가 아니라 깨어있는 시간**으로 판정할 것.
+#    이상 동작(부팅 실패·랜덤 리셋)이 보이면 즉시 이 줄을 지운다.
+CONFIG_ESP_SLEEP_POWER_DOWN_FLASH=y

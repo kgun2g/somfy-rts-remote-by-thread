@@ -38,3 +38,32 @@
  */
 #define CHIP_DEVICE_CONFIG_DEVICE_VENDOR_NAME  "NLB"
 #define CHIP_DEVICE_CONFIG_DEVICE_PRODUCT_NAME "Somfy RTS Thread"
+
+/* ── ★★2026-08-25 Thread SSED (CSL) — 실험 ────────────────────────────────
+ *  지금은 SED 로 **7초마다 부모에게 폴링**한다(CONFIG_ICD_SLOW_POLL_INTERVAL_MS).
+ *  CSL(Coordinated Sampled Listening)은 부모와 시각을 맞춰 **정해진 순간에만**
+ *  수신기를 켜므로 무선 대기 시간이 크게 준다.
+ *
+ *  ★이 매크로가 실제 스위치다. CHIP 소스
+ *    (GenericThreadStackManagerImpl_OpenThread.hpp, SetPollingInterval)를 보면
+ *        #if CHIP_DEVICE_CONFIG_THREAD_SSED
+ *            otLinkSetCslPeriod(...)      ← CSL 주기 설정 = SSED 로 동작
+ *        #else
+ *            otLinkSetPollPeriod(...)     ← 지금 경로(SED 폴링)
+ *        #endif
+ *    즉 `CONFIG_OPENTHREAD_CSL_ENABLE=y` 만 켜면 **컴파일 지원만 들어가고
+ *    동작은 안 바뀐다** — 둘 다 필요하다.
+ *
+ *  ★★위험: CSL 은 **부모(Thread 라우터)가 CSL 송신을 지원해야** 성립한다.
+ *    SmartThings 허브가 지원하지 않으면 명령 수신이 늦거나 끊길 수 있다.
+ *    → 적용 후 **SmartThings 명령 전달을 반드시 확인**할 것. 이상하면 이 매크로와
+ *      CONFIG_OPENTHREAD_CSL_ENABLE 을 함께 되돌린다.
+ *  ※CSL_ACCURACY(±50ppm)·CSL_UNCERTAIN(50 = 500us)은 이미 sdkconfig 에 있다. */
+/* ★★★2026-08-25 **되돌림(0)** — 실기에서 통신이 깨졌다.
+ *      E chip[DL]: SRP update error: timed out waiting on server response  (반복)
+ *      Matter 메시지(chip[EM]) 3분간 **0건** (이전엔 수십 건)
+ *      free heap 40,084 → 15,004 B (**-25KB**, CSL 타이밍 버퍼)
+ *  SmartThings 허브(부모 라우터)가 CSL 송신을 지원하지 않는 것으로 보인다.
+ *  위에 적어둔 위험이 그대로 실현됐다. heap 대가도 H2 에는 치명적이다.
+ *  ※다시 시도하려면 **부모가 Thread 1.2 CSL 을 지원하는지 먼저 확인**할 것. */
+#define CHIP_DEVICE_CONFIG_THREAD_SSED 0
