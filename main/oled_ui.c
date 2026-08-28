@@ -2024,13 +2024,23 @@ static void _pbig_rotate(int cx, int cy, uint8_t frame, bool cw)
 }
 #endif /* OLED_RENDER_128X64 */
 
+/* ★2026-08-27 버튼(ACTION) 화면 애니메이션 속도 배수 — 사용자: "애니메이션이 느리다".
+ *  애니메이션은 `anim_frame` 으로 움직이는데 그 값은 _ui_task 가 1틱에 1씩 올린다
+ *  (OLED_TASK_INTERVAL_MS = 50ms = 20fps). 그래서 예컨대 화살표의 `f % 15` 는
+ *  15프레임 = **750ms** 주기가 된다.
+ *  ★여기서만 배수를 곱한다 — 태스크 주기(50ms)를 줄이면 화면이 켜져 있는 동안
+ *    깨어남이 늘어 절전에 영향을 준다(20 → 30회/초). 배수는 **전력 비용 0**이다.
+ *  ★페어링·충전 애니메이션은 건드리지 않는다(그쪽은 각자 f 를 따로 쓴다).
+ *  대가: 프레임 간격이 그만큼 성겨진다(2 면 2프레임씩 건너뜀). 너무 튀면 낮출 것. */
+#define OLED_ACTION_ANIM_SPEED 2
+
 static void _render_action(oled_ui_ctx_t *ctx)
 {
     _fb_clear();
 
 #if OLED_RENDER_128X64
     {   /* ══ 128×64 네이티브 모션 (또렷한 1:1, 블록스케일 없음) ══ */
-        uint8_t f = ctx->anim_frame;
+        uint8_t f = (uint8_t)(ctx->anim_frame * OLED_ACTION_ANIM_SPEED);
         const int cx = OLED_PANEL_W / 2;   /* 64 */
         const int cy = 23;                  /* 모션 중심(하단 라벨 위) */
         switch (ctx->action) {
@@ -2105,7 +2115,7 @@ static void _render_action(oled_ui_ctx_t *ctx)
     }
 #endif
 
-    uint8_t f = ctx->anim_frame;
+    uint8_t f = (uint8_t)(ctx->anim_frame * OLED_ACTION_ANIM_SPEED);
     const int cx = OLED_WIDTH / 2;   // 36
     /* ★ 모션 영역과 하단 블라인드 라벨이 겹치지 않도록 모션 중심을 위로.
      *  라벨은 y=32~38(7px). 모션은 y<=30 에 들어오도록 cy=16 + 슬라이드
@@ -2557,102 +2567,6 @@ void oled_ui_show_fw_update(oled_ui_ctx_t *ctx)
      y=10..28 : 배터리 본체 (48×18) + 단자 (4×8) + fill bar
      y=30..39 : 퍼센트 + 동적 lightning
 ═══════════════════════════════════════════════ */
-static void _render_charging(oled_ui_ctx_t *ctx)
-{
-    _fb_clear();
-
-    uint32_t now = _ms_now();
-    uint32_t elapsed = now - ctx->chg_anim_start_ms;
-    uint8_t  f       = ctx->anim_frame;
-
-    /* ── 헤더: "CHARGING" 좌우로 미끄러지는 효과 ── */
-    /* 첫 1초: 왼쪽에서 슬라이드 인 */
-    int header_x;
-    if (elapsed < 1000) {
-        /* 0..1000ms → x=-50..6 */
-        header_x = -50 + (int)((elapsed * 56) / 1000);
-    } else if (elapsed > OLED_CHG_ANIM_DISPLAY_MS - 1000) {
-        /* 마지막 1초: 오른쪽으로 슬라이드 아웃 */
-        uint32_t out = elapsed - (OLED_CHG_ANIM_DISPLAY_MS - 1000);
-        header_x = 6 + (int)((out * 70) / 1000);
-    } else {
-        header_x = 6;
-    }
-    _fb_draw_string(header_x, 0, "CHARGING");
-    _fb_hline(0, OLED_WIDTH - 1, 9);
-
-    /* ── 배터리 외곽 (48×18, 단자 4×8) ── */
-    const int bx = 10, by = 12, bw = 48, bh = 18;
-    _fb_rect(bx, by, bw, bh);
-    _fb_fill_rect(bx + bw, by + 5, 4, 8);  // 우측 단자
-
-    /* ── Fill bar 애니메이션
-       애니메이션 시작 후 0~2.5초간 0%→target% 까지 채워 올림.
-       이후엔 target% 유지하되 wave 효과 추가.
-    ── */
-    int target_w = (bw - 4) * ctx->chg_percent / 100;  // 내부 영역 (44px) × percent
-    int fill_w;
-    if (elapsed < 2500) {
-        fill_w = target_w * (int)elapsed / 2500;
-    } else {
-        fill_w = target_w;
-    }
-    if (fill_w < 0) fill_w = 0;
-    if (fill_w > bw - 4) fill_w = bw - 4;
-
-    /* 채워진 영역: 점선/줄무늬 패턴으로 dynamic 느낌 */
-    for (int dx = 0; dx < fill_w; dx++) {
-        for (int dy = 0; dy < bh - 4; dy++) {
-            /* 대각선 줄무늬: anim_frame에 따라 흐르는 효과 */
-            int stripe = (dx + dy + (f / 2)) % 4;
-            if (stripe < 3) {
-                _fb_set_pixel(bx + 2 + dx, by + 2 + dy, true);
-            }
-        }
-    }
-
-    /* ── Lightning bolt 깜빡임 ──
-       8×16 픽셀 번개 모양, 0.5초 주기로 표시/숨김 */
-    bool lightning_visible = (f / 10) % 2 == 0;
-    if (lightning_visible && elapsed < OLED_CHG_ANIM_DISPLAY_MS - 1000) {
-        /* 단자 위에 작은 lightning 모양 그리기 */
-        const int lx = bx + bw / 2 - 3;
-        const int ly = by + bh / 2 - 4;
-        /* 간단 번개 패턴 (8x9) */
-        const uint8_t bolt[9] = {
-            0b00000110,
-            0b00001100,
-            0b00011000,
-            0b00110000,
-            0b01111110,
-            0b00001100,
-            0b00011000,
-            0b00110000,
-            0b01100000,
-        };
-        for (int row = 0; row < 9; row++) {
-            for (int col = 0; col < 8; col++) {
-                if (bolt[row] & (0x80 >> col)) {
-                    _fb_set_pixel(lx + col, ly + row, true);
-                }
-            }
-        }
-    }
-
-    /* ── 하단: 퍼센트 텍스트 (큰 8×8 폰트, 가운데 정렬) ─
-     * 예: " 75%" (4글자 × 8 = 32px) → x = (72-32)/2 = 20 */
-    char pct_str[8];
-    snprintf(pct_str, sizeof(pct_str), "%d%%", ctx->chg_percent);
-    int plen = (int)strlen(pct_str);
-    int text_x = (OLED_WIDTH - plen * 8) / 2;
-    /* 텍스트도 매 0.25초마다 살짝 진동 (1px up/down) */
-    int text_y = 30 + ((f / 5) % 2);
-    for (int i = 0; i < plen; i++) {
-        _fb_draw_char_8x8(text_x + i * 8, text_y, pct_str[i]);
-    }
-
-    _fb_flush();
-}
 
 /* 코드를 화면 중앙 영역에 표시 (11자리 1줄 / 21자리 2줄). */
 static void _draw_pair_code(const oled_ui_ctx_t *ctx)
@@ -2925,14 +2839,6 @@ static void _ui_task(void *pvParam)
             /* 날짜/시간 편집 중 — 화면보호기/자동복귀 없음(사용자 종료까지
              *  유지). s_setup_screen 과 desync 방지 위해 auto-revert 안 함. */
 
-        } else if (ctx->state == OLED_STATE_CHARGING) {
-            /* 충전 애니메이션: OLED_CHG_ANIM_DISPLAY_MS 후 자동 복귀 */
-            uint32_t anim_elapsed = now - ctx->chg_anim_start_ms;
-            if (anim_elapsed >= OLED_CHG_ANIM_DISPLAY_MS) {
-                ctx->state = ctx->chg_resume_state ?
-                             ctx->chg_resume_state : OLED_STATE_NORMAL;
-            }
-
         }
         /* ★2026-07-24 화면보호기 제거(사용자 요청) — oled_ui 자체의 유휴 타이머로
          *  OLED_STATE_SCREENSAVER 로 넘어가던 경로를 삭제했다.
@@ -2952,7 +2858,6 @@ static void _ui_task(void *pvParam)
             case OLED_STATE_FREQ_EDIT:   _render_freq_edit(ctx);   break;
             case OLED_STATE_PAIRING:     _render_pairing(ctx);     break;
             case OLED_STATE_THREAD_PROV: _render_thread_prov(ctx); break;
-            case OLED_STATE_CHARGING:    _render_charging(ctx);    break;
             case OLED_STATE_SETUP_MENU:  _render_setup_menu(ctx);  break;
             case OLED_STATE_THREAD_RESET:_render_thread_reset(ctx);break;
             case OLED_STATE_FW_UPDATE:   _render_fw_update(ctx);   break;
@@ -3486,23 +3391,3 @@ void oled_ui_set_time_edit(oled_ui_ctx_t *ctx, const int v[5], uint8_t field)
     ctx->last_activity_ms = _ms_now();
 }
 
-void oled_ui_show_charging(oled_ui_ctx_t *ctx, uint8_t percent)
-{
-    if (!ctx) return;
-    if (percent > 100) percent = 100;
-    /* 현재 상태 저장 (애니메이션 종료 후 복귀) — 단 충전 애니메이션
-     * 자체나 페어링/프로비저닝 화면이라면 NORMAL로 복귀. */
-    if (ctx->state != OLED_STATE_CHARGING &&
-        ctx->state != OLED_STATE_PAIRING &&
-        ctx->state != OLED_STATE_THREAD_PROV) {
-        ctx->chg_resume_state = ctx->state;
-    } else if (ctx->state == OLED_STATE_PAIRING ||
-               ctx->state == OLED_STATE_THREAD_PROV) {
-        /* 페어링/프로비저닝 중에는 충전 애니메이션 인터럽트 금지 */
-        return;
-    }
-    ctx->chg_percent       = percent;
-    ctx->chg_anim_start_ms = _ms_now();
-    ctx->state             = OLED_STATE_CHARGING;
-    ctx->last_activity_ms  = _ms_now();   // screensaver 진입 방지
-}

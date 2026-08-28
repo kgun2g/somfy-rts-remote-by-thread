@@ -88,7 +88,6 @@ typedef enum {
     OLED_STATE_FREQ_EDIT       = 3,  // 주파수 편집 화면
     OLED_STATE_PAIRING         = 4,  // Matter 페어링 화면 (BLE 광고 + PIN 표시)
     OLED_STATE_THREAD_PROV     = 5,  // Thread 네트워크 부착 대기/안내
-    OLED_STATE_CHARGING        = 6,  // 충전 다이내믹 애니메이션 (USB 연결)
     OLED_STATE_SETUP_MENU      = 7,  // 설정 메뉴 화면 (v3.1+, 5개 항목)
     OLED_STATE_THREAD_RESET    = 8,  // Thread 리셋 확인 (SETUP 2s 길게 → 실행)
     OLED_STATE_TIME_EDIT       = 9,  // 날짜/시간 수동 설정 화면 (v3.9+)
@@ -183,8 +182,6 @@ typedef struct {
     uint8_t        chg_percent;          // 0~100 (외부에서 estimate 후 설정)
     bool           usb_pwr;              // GP3(VBUS) ADC 감지: USB 연결됨
     bool           bat_low;              // GP12 풀업 1임계: 배터리 저전압(<~3V)
-    uint32_t       chg_anim_start_ms;    // 충전 애니메이션 시작 시각
-    oled_state_t   chg_resume_state;     // 애니메이션 종료 후 복귀할 상태
     /* 펌웨어 업데이트(Matter OTA) 화면 — somfy_app.c 가 매 tick 갱신 */
     char           fw_version[12];       // 현재 펌웨어 버전 문자열 (예 "3.5")
     uint8_t        fw_ota_state;         // matter_ota_state_t (0=Idle..5=Unknown)
@@ -196,12 +193,19 @@ typedef struct {
 
 /* ─── 타임아웃 설정 ──────────────────────────── */
                                              // (1분 시 사용자 시계 사용 중 불편)
-#define OLED_ACTION_DISPLAY_MS      2500     // 액션 애니메이션 2.5초 후 NORMAL 복귀
+/* ★2026-08-27 2500 → 2000. 사용자: "애니메이션 속도는 빨라졌는데 재생시간은
+ *  줄어들지 않았어". 속도(OLED_ACTION_ANIM_SPEED)와 **재생 길이는 별개 상수**다.
+ *  ★2026-08-27 사용자 지정 최종값 **2000(2초)**. (1200 을 거쳐 조정)
+ *  ★연동 주의: somfy_app.c 의 `_ch_lock_release()` 가 **같은 상수**로 채널변경 잠금
+ *    여운을 건다("애니메이션이 끝날 때까지 채널변경 금지", 2026-07-24 사용자 요청).
+ *    즉 이 값을 줄이면 그 여운도 같이 짧아진다 — 화면과 잠금이 같이 끝나야 일관되므로
+ *    의도된 연동이다. 다만 RF 송신 자체는 별도로 `s_rf_tx_busy`·큐 잔량으로 잠그므로
+ *    송신 중 채널이 바뀌는 일은 없다. */
+#define OLED_ACTION_DISPLAY_MS      2000     // 액션 화면 유지 시간(뗀 뒤) → NORMAL 복귀
 #define OLED_TASK_INTERVAL_MS       50       // 화면 업데이트 주기 (50ms = 20fps)
 /* ★2026-08-11 패널 OFF 시 주기 — 그려도 안 보이므로 느리게 돌아 CPU 를 재운다.
  *  너무 길면 버튼/진동으로 깨울 때 첫 프레임이 늦어 보이므로 500ms 로 절충한다. */
 #define OLED_TASK_INTERVAL_OFF_MS  500
-#define OLED_CHG_ANIM_DISPLAY_MS    6000     // 충전 애니메이션 1회 재생 길이 6초
 
 /* ─── API ────────────────────────────────────── */
 
@@ -409,13 +413,11 @@ void oled_ui_show_time_edit(oled_ui_ctx_t *ctx, const int v[5], uint8_t field);
 void oled_ui_set_time_edit(oled_ui_ctx_t *ctx, const int v[5], uint8_t field);
 
 /**
- * @brief 충전 애니메이션 트리거 — OLED_CHG_ANIM_DISPLAY_MS 동안 다이내믹
  *        배터리 충전 영상을 재생한 뒤 이전 상태로 자동 복귀.
  *        (USB 케이블 연결 후 1분 마다 호출하여 사용)
  * @param ctx       UI 컨텍스트
  * @param percent   0~100 (예상 충전량, ADC 미가용 시 추정값)
  */
-void oled_ui_show_charging(oled_ui_ctx_t *ctx, uint8_t percent);
 
 /**
  * @brief OLED 디스플레이 전원 제어 (SSD1315 명령 0xAE/0xAF).

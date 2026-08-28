@@ -597,12 +597,12 @@ static void _time_edit_save(void) {
  *  STAT 가 HIGH 로 돌아오는 경우는 (a) 충전 완료 (b) USB 분리.
  *  구분 불가하므로 USB_DETECT_HOLD_MS 내에 충전 활동이 있었으면
  *  여전히 USB 연결 상태로 본다. (실용적 휴리스틱) */
-/* 충전 애니메이션(6초 재생 + 충전 중 60초마다 반복) 표시 여부 — 사용자 요구로 끔
- * (2026-07-17). 0 = oled_ui_show_charging() 을 호출하지 않음. 함수/렌더러
- * (_render_charging)와 관련 로직은 그대로 보존(삭제 금지) → 1 로 되돌리면 즉시 복구. */
-#ifndef CFG_CHG_ANIM_ENABLE
-#define CFG_CHG_ANIM_ENABLE 0
-#endif
+/* ★2026-08-27 충전 애니메이션 **제거** — 2026-07-17 사용자 요구로 끈 뒤
+ *  (CFG_CHG_ANIM_ENABLE=0) 한 번도 호출되지 않던 죽은 코드다. 당시 주석은
+ *  "삭제 금지, 1 로 되돌리면 복구" 였으나 사용자 지시로 정리한다.
+ *  제거 대상: OLED_STATE_CHARGING / _render_charging / oled_ui_show_charging /
+ *             chg_anim_start_ms / OLED_CHG_ANIM_DISPLAY_MS / CFG_CHG_ANIM_ENABLE
+ *  ★유지: `chg_percent` 는 **배터리 잔량 % 표시**로 살아 있는 기능이다(이름만 chg). */
 /* ★2026-07-23 화면 정책: 화면보호기(중간 애니메이션) **코드 삭제**.
  *  유휴 시간이 지나면 곧바로 패널 OFF(USB=CFG_SCREEN_OFF_USB_SEC,
  *  배터리=CFG_SCREEN_OFF_SEC — somfy_config.h). 버튼/진동으로 즉시 복귀. */
@@ -3506,6 +3506,9 @@ static int64_t s_pct_ceil_us   = 0;
  *  300mV: 실측 급락(1,053mV·1,418mV)은 잡고, 정상 방전(5초당 수 mV)과
  *  USB 연결/해제로 단자전압이 움직이는 폭(≤120mV)은 통과시킨다.
  *  3회: 측정 주기 5초 × 3 = 15초. 진짜 급락은 그 뒤 인정된다. */
+/* ★2026-08-27 표시 % 1회 측정(5초)당 최대 하락 %p (사용 지점 주석 참조).
+ *  1 = 실측 방전(0.0014%p/5초)의 약 700배 — 진짜 방전은 전혀 안 막힌다. */
+#define BAT_DISP_MAX_DROP_PCT 1
 #define BAT_SPIKE_MAX_DROP_MV  300
 #define BAT_SPIKE_REJECT_MAX     3
 #define BAT_CHG_RISE_MPCT_PER_MIN 850   /* 0.85%p/분 = 700mAh 를 약 2시간에 충전 */
@@ -3998,7 +4001,6 @@ void somfy_app_run(void *arg) {
   } else {
     ESP_LOGI(TAG, "메인 루프 Task WDT subscribe 완료");
   }
-  int64_t last_chg_anim_us = 0;
   bool was_charging = false;
   bool was_vibrating = false;
   int64_t last_vib_us_seen = 0;
@@ -4383,6 +4385,32 @@ void somfy_app_run(void *arg) {
               }
               if (_pct > s_pct_ceil_mpct / 1000) _pct = s_pct_ceil_mpct / 1000;
             }
+            /* ★★★2026-08-27 **표시 % 하락 속도 제한** — "잔량이 내려갔다 다시 올라간다".
+             *
+             *  사슬: ① BAT_ADC 가 이따금 낮게 읽힌다 → ② 표시가 끌려 내려가고 방전
+             *  하한(s_pct_floor)이 그 값에 잠긴다 → ③ 정상값이 돌아오면 하한 해제
+             *  (2026-08-23 에 "0% 갇힘"을 풀려고 넣은 장치)로 표시가 되올라간다.
+             *  ③은 의도대로 동작한 것인데, 사용자 눈에는 오락가락으로 보인다.
+             *
+             *  → **물리적으로 불가능한 속도의 하락을 막는다.** 그러면 이상값이 화면에
+             *    안 나타나고, 하한도 잘못 잠기지 않아 되올라감도 사라진다(한 수정으로
+             *    양방향 해결).
+             *  근거: 실측 방전은 9.94시간에 5%p(C6) = 0.0014%p/5초. 5초에 1%p 를
+             *    허용하면 **실제보다 약 700배 빠른** 셈이라 진짜 방전은 안 막힌다.
+             *    반대로 스파이크(한 번에 90%p)는 100표본(8.3분)에 걸쳐야 반영되므로
+             *    그 전에 정상으로 돌아오면 화면에 티가 안 난다.
+             *  ★상승은 제한하지 않는다 — 충전 시 즉시 반영돼야 하고, 방전 중 상승은
+             *    이미 하한이 막는다. 부팅 첫 표본도 제한하지 않는다(안 그러면 0%에서
+             *    기어오른다).
+             *  검증: sim/tools/bat_display_rate_sim.py (5개 항목) */
+            {
+              static bool s_disp_init = false;
+              const int prev = (int)s_ui.chg_percent;
+              if (s_disp_init && s_ui.chg_percent != BAT_PCT_UNKNOWN &&
+                  _pct < prev - BAT_DISP_MAX_DROP_PCT)
+                _pct = prev - BAT_DISP_MAX_DROP_PCT;
+              s_disp_init = true;
+            }
             s_ui.chg_percent = (uint8_t)_pct;
             /* ★진단(2026-08-11): "% 가 한 값에 고정" 신고 대응. 원본/평활/표시%
              *  를 한 줄로 남겨 **평활이 붙잡는 것인지, 전압이 실제로 안 변하는지**
@@ -4408,23 +4436,11 @@ void somfy_app_run(void *arg) {
       /* CHG_STAT LOW 감지 시각 갱신 — USB 모드 hold 윈도우용 */
       s_last_chg_active_us = now_us;
 
-      /* 충전 시작 직후 즉시 한 번 애니메이션 표시 (CFG_CHG_ANIM_ENABLE=0 이면 생략) */
       if (!was_charging) {
         ESP_LOGI(TAG, "USB 케이블 연결 감지 → 충전 모드");
         if (s_screensaver_active) _exit_screensaver("USB connect");
-        last_chg_anim_us = now_us;
-#if CFG_CHG_ANIM_ENABLE
-        oled_ui_show_charging(&s_ui, _estimate_battery_percent());
-#endif
         _mark_activity();
       }
-#if CFG_CHG_ANIM_ENABLE
-      /* 1분(60s) 마다 애니메이션 재생 (충전 중에만) */
-      else if (now_us - last_chg_anim_us >= 60LL * 1000 * 1000) {
-        oled_ui_show_charging(&s_ui, _estimate_battery_percent());
-        last_chg_anim_us = now_us;
-      }
-#endif
     } else if (was_charging) {
       ESP_LOGI(TAG, "USB 케이블 분리 가능성 (CHG_STAT HIGH) — 모드 재평가");
       s_chg_start_us = 0;
@@ -4471,7 +4487,7 @@ void somfy_app_run(void *arg) {
     {
       static oled_state_t last_auto = OLED_STATE_NORMAL;
       oled_state_t st = s_ui.state;
-      if (!inhibit && (st == OLED_STATE_CHARGING || st == OLED_STATE_PAIRING ||
+      if (!inhibit && (st == OLED_STATE_PAIRING ||
                        st == OLED_STATE_THREAD_PROV)) {
         if (st != last_auto) {
           ESP_LOGI(TAG, "[SCROFF] 자동상태(%d)에서도 화면 OFF 타이머 유지", (int)st);
