@@ -189,6 +189,13 @@ typedef struct {
 #if BOARD_HAS_LR_BUTTONS
     uint8_t        freq_edit_cursor;     // 주파수 편집 디지트 커서: 0=0.1자리, 1=0.01자리 (PCF8575 좌/우)
 #endif
+    /* ★★2026-08-31 알림 배너 — 현재 화면 **위에 덧그리는** 한 줄(상태 전이 없음).
+     *  왜: 조작이 **의도적으로 무시될 때** 사용자에게 알릴 방법이 없었다. PROGGUARD
+     *  (PROG 연타 차단)가 `break` 로 조용히 버려서, 사용자 눈에는 버튼 고장과
+     *  구별되지 않았다(COM8 실사용 신고 — 원인 찾는 데 세션 하나를 썼다).
+     *  상태(state)를 바꾸지 않으므로 진행 중인 화면/애니메이션을 방해하지 않는다. */
+    char           notice[16];           // 배너 문구(ASCII). "" = 표시 안 함
+    uint32_t       notice_until_ms;      // 이 시각까지 표시
 } oled_ui_ctx_t;
 
 /* ─── 타임아웃 설정 ──────────────────────────── */
@@ -365,6 +372,10 @@ static inline void oled_ui_show_wifi_prov(oled_ui_ctx_t *ctx,
  * @param idx  0~count-1: 개별 블라인드, count: ALL
  */
 void oled_ui_notify_blind_select(oled_ui_ctx_t *ctx, uint8_t idx);
+
+/* ★2026-08-31 알림 배너 — 현재 화면 아래쪽에 ms 동안 한 줄 덧그린다.
+ *  상태를 바꾸지 않으므로 어떤 화면에서 불러도 안전하다(구조체 주석 참조). */
+void oled_ui_show_notice(oled_ui_ctx_t *ctx, const char *msg, uint32_t ms);
 
 /**
  * @brief 즉시 화면 복귀 (화면 보호기 해제)

@@ -109,7 +109,9 @@ static void _main_freq_str(const oled_ui_ctx_t *ctx, char *buf, size_t n) {
  *  이 보드의 OLED 버스는 400k 에서 트래픽 하 글리치 폭주 → INVALID_STATE → flush 정지
  *  → 화면 멈춤/부팅깨짐. 금요일 04:38 '정상 출력' 버전이 쓰던 100kHz 로 마진 확보.
  *  (히스토리 07-17 04:38:33 의 _oled_i2c_init_at 방식 복원.) */
-#define OLED_I2C_HZ 100000
+/* ★2026-08-27 보드별로 분리 — boards/board_select.h 의 BOARD_OLED_I2C_HZ 주석 참조.
+ *  (아래 07-19 기록은 **C6** 의 400k 글리치 근거다. C6 는 지금 비트뱅이라 무관.) */
+#define OLED_I2C_HZ BOARD_OLED_I2C_HZ
 
 /* ═══════════════════════════════════════════════════════════════════════
    ★2026-07-23 OLED 소프트웨어 비트뱅 I2C 전송 (BOARD_OLED_BITBANG)
@@ -1168,7 +1170,37 @@ static void _oled_write_page_locked(SSD1306_t *dev, int page, int seg,
 }
 
 /* 프레임 버퍼 → SSD1306 전송 */
+/* ═══ 알림 배너 (2026-08-31) ═══════════════════════════════════════════════
+ *  왜 여기(=전송 직전)인가 — **두 번 틀리고 세 번째에 여기로 왔다.**
+ *   ① 처음엔 렌더 스위치 뒤에서 그리기만 했다 → 각 `_render_*()` 가 스스로 끝에서
+ *      `_fb_flush()` 를 부르므로, 배너는 그 뒤라 **전송되지 않았다**("배너 안떠").
+ *   ② 그래서 배너를 그린 뒤 `_fb_flush()` 를 한 번 더 불렀다 → 한 프레임에 전송이
+ *      두 번 나가고, 첫 전송에는 배너가 없어 **20fps 로 껌뻑였다**("엄청 떨려").
+ *   ③ 정답: 전송 직전에 프레임버퍼에 얹는다. 프레임당 전송은 **한 번**이고 그 안에
+ *      배너가 이미 들어 있다 → 깜빡임이 원리적으로 불가능하다.
+ *  `_fb_flush()` 는 ctx 를 받지 않으므로 상태를 파일 스코프에 둔다. */
+static char     s_notice[16];
+static uint32_t s_notice_until_ms;
+
+static void _fb_notice_overlay(void) {
+    if (!s_notice[0]) return;
+    /* 부호있는 차로 비교 — _ms_now() 랩어라운드에서도 안전하다. */
+    if ((int32_t)(s_notice_until_ms - _ms_now()) <= 0) { s_notice[0] = 0; return; }
+    const int h = FONT_H + 2;
+    const int y = OLED_HEIGHT - h;
+    for (int cy = y; cy < OLED_HEIGHT; cy++)      /* 바탕을 지우고 */
+        for (int cx = 0; cx < OLED_WIDTH; cx++)
+            _fb_set_pixel(cx, cy, false);
+    _fb_hline(0, OLED_WIDTH - 1, y);              /* 구분선 */
+    int len = 0;
+    while (s_notice[len]) len++;
+    int x = (OLED_WIDTH - len * FONT_W) / 2;
+    if (x < 0) x = 0;
+    _fb_draw_string(x, y + 2, s_notice);
+}
+
 static void _fb_flush(void) {
+    _fb_notice_overlay();          /* ★전송 직전에 얹는다 (위 주석의 ③) */
     /* ★RF 송신 중에는 I2C 를 아예 건드리지 않는다(모듈 고착 방지 — 위 주석 참조).
      *  송신은 1~1.5초라 그동안 화면이 안 갱신되지만, 고착돼 영구히 멈추는 것보다 낫다.
      *  검출(재프로브)도 하지 않는다 — 노이즈 구간의 프로브가 곧 고착 유발 트랜잭션이다. */
@@ -3365,6 +3397,21 @@ void oled_ui_set_setup_cursor(oled_ui_ctx_t *ctx, uint8_t cursor)
     ctx->setup_cursor = cursor;
     ctx->last_activity_ms = _ms_now();
     /* state 가 다른 화면이면 자동 전환하지 않음 — 호출자가 제어 */
+}
+
+void oled_ui_show_notice(oled_ui_ctx_t *ctx, const char *msg, uint32_t ms)
+{
+    if (!msg) return;
+    size_t n = sizeof(s_notice) - 1, i = 0;
+    for (; i < n && msg[i]; i++) s_notice[i] = msg[i];
+    s_notice[i] = 0;
+    s_notice_until_ms = _ms_now() + ms;
+    if (ctx) {                       /* 웹 시뮬레이터가 읽을 수 있게 ctx 에도 넣는다 */
+        for (size_t k = 0; k <= i; k++) ctx->notice[k] = s_notice[k];
+        ctx->notice_until_ms = s_notice_until_ms;
+    }
+    /* last_activity_ms 는 건드리지 않는다 — 배너 때문에 유휴 타이머가 리셋되면
+     *  화면이 계속 켜져 배터리를 먹는다(알림은 알림일 뿐 조작이 아니다). */
 }
 
 void oled_ui_show_thread_reset(oled_ui_ctx_t *ctx)

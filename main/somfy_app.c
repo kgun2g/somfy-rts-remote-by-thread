@@ -1473,7 +1473,11 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
     /* ALL 선택 시 PROG 금지 — PROG(신규등록/한계설정 등)는 단일 블라인드
      *  대상 절차이므로 ALL(전체) 에서는 동작하지 않는다. */
     if (s_mgr.selected >= BLIND_SEL_ALL) {
+      /* ★2026-08-31 화면에도 알린다 — 로그만 남기면 사용자 눈에는 "버튼 고장"과
+       *  구별되지 않는다(PROGGUARD 에서 실제로 그렇게 오해됐다). 이제 이것이
+       *  PROG 가 조용히 무시되는 **유일하게 남은 경로**다. */
       ESP_LOGW(TAG, "PROG 무시 — ALL 선택 상태 (단일 블라인드만 가능)");
+      oled_ui_show_notice(&s_ui, "ALL: no PROG", OLED_ACTION_DISPLAY_MS);
       break;
     }
     if (evt->hold_ms == 0) {
@@ -1495,49 +1499,23 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
        *  ※되돌리기(연속 송신):
        *      _send_command_ex(SOMFY_CMD_PROG, CFG_BTN_MAX_HOLD_MS, true, false);
        *    로 바꾸고 _hold_repeat_task 의 PROG 블록을 지우면 된다. */
-      /* ★★★2026-08-17 PROG 폭주 차단 — 두 번째 안전망.
+      /* ★★★2026-08-31 PROG 횟수 가드(PROGGUARD) **제거** — 사용자 지정.
        *
-       *  PROG 는 모터를 **프로그래밍 모드**로 넣는 명령이라, 오작동으로 반복
-       *  송신되면 블라인드 설정이 바뀔 수 있다. 실제로 LP 코어가 멈춰 PCF 값이
-       *  얼어붙자 기기가 하루 동안 혼자 PROG 를 계속 쏜 사고가 있었다
-       *  (근본 원인은 button_handler.c 의 LP 신선도 검사로 막았다).
+       *  있던 것: 60초에 N회를 넘으면 고장으로 보고 RF 송신을 막고, 조용해질 때까지
+       *  풀지 않는 "두 번째 안전망"(2026-08-17 도입, 5회/5분 → 10회/2분으로 완화).
        *
-       *  사람은 PROG 를 1분에 몇 번씩 반복해 누르지 않는다. 그런 패턴이 보이면
-       *  고장으로 보고 **송신을 막는다**. 조용해지면(PROG_GUARD_CALM_MS) 자동 해제.
-       *  ※막는 것은 RF 송신뿐이고 화면·로그는 그대로라 원인 추적에 지장이 없다. */
-#ifndef PROG_GUARD_MAX
-#define PROG_GUARD_MAX      5           /* 이 횟수를 넘기면 고장으로 본다 */
-#endif
-#ifndef PROG_GUARD_WINDOW_MS
-#define PROG_GUARD_WINDOW_MS 60000      /* 판정 창(1분) */
-#endif
-#ifndef PROG_GUARD_CALM_MS
-#define PROG_GUARD_CALM_MS   300000     /* 5분간 조용하면 해제 */
-#endif
-      {
-        static int64_t s_pg_first_us = 0;
-        static int64_t s_pg_last_us  = 0;
-        static int     s_pg_count    = 0;
-        static bool    s_pg_blocked  = false;
-        const int64_t nowp = esp_timer_get_time();
-
-        if (s_pg_last_us && (nowp - s_pg_last_us) > (int64_t)PROG_GUARD_CALM_MS * 1000) {
-          if (s_pg_blocked) ESP_LOGW(TAG, "[PROGGUARD] 조용해짐 — PROG 차단 해제");
-          s_pg_blocked = false; s_pg_count = 0; s_pg_first_us = 0;
-        }
-        s_pg_last_us = nowp;
-        if (!s_pg_first_us ||
-            (nowp - s_pg_first_us) > (int64_t)PROG_GUARD_WINDOW_MS * 1000) {
-          s_pg_first_us = nowp; s_pg_count = 0;
-        }
-        if (++s_pg_count > PROG_GUARD_MAX && !s_pg_blocked) {
-          s_pg_blocked = true;
-          ESP_LOGE(TAG, "★[PROGGUARD] PROG 가 %d초에 %d회 — 고장으로 판단해 송신 차단. "
-                        "버튼/PCF 상태를 확인할 것",
-                   PROG_GUARD_WINDOW_MS / 1000, s_pg_count);
-        }
-        if (s_pg_blocked) break;         /* RF 송신하지 않음 */
-      }
+       *  왜 없앴나 — **막으려던 사고를 이 방식으로는 잡을 수 없다.**
+       *   · 원래 사고: LP 코어가 멈춰 PCF 값이 얼어붙어 기기가 하루 종일 PROG 를 쐈다.
+       *     그런데 값이 얼어붙으면 '눌린 채 유지'라 **누름 이벤트는 1회**만 난다.
+       *     즉 횟수 세기로는 원리상 검출되지 않는다.
+       *   · 그 사고의 진짜 방어선은 button_handler.c 의 **LP 신선도 검사**(poll_cnt 고정
+       *     감지 → 공유 RAM 값 폐기 + HP 폴링 전환)이고, 그건 그대로 살아 있다.
+       *   · 반면 정상 조작은 계속 막혔다. 실측(COM8, 2026-08-31): PROG 43회를 눌렀는데
+       *     43회 전부 정상 검출됐고(hold 42~203ms, 사람 손의 자연스러운 편차),
+       *     10회만 송신되고 33회가 차단됐다 — 사용자 신고 "가끔만 눌린다"의 정체.
+       *
+       *  되돌리려면 이 커밋의 직전 버전을 보라(PROG_GUARD_MAX/WINDOW_MS/CALM_MS +
+       *  s_pg_* 정적 변수 블록). 다만 되돌리기 전에 위 첫 번째 이유를 먼저 볼 것. */
 
       oled_ui_notify_action_start(&s_ui, OLED_ACTION_PROG);
       somfy_rts_abort = false;
