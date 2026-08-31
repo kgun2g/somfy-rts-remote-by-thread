@@ -172,3 +172,15 @@ CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 # CONFIG_SUPPORT_JOINT_FABRIC_ADMINISTRATOR_CLUSTER is not set
 # CONFIG_SUPPORT_TLS_CERTIFICATE_MANAGEMENT_CLUSTER is not set
 # CONFIG_SUPPORT_ACTIONS_CLUSTER is not set
+
+# ★★2026-08-27 C6 CPU 160 → 80MHz (절전 시험).
+#  실측: C6 6.68mA vs H2 2.24mA (**3.0배**). 잠 비율은 96.3% / 96.1% 로 거의 같으니
+#  duty 가 아니라 **전류 자체**의 차이다. 설정 대조에서 나온 후보 중 하나가 CPU 클럭:
+#      C6 160MHz(배터리 DFS 80~160)  vs  H2 96MHz(48~96)
+#  → 80 으로 낮추면 배터리 구간 DFS 가 40~80 이 된다(코드가 min=max/2 를 쓴다).
+#  ★안전 확인: C6 는 OLED 가 비트뱅인데 타이밍을 `esp_rom_delay_us` 로 잡으므로
+#    **CPU 주파수와 무관**하다 — 화면 속도는 안 변한다.
+#  ★위험: 일이 느려져 깨어있는 시간이 늘면 상쇄될 수 있다. Matter 암호 연산
+#    (커미셔닝·CASE)이 느려질 수도 있다. **회당 깨어있는 시간**으로 판정할 것.
+#    이상 시 160 으로 되돌린다.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_80=y

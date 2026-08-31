@@ -35,7 +35,14 @@ param(
     [string]$Lp     = "",   # "" | on | off   (LP 코어 PCF 폴링; off = HP 직접 폴링)
     [string]$Bat    = "",   # "" | on | off   (배터리 ADC; off = 측정회로 없는 테스트보드)
     [string]$Rot    = "",   # "" | ab | ba   (로터리 A/B 배선; ba = 뒤바뀐 기판)
-    [switch]$OledTest       # OLED 단독 부팅 테스트 (Matter/RF/버튼/배터리 전부 비활성, OLED만 구동)
+    [switch]$OledTest,      # OLED 단독 부팅 테스트 (Matter/RF/버튼/배터리 전부 비활성, OLED만 구동)
+    # ★★2026-08-31 병렬 컴파일 개수 제한 (0 = ninja 기본 = 논리코어 수).
+    #  왜: 20코어 기계에서 ninja 가 기본 20+ 개 cc1plus 를 띄우는데, OpenThread 의
+    #  C++ 는 하나당 수백MB~1GB 를 먹는다. 다른 앱이 메모리를 쥐고 있으면
+    #  `cc1plus.exe: out of memory allocating 1052671 bytes` 로 **빌드가 죽는다**
+    #  (실제로 COM8 플래시 중 70/332 에서 터짐, 여유 5.5GB / 페이지파일 27.9GB 사용중).
+    #  코어 수가 아니라 **메모리**가 병목이므로 -Jobs 6 정도면 안전하고 속도 손해도 작다.
+    [int]$Jobs      = 0
 )
 
 # ─── 보드별 매핑 (브랜드-SoC 단위) ──────────────────────────
@@ -230,6 +237,13 @@ $IdfArgs = @(
     "-D", "SDKCONFIG_DEFAULTS=$SdkconfigDef",
     "-D", "BOARD=$Board"
 ) + $OvrDefs
+# ★2026-08-31 -Jobs → ninja 병렬 개수. 위 param 주석 참조.
+#  ※idf.py 에는 `-j` 옵션이 **없다**(Error: No such option: -j). IDF 는 환경변수
+#    IDF_PY_BUILD_JOBS 를 읽어 ninja 에 -j 로 넘긴다(tools/idf_py_actions/tools.py:539).
+if ($Jobs -gt 0) {
+    $env:IDF_PY_BUILD_JOBS = "$Jobs"
+    Write-Host "[jobs] 병렬 컴파일 $Jobs 개로 제한 (IDF_PY_BUILD_JOBS)" -ForegroundColor DarkYellow
+}
 # 2026-07-22 OLED 단독 부팅 테스트 — app_main 최상단에서 단락(다른 기능 전부 스킵)
 if ($OledTest) {
     $IdfArgs += @("-D", "OLED_ONLY_TEST=1")

@@ -308,6 +308,19 @@ See main/boards/ for available boards."
  *  H2 에서 검증한 적이 **없으므로** 켜서 계측한다. 노이즈가 있으면
  *  `[BTNWAKE]` 의 `~INT` 카운터가 즉시 폭증하므로 바로 드러난다.
  *  판정: 정지 상태에서 `~INT` 깨움이 초당 수 회 이하면 성공, 수백~수천이면 실패. */
+/* ★★2026-08-27 OLED HW I2C 클럭(Hz). 비트뱅 보드(BOARD_OLED_BITBANG=1)는 안 쓴다.
+ *
+ *  왜 보드별인가: 100kHz 는 2026-07-19 에 **C6 의 400k 글리치 폭주**
+ *  (INVALID_STATE → flush 정지 → 화면 멈춤/부팅깨짐) 때문에 내린 값이다.
+ *  그런데 C6 는 그 뒤 **비트뱅으로 옮겨가 이 상수를 아예 안 쓴다** — 즉 100kHz 의
+ *  피해는 **H2 만** 보고 있었다.
+ *  실측 계산: 128B × 8페이지 × 9비트 / 100kHz = **프레임 92.9ms → 약 10.8fps**.
+ *  UI 태스크는 50ms(20fps)로 도는데 전송이 그보다 길어 **전송이 병목**이었다.
+ *  (사용자: "c6 는 화면이 빠르고 자연스러운데 h2 는 여전히 느리다") */
+#ifndef BOARD_OLED_I2C_HZ
+#  define BOARD_OLED_I2C_HZ          100000
+#endif
+
 #ifndef BOARD_PCF_INT_ISR
 #  define BOARD_PCF_INT_ISR          0
 #endif
