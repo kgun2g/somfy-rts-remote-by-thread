@@ -21,20 +21,30 @@
 
 예외(즉시 반영해야 하는 경우):
   · 부팅 직후 첫 표본 — 제한하면 0% 에서 시작해 기어오른다.
-  · USB 연결/해제 — 충전 천장(s_pct_ceil)이 따로 관리하므로 그쪽에 맡긴다.
+  · 부팅 직후 첫 표본 — 제한하면 0% 에서 시작해 기어오른다.
+  · ★USB 연결/해제 — **여기 적었던 "천장이 따로 관리한다"는 가정이 틀렸다.**
+    2026-09-02 실사용 신고 "USB 뽑았더니 배터리가 급속도로 줄어든다" 의 정체가
+    이것이었다. NVS 기록상 전압은 4004→4002mV(2mV)인데 표시만 95%→83% 로
+    내려갔다. 충전 중 부풀려진 표시값을 방전 세션이 물려받고, 이 하강 제한에
+    걸려 **1%씩 12번(60초)** 기어 내려간 것이다. 천장(s_pct_ceil)은 상승만
+    막을 뿐 이 walk-down 을 못 막는다.
+    → 전환 시 제한을 **1회 건너뛴다**(somfy_app.c 의 s_disp_reseed).
 """
 
 MEAS_S      = 5      # 측정 주기(초)
 MAX_STEP_PCT = 1     # 1회 측정에서 허용하는 최대 하락 %p
 
 
-def run(seq, limit=MAX_STEP_PCT):
-    """seq: 전압환산 % 목록 → 화면에 나가는 % 목록"""
+def run(seq, limit=MAX_STEP_PCT, reseed_at=None):
+    """seq: 전압환산 % 목록 → 화면에 나가는 % 목록.
+    reseed_at: 그 인덱스에서 USB 전환이 일어나 제한을 1회 건너뛴다(수정안)."""
     disp = None
     out = []
-    for p in seq:
+    for i, p in enumerate(seq):
         if disp is None:
             disp = p                      # 부팅 첫 표본은 그대로
+        elif reseed_at is not None and i == reseed_at:
+            disp = p                      # ★전환 1회 — 제한 건너뛰고 참값
         elif p < disp - limit:
             disp = disp - limit           # 하락은 제한
         else:
@@ -66,6 +76,24 @@ if __name__ == '__main__':
     # ③ 접촉 불량으로 오르내림 반복 — 사용자가 본 형태
     show('오르내림 반복 (하한 해제가 보이던 형태)',
          [40, 40, 12, 12, 40, 40, 12, 40, 40, 40])
+
+    # ⑤ ★2026-09-02 실측 재현 — USB 분리 직후 (신고: "급속도로 줄어든다")
+    #    표시는 충전 중 95% 에서 출발, 전압환산 참값은 84%.
+    real = [95] + [84] * 14
+    old_out = run(real)
+    new_out = run(real, reseed_at=1)
+    print('── ★USB 분리 직후 (실측 재현) ──')
+    print('   전압환산 %s' % ' '.join('%d' % x for x in real))
+    print('   기존 화면 %s' % ' '.join('%d' % x for x in old_out))
+    print('   수정 화면 %s' % ' '.join('%d' % x for x in new_out))
+    n_old = sum(1 for a, b in zip(old_out, old_out[1:]) if b != a)
+    n_new = sum(1 for a, b in zip(new_out, new_out[1:]) if b != a)
+    print('   참값(84%%) 도달까지: 기존 %d회 측정(%d초) / 수정 %d회 측정(%d초)'
+          % (old_out.index(84), old_out.index(84) * MEAS_S,
+             new_out.index(84), new_out.index(84) * MEAS_S))
+    print('   화면이 바뀌는 횟수: 기존 %d번(계단식 급감처럼 보임) / 수정 %d번'
+          % (n_old, n_new))
+    print()
 
     # ④ 진짜 방전 — 방해받지 않아야 한다
     show('정상 방전 (5초당 0.0014%p — 표에서는 계단 1회)',

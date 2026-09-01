@@ -3478,6 +3478,16 @@ static uint8_t s_floor_up_run  = 0;    /* 연속 상승 표본 수 */
  *  milli-percent(0~100000) 로 들고 있어야 분 단위 상승률이 정수 절사로 죽지 않는다.
  *  -1 = 비활성(방전 중). 자세한 배경은 사용 지점 주석 참조. */
 static int     s_pct_ceil_mpct = -1;
+/* ★★★2026-09-02 USB 전환 시 **표시%를 즉시 참값으로 다시 잡는다**.
+ *
+ *  신고: "USB 를 뽑았더니 배터리가 급속도로 줄어들었다."
+ *  실제로는 방전이 아니었다 — NVS 기록상 전압은 4004→4002mV(2mV)인데 표시만
+ *  95% → 83% 로 내려갔다. 충전 중 부풀려진 표시값을 방전 세션이 물려받고,
+ *  하강 제한(BAT_DISP_MAX_DROP_PCT=1 / 측정 5초)에 걸려 **1%씩 12번, 60초에
+ *  걸쳐** 참값까지 기어 내려간 것이다. 사용자 눈에는 급감으로 보인다.
+ *  → 전환 순간에는 제한을 **한 번만** 건너뛰어 곧바로 참값을 보여준다.
+ *    (평활은 같은 지점에서 _bat_smooth_reset() 이 이미 비우므로 값도 신선하다.) */
+static bool    s_disp_reseed   = false;
 static int64_t s_pct_ceil_us   = 0;
 #ifndef BAT_CHG_RISE_MPCT_PER_MIN
 /* ★2026-08-23 급락 표본 거부 임계 (사용 지점 주석 참조).
@@ -4384,9 +4394,16 @@ void somfy_app_run(void *arg) {
             {
               static bool s_disp_init = false;
               const int prev = (int)s_ui.chg_percent;
-              if (s_disp_init && s_ui.chg_percent != BAT_PCT_UNKNOWN &&
-                  _pct < prev - BAT_DISP_MAX_DROP_PCT)
+              if (s_disp_reseed) {
+                /* ★2026-09-02 USB 전환 직후 1회 — 제한을 건너뛰고 참값을 바로 쓴다
+                 *  (선언부 주석의 "급속 감소" 신고 대응). */
+                s_disp_reseed = false;
+                ESP_LOGW(TAG, "[BAT%%] 전원 전환 — 표시 %d%% → %d%% 즉시 재설정",
+                         (prev == BAT_PCT_UNKNOWN) ? -1 : prev, _pct);
+              } else if (s_disp_init && s_ui.chg_percent != BAT_PCT_UNKNOWN &&
+                         _pct < prev - BAT_DISP_MAX_DROP_PCT) {
                 _pct = prev - BAT_DISP_MAX_DROP_PCT;
+              }
               s_disp_init = true;
             }
             s_ui.chg_percent = (uint8_t)_pct;
@@ -4426,6 +4443,15 @@ void somfy_app_run(void *arg) {
 
     /* v3.2 idle 정책: USB 모드 vs 배터리 모드 분기 ─────────────────── */
     bool usb_mode = _is_usb_powered();
+#if !BOARD_BAT_SWAPPED
+    /* ★★★2026-09-02 표시용 USB 플래그 — 이게 **비어 있었다**.
+     *  `s_ui.usb_pwr` 을 채우는 코드가 `#if BOARD_BAT_SWAPPED` 안에만 있어서,
+     *  정상 배선 보드(xiao-c6 = SWAPPED 0)에서는 영영 false 였다. 그래서 화면의
+     *  "CHG" 표시가 USB 를 꽂아도 안 나왔다(실사용 신고 2026-09-02).
+     *  SWAPPED 보드는 ADC 로 VBUS 를 직접 재는 기존 경로가 있으므로 건드리지 않는다.
+     *  여기 쓰는 _is_usb_powered() 는 [PWR] 로그의 `VBUS=` 와 **같은 판정**이다. */
+    s_ui.usb_pwr = usb_mode;
+#endif
     int64_t vib_us_now = btn_handler_last_vibration_us();
     int64_t since_vib_us = now_us - vib_us_now;
     bool vibration_active = btn_handler_is_vibrating();
@@ -4599,6 +4625,7 @@ void somfy_app_run(void *arg) {
         dis_pending = true;
         dis_seq0    = s_bat_sm_seq;
         s_dis_t0_us = 0;                      /* 기준점 확정 전엔 세션 없음 */
+        s_disp_reseed = true;                 /* ★2026-09-02 표시% 즉시 참값으로 */
         ESP_LOGW(TAG, "[BATLOG] USB 분리 감지 — 평활 초기화, 배터리 실측 %d회로 기준점 잡는 중",
                  BAT_FLOOR_MIN_N);
       } else if (!was_usb_pwr && now_usb) {
@@ -4606,6 +4633,7 @@ void somfy_app_run(void *arg) {
         _batlog_flush_if_due(now_us, true);   /* 남은 것 즉시 저장 */
         _bat_smooth_reset();                  /* ★C 대칭 — 배터리 전압을 충전 구간에 끌고 가지 않는다 */
         s_pct_floor = BAT_PCT_UNKNOWN;        /* ★B 하한 해제(충전 중 상승 허용) */
+        s_disp_reseed = true;                 /* ★2026-09-02 대칭 — 다시 뽑을 때 끌고 가지 않게 */
         dis_pending = false;
         s_dis_t0_us = 0;
       }

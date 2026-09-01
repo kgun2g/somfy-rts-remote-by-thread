@@ -1494,8 +1494,14 @@ static void _render_normal(oled_ui_ctx_t *ctx)
         /* 현 기판(GP12=ADC 불가): 잔량 % 불가 → 상태(USB/정상/저전압) */
         snprintf(bs, sizeof(bs), "%s", ctx->usb_pwr ? "USB" : (ctx->bat_low ? "LOW" : "BAT"));
 #else
-        /* 정상 기판(GP3=BAT ADC): 충전률 % (기존 로직) */
-        if (ctx->chg_percent <= 100) snprintf(bs, sizeof(bs), "%d%%", ctx->chg_percent);
+        /* 정상 기판(GP3=BAT ADC): 충전률 %
+         *  ★★2026-09-02 USB 연결 중엔 % 대신 **"CHG"** 를 띄운다(사용자 지정).
+         *  왜: 충전 중 단자전압은 충전기가 밀어올린 값(실측 4126mV)이라 잔량이
+         *  아니다. 그걸 % 로 보여주니 꽂는 순간 82% → 100% 로 튀어 "표시 버그"로
+         *  보였다. 환산 자체는 맞지만 **의미가 잔량이 아니므로** 숫자를 감춘다.
+         *  ※한글 폰트가 없어(ASCII 5x7/8x8) "충전중" 은 못 쓴다 → "CHG". */
+        if (ctx->usb_pwr)            snprintf(bs, sizeof(bs), "CHG");
+        else if (ctx->chg_percent <= 100) snprintf(bs, sizeof(bs), "%d%%", ctx->chg_percent);
         else                         snprintf(bs, sizeof(bs), "--%%");
 #endif
         _pstr8(OLED_PANEL_W - _pstr8_w(bs) - 2, 0, bs, true);
@@ -1584,8 +1590,14 @@ static void _render_normal(oled_ui_ctx_t *ctx)
         /* 현 기판(GP12=ADC 불가): 잔량 % 불가 → 상태(USB/정상/저전압) */
         snprintf(bs, sizeof(bs), "%s", ctx->usb_pwr ? "USB" : (ctx->bat_low ? "LOW" : "BAT"));
 #else
-        /* 정상 기판(GP3=BAT ADC): 충전률 % (기존 로직) */
-        if (ctx->chg_percent <= 100) snprintf(bs, sizeof(bs), "%d%%", ctx->chg_percent);
+        /* 정상 기판(GP3=BAT ADC): 충전률 %
+         *  ★★2026-09-02 USB 연결 중엔 % 대신 **"CHG"** 를 띄운다(사용자 지정).
+         *  왜: 충전 중 단자전압은 충전기가 밀어올린 값(실측 4126mV)이라 잔량이
+         *  아니다. 그걸 % 로 보여주니 꽂는 순간 82% → 100% 로 튀어 "표시 버그"로
+         *  보였다. 환산 자체는 맞지만 **의미가 잔량이 아니므로** 숫자를 감춘다.
+         *  ※한글 폰트가 없어(ASCII 5x7/8x8) "충전중" 은 못 쓴다 → "CHG". */
+        if (ctx->usb_pwr)            snprintf(bs, sizeof(bs), "CHG");
+        else if (ctx->chg_percent <= 100) snprintf(bs, sizeof(bs), "%d%%", ctx->chg_percent);
         else                         snprintf(bs, sizeof(bs), "--%%");
 #endif
         _pstr8(OLED_PANEL_W - _pstr8_w(bs) - 2, 0, bs, true);
@@ -1676,7 +1688,9 @@ static void _render_normal(oled_ui_ctx_t *ctx)
 #else
     /* 정상 기판(GP3=BAT ADC): 충전률 % (기존 로직) */
     char bat_str[8];
-    if (ctx->chg_percent <= 100) snprintf(bat_str, sizeof(bat_str), "%3d%%", ctx->chg_percent);
+    /* ★2026-09-02 USB 중엔 "CHG" (위 _pstr8 경로와 같은 이유) */
+    if (ctx->usb_pwr)            snprintf(bat_str, sizeof(bat_str), " CHG");
+    else if (ctx->chg_percent <= 100) snprintf(bat_str, sizeof(bat_str), "%3d%%", ctx->chg_percent);
     else                         snprintf(bat_str, sizeof(bat_str), "---%%");
     _fb_draw_string(48, 0, bat_str);
 #endif
