@@ -174,6 +174,33 @@ static uint8_t spi_strobe(cc1101_t *dev, uint8_t cmd)
     return status;
 }
 
+/* ═══ SPWD(파워다운) 기상 — 절전 (2026-09-01) ══════════════════════════════
+ *  왜: 이 기기는 송신 전용인데 송신 후 `SIDLE` 로만 둬서 크리스탈이 계속 돌았다.
+ *  CC1101 데이터시트 기준 IDLE ~1.7mA / SLEEP 200nA — 실측 총 7.3mA 의 23% 였다.
+ *
+ *  기상 절차: SPWD 는 CSn 이 HIGH 로 올라갈 때 발효되고, 다시 CSn 이 LOW 가 되면
+ *  XOSC 가 기동한다. 그래서 **아무 SPI 접근이든 그 자체가 기상 신호**다.
+ *  여기서는 SNOP(무해한 NOP)을 한 번 쳐서 CSn 을 어서트하고, XOSC 안정까지 기다린다.
+ *
+ *  대기 시간 근거: MCSM0(0x18)=0x18 → PO_TIMEOUT=0b10 = 약 149~155us 를 칩이
+ *  내부적으로 강제한다. 데이터시트 '파워다운 → IDLE' 은 약 240us.
+ *  버스트당 1회뿐이라 넉넉히 잡아도 손해가 없으므로 1ms 를 준다.
+ *  ※그래도 안전망은 따로 있다 — cc1101_enter_tx_mode 가 MARCSTATE 로 IDLE·TX
+ *    진입을 **확인**하고, 실패하면 재시도 후 로그를 남긴다(기존 로직 그대로).
+ *  ※FS_AUTOCAL(MCSM0 비트5:4=01)이 IDLE→TX 에서 자동 캘리브레이션을 하므로
+ *    주파수 합성기 재캘리브레이션도 별도로 챙길 필요가 없다. */
+#ifndef CC1101_WAKE_US
+#define CC1101_WAKE_US 1000
+#endif
+
+static void _wake_if_pd(cc1101_t *dev)
+{
+    if (!dev || !dev->powered_down) return;
+    dev->powered_down = false;      /* ★먼저 내린다 — 아래 strobe 가 되돌아오지 않게 */
+    spi_strobe(dev, CC1101_SNOP);   /* CSn 어서트 = 기상 신호 */
+    esp_rom_delay_us(CC1101_WAKE_US);
+}
+
 /* ─── Somfy RTS용 CC1101 기본 레지스터 값 ───── */
 static const uint8_t cc1101_init_regs[][2] = {
     /* IOCFG2  */ { 0x00, 0x2E },
@@ -369,13 +396,18 @@ bool cc1101_init(cc1101_t *dev)
     _set_freq_regs(dev, dev->freq_mhz);
 
     cc1101_strobe(dev, CC1101_SIDLE);
+    /* ★2026-09-01 초기화 직후에도 재운다 — 첫 송신까지 ~1.7mA 를 흘릴 이유가 없다.
+     *  이후 어떤 SPI 접근이든 _wake_if_pd 가 자동으로 깨운다. */
+    cc1101_strobe(dev, CC1101_SPWD);
+    dev->powered_down = true;
 
-    ESP_LOGI(TAG, "CC1101 초기화 완료");
+    ESP_LOGI(TAG, "CC1101 초기화 완료 (SPWD 로 진입 — 송신 시 자동 기상)");
     return true;
 }
 
 void cc1101_set_frequency(cc1101_t *dev, float freq_mhz)
 {
+    _wake_if_pd(dev);
     dev->freq_mhz = freq_mhz;
     cc1101_strobe(dev, CC1101_SIDLE);
     _set_freq_regs(dev, freq_mhz);
@@ -412,6 +444,7 @@ void cc1101_enter_tx_mode(cc1101_t *dev)
      *  calibration 잔류 상태)에 STX 가 들어가면 무시된다.
      *  → SIDLE 후 MARCSTATE 가 IDLE(0x01) 로 안정된 것을 확인하고 STX,
      *    다시 TX(0x13) 안정을 확인한다. 실패 시 1회 재시도. */
+    _wake_if_pd(dev);                 /* ★2026-09-01 SPWD 에서 깨운다(절전) */
     for (int attempt = 0; attempt < 2; attempt++) {
         cc1101_strobe(dev, CC1101_SIDLE);
         uint8_t ms_idle = _wait_marcstate(dev, 0x01, 8000);   /* IDLE 대기 8ms */
@@ -428,15 +461,22 @@ void cc1101_idle(cc1101_t *dev)
 {
     cc1101_strobe(dev, CC1101_SIDLE);
     gpio_set_level(CC1101_PIN_GD0, 0);
+    /* ★★★2026-09-01 여기서 **완전히 끈다**(절전, 구조체 주석 참조).
+     *  SIDLE 만으로는 크리스탈이 계속 돌아 ~1.7mA 를 상시 소비한다.
+     *  다음 SPI 접근에서 _wake_if_pd 가 자동으로 깨우므로 호출측은 몰라도 된다. */
+    cc1101_strobe(dev, CC1101_SPWD);
+    dev->powered_down = true;
 }
 
 void cc1101_write_reg(cc1101_t *dev, uint8_t addr, uint8_t val)
 {
+    _wake_if_pd(dev);
     spi_write(dev, addr, &val, 1);
 }
 
 uint8_t cc1101_read_reg(cc1101_t *dev, uint8_t addr)
 {
+    _wake_if_pd(dev);
     uint8_t val = 0;
     spi_read(dev, addr, &val, 1);
     return val;
@@ -444,16 +484,19 @@ uint8_t cc1101_read_reg(cc1101_t *dev, uint8_t addr)
 
 void cc1101_strobe(cc1101_t *dev, uint8_t cmd)
 {
+    _wake_if_pd(dev);   /* SPWD 자신도 여기로 오지만, 플래그가 이미 내려가 있어 무해하다 */
     spi_strobe(dev, cmd);
 }
 
 uint8_t cc1101_get_status(cc1101_t *dev)
 {
+    _wake_if_pd(dev);
     return spi_strobe(dev, CC1101_SNOP);
 }
 
 void cc1101_set_pa_table(cc1101_t *dev, uint8_t pa_value)
 {
+    _wake_if_pd(dev);
     /* ★ 2-FSK 용: carrier 가 항상 ON 이므로 PA_TABLE[0] 에 출력 파워를
      *  넣는다(FREND0.PA_POWER=0 → index 0 사용). OOK 시절엔 [0]=0(off),
      *  [1]=파워 였으나 FSK 는 진폭 일정 — 모든 entry 를 파워로 채운다. */

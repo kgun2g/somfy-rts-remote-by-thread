@@ -39,3 +39,7 @@ _autosave-*
 # Python 시뮬레이터 캐시 (sim/tools/*.py 를 모듈로 import 할 때 생김)
 __pycache__/
 *.pyc
+
+# SDR 캡처 산출물 (rf_test.py / somfy_cli record) — 테스트 잔여물이라 추적하지 않는다
+sim/tools/caps/*.cu8
+sim/tools/caps/rf.json
