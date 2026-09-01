@@ -207,8 +207,17 @@ static SemaphoreHandle_t s_i2c_mutex = NULL;
 /* ★양쪽이 어긋나면 런타임에 조용히 틀린다(좌/우 버튼 실종). 빌드에서 잡는다. */
 _Static_assert(LP_PCF_NBYTES == PCF_NBYTES,
                "LP/HP PCF read width mismatch (pcf_lp_config.h vs button_handler.h)");
-_Static_assert(LP_BIT_ROT_A == PCF8574_BIT_ROT_A && LP_BIT_ROT_B == PCF8574_BIT_ROT_B,
-               "LP/HP rotary bit position mismatch");
+/* ★★2026-08-31 A/B 스왑을 허용하도록 완화 — 사연:
+ *  로터리가 반대인 개체(COM8 xiao-c6)에 `-Rot ba`(BOARD_ROT_AB_SWAP=1)로 빌드하니
+ *  여기서 깨졌다. LP 코어는 -D 를 받을 수 없어(ExternalProject — pcf_lp_config.h
+ *  머리말 참조) LP_BIT_ROT_A/B 가 물리 배치(P0/P1)로 고정이기 때문이다.
+ *  → LP 는 **물리 배치 그대로** 디코딩하고, 스왑은 HP 가 방향을 뒤집어 보정한다.
+ *    (A/B 교환 == 쿼드러처 delta 부호 반전. 같은 kQuad 표로 검증했다.)
+ *  따라서 여기서 검사할 것은 "값이 같은가"가 아니라 "같은 **두 비트**를 쓰는가"다.
+ *  원래 잡으려던 사고(LP 가 아예 다른 비트를 읽는 것)는 그대로 잡힌다. */
+_Static_assert((LP_BIT_ROT_A == PCF8574_BIT_ROT_A && LP_BIT_ROT_B == PCF8574_BIT_ROT_B) ||
+               (LP_BIT_ROT_A == PCF8574_BIT_ROT_B && LP_BIT_ROT_B == PCF8574_BIT_ROT_A),
+               "LP/HP rotary must use the same bit pair");
 extern const uint8_t lp_core_main_bin_start[] asm("_binary_lp_core_main_bin_start");
 extern const uint8_t lp_core_main_bin_end[]   asm("_binary_lp_core_main_bin_end");
 #else
@@ -833,6 +842,14 @@ static void _btn_task(void *pvParam) {
         if (n > 8) n = 8;                       /* 폭주 방어(한 번에 8디텐트까지) */
         bool neg = (d < 0);
         bool cw  = (neg == (_ROT_CW_ON_AB1 != 0));
+#if BOARD_ROT_AB_SWAP
+        /* ★2026-08-31 A/B 배선이 뒤바뀐 개체 보정 (COM8). LP 코어는 빌드 -D 를
+         *  못 받아 물리 배치대로 디코딩하므로, 여기서 방향을 뒤집는다.
+         *  A/B 교환과 부호 반전이 동치임은 kQuad 표로 확인했다(위 static assert 주석).
+         *  ※HP 직접 디코딩 경로(아래 #else)는 PCF8574_BIT_ROT_A/B 가 이미 스왑된
+         *    값이라 별도 보정이 필요 없다 — 이중 반전 주의. */
+        cw = !cw;
+#endif
         for (int32_t k = 0; k < n; k++) {
           if ((now - s_rot_last_ms) >= ROT_MIN_INTERVAL_MS) {
             s_rot_last_ms = now;
@@ -1084,7 +1101,21 @@ static void _lp_core_try_start(void)
     ESP_LOGW(TAG, "[LP] 프로그램 적재 실패(%s) — HP 폴링 유지", esp_err_to_name(e));
     return;
   }
-  ulp_lp_core_cfg_t cfg = { .wakeup_source = ULP_LP_CORE_WAKEUP_SOURCE_HP_CPU };
+  /* ★★★2026-09-01 HP_CPU → **LP_TIMER** 기상으로 바꿨다.
+   *
+   *  왜: 기존엔 HP 가 한 번 깨우면 LP 프로그램이 `while(1) + busy-wait delay` 로
+   *  **영원히 100% 듀티로 돌았다**. LP 코어를 넣은 목적(절전)과 정반대였고,
+   *  실측에서도 LP 를 쓰는 C6 가 LP 없는 H2 보다 더 먹었다(사용자 지적).
+   *
+   *  이제 LP 는 **폴 1회 실행 후 스스로 halt** 하고, 이 타이머가 LP_POLL_US 마다
+   *  다시 깨운다(IDF 관용구 — examples/system/ulp/lp_core/lp_adc, 그리고
+   *  components/ulp/lp_core/lp_core/lp_core_startup.c 가 main() 반환 후
+   *  LP 타이머를 걸고 ulp_lp_core_halt() 를 호출한다).
+   *  ※폴 주기 자체는 그대로다 — 버튼·로터리 응답성에 변화 없음. */
+  ulp_lp_core_cfg_t cfg = {
+      .wakeup_source              = ULP_LP_CORE_WAKEUP_SOURCE_LP_TIMER,
+      .lp_timer_sleep_duration_us = LP_POLL_US,
+  };
   e = ulp_lp_core_run(&cfg);
   if (e != ESP_OK) {
     ESP_LOGW(TAG, "[LP] 기동 실패(%s) — HP 폴링 유지", esp_err_to_name(e));

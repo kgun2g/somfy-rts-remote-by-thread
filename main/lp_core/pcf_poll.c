@@ -39,23 +39,8 @@
 #define PCF_I2C_ADDR   0x20        /* PCF8574/8575 (A0~A2 = GND) — 부팅 로그와 동일 */
 
 #define I2C_TIMEOUT_CYCLES 5000    /* 예제와 동일. 무한 대기 금지(멈추면 복구 불가) */
-/* ★★2026-08-27 2000 → 5000 (절전 시험).
- *  LP 코어는 **HP 가 자는 동안에도** 계속 돌아 수면 전류에 그대로 얹힌다.
- *  2ms = 초당 500회 I2C 트랜잭션 → 5ms = 200회로 줄인다.
- *
- *  ★안전 한계를 시뮬레이터로 먼저 확인했다(sim/tools/power_lever_sim.py).
- *    로터리 20디텐트 CW 를 폴 주기별로 디코딩:
- *        폴주기   디텐트10ms  20ms  40ms  80ms
- *         2000us     +20      +20   +20   +20
- *         5000us     +20      +20   +20   +20   ← 여기까지 안전
- *         8000us      +5★     +20   +20   +20   ← 빠른 회전에서 손실
- *        10000us       0★     +20   +20   +20   ← 완전히 놓침
- *    → 5ms 가 한계다. 그 이상은 빠르게 돌릴 때 디텐트를 잃는다.
- *  ★버튼은 press_latch 가 OR 로 모아줘 주기와 무관하지만, **로터리는 래치가 없다**
- *    (LP 가 그때그때 디코딩해 rot_delta 에 누적) — 그래서 로터리가 진짜 제약이다.
- *  ※기대 절감은 작다(LP 소비 가정 0.3mA 기준 약 0.18mA). 로터리가 조금이라도
- *    이상하면 2000 으로 되돌릴 것. */
-#define POLL_US        5000
+/* 폴 주기는 공유 헤더로 옮겼다 — HP 가 LP 타이머 주기로 같은 값을 써야 한다. */
+#define POLL_US LP_POLL_US
 
 /* ── HP 와 공유하는 변수 (HP 에서는 ulp_* 로 접근) ─────────────────────── */
 volatile uint32_t pcf_state  = 0xFFFFFFFFu; /* 최신 원본(8/16비트). 0xFFFFFFFF = 아직 읽기 전 */
@@ -95,15 +80,40 @@ static const int8_t kQuad[16] = {
 #define BIT_ROT_A   LP_BIT_ROT_A
 #define BIT_ROT_B   LP_BIT_ROT_B
 
+/* ★★★2026-09-01 상태를 **파일 스코프**로 올렸다 — halt/타이머 방식의 전제다.
+ *  main() 이 폴 1회마다 새로 호출되므로 자동 변수로 두면 매번 초기화돼
+ *  쿼드러처 누산(accum/prev_ab)·변화 감지(last)·2연속 래치(prev_low)가 전부 깨진다.
+ *  파일 스코프 static 은 LP RAM 에 남아 폴 사이에 보존된다. */
+static uint8_t  prev_ab  = 0x03;         /* 디텐트 기본 위치(11) */
+static int8_t   accum    = 0;
+static uint32_t last     = 0xFFFFFFFFu;  /* '아직 안 읽음' 표식 — 16비트 값과 겹치면 안 된다 */
+static uint32_t prev_low = 0;            /* 2연속 눌림 판정용 직전 표본 */
+
+/* ★★★2026-09-01 **busy-wait 무한루프 → 1회 실행 후 halt** 로 바꿨다.
+ *
+ *  왜 (사용자 지적: "LP 코어로 도는데 어떻게 H2 보다 더 먹냐"):
+ *    기존 구조는 `while(1) { ...; ulp_lp_core_delay_us(POLL_US); }` 였다.
+ *    `ulp_lp_core_delay_us()` 는 IDF 문서상 **busy-wait** 다("Makes the
+ *    co-processor busy-wait"). 즉 LP CPU 가 **100% 듀티로 계속 돌고** 있었고,
+ *    LP_I2C·LP 페리페럴 전원 도메인도 내내 켜져 있었다.
+ *    LP 코어를 넣은 목적이 정확히 반대로 뒤집혀 있던 셈이다.
+ *
+ *  IDF 가 의도한 관용구(examples/system/ulp/lp_core/lp_adc):
+ *      HP:  cfg.wakeup_source = ULP_LP_CORE_WAKEUP_SOURCE_LP_TIMER;
+ *           cfg.lp_timer_sleep_duration_us = <주기>;
+ *      LP:  int main(void) { ...1회 작업...; return 0; }
+ *    main() 이 반환하면 lp_core_startup() 이 LP 타이머를 걸고
+ *    `ulp_lp_core_halt()` 를 부른다(components/ulp/lp_core/lp_core/lp_core_startup.c).
+ *
+ *  → LP CPU 활성 듀티가 100% → **1회 읽기 시간 / 주기** 로 떨어진다.
+ *    폴 주기(LP_POLL_US)는 **바꾸지 않았다** — 동작·응답성은 그대로다.
+ *
+ *  ※`do { } while (0)` 로 감싼 이유: 본문의 `continue` 가 "이번 폴 종료"로
+ *    그대로 동작해 들여쓰기·로직을 하나도 안 건드리고 옮길 수 있다. */
 int main(void)
 {
-    uint8_t prev_ab = 0x03;      /* 디텐트 기본 위치(11) */
-    int8_t  accum   = 0;
-    uint32_t last   = 0xFFFFFFFFu;   /* '아직 안 읽음' 표식 — 16비트 값과 겹치면 안 된다 */
-
-    while (1) {
+    do {
         if (!enabled) {
-            ulp_lp_core_delay_us(POLL_US);
             continue;
         }
 
@@ -118,7 +128,6 @@ int main(void)
                         : (uint16_t)buf[0];
         if (err != ESP_OK) {
             i2c_err++;
-            ulp_lp_core_delay_us(POLL_US);
             continue;
         }
 
@@ -147,7 +156,6 @@ int main(void)
          *     (2026-08-17)의 원인이 PCF 읽기 흔들림으로 의심됐던 만큼, 여기서
          *     한 번 걸러야 안전하다. */
         {
-            static uint32_t prev_low = 0;
             const uint32_t mask = ((LP_PCF_NBYTES == 2) ? 0xFFFFu : 0xFFu)
                                 & ~((1u << BIT_ROT_A) | (1u << BIT_ROT_B));
             const uint32_t low = ((uint32_t)(~rx)) & mask;
@@ -163,8 +171,6 @@ int main(void)
             /* HP 가 light sleep 중이면 깨운다. 깨어 있으면 무해(무시된다). */
             ulp_lp_core_wakeup_main_processor();
         }
-
-        ulp_lp_core_delay_us(POLL_US);
-    }
-    return 0;
+    } while (0);
+    return 0;      /* → lp_core_startup() 이 LP 타이머 세팅 후 halt (위 주석) */
 }

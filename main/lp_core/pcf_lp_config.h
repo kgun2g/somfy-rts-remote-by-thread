@@ -22,6 +22,22 @@
  * button_handler.h 의 PCF_NBYTES 와 반드시 같아야 한다(위 static assert 가 검증). */
 #define LP_PCF_NBYTES 2
 
-/* 로터리 A/B 비트 위치 — button_handler.h 의 PCF8574_BIT_ROT_A/B 와 동일해야 한다. */
+/* 로터리 A/B 비트 위치 — **물리 배치 고정**(P0=A, P1=B).
+ * ★2026-08-31 배선이 뒤바뀐 개체(BOARD_ROT_AB_SWAP=1, 예 COM8)라도 **여기는
+ *   바꾸지 않는다.** LP 코어는 빌드 -D 를 받을 수 없어(위 머리말 참조) 이 값이
+ *   전 보드 공통이기 때문이다. 스왑 보정은 HP 쪽에서 방향을 뒤집어 처리한다
+ *   (button_handler.c 의 `#if BOARD_ROT_AB_SWAP  cw = !cw;`).
+ *   A/B 교환 == 쿼드러처 delta 부호 반전이므로 결과는 동일하다. */
 #define LP_BIT_ROT_A  0
 #define LP_BIT_ROT_B  1
+
+/* ★★2026-09-01 LP 폴 주기(us) — **LP·HP 가 함께 쓴다.**
+ *  HP 는 이 값을 `ulp_lp_core_cfg_t.lp_timer_sleep_duration_us` 에 넣어
+ *  LP 코어를 이 주기로 깨운다(1회 실행 후 halt). LP 는 같은 값으로 동작한다.
+ *  두 곳에 따로 적으면 조용히 어긋나므로 — 이 헤더의 존재 이유대로 — 여기 하나만 둔다.
+ *
+ *  값 근거(2026-08-27 시뮬 sim/tools/power_lever_sim.py): 로터리 20디텐트 CW 를
+ *  폴 주기별로 디코딩하면 5000us 까지는 전부 +20, 8000us 부터 빠른 회전에서
+ *  손실이 난다. **버튼은 press_latch 가 모아주지만 로터리는 래치가 없어**
+ *  로터리가 진짜 제약이다. 늘리지 말 것. */
+#define LP_POLL_US  5000
