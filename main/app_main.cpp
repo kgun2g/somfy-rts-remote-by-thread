@@ -728,6 +728,40 @@ extern "C" void app_main()
 
     esp_err_t err = ESP_OK;
 
+    /* ═══ RF 안테나 스위치 — **Matter/Thread 라디오가 뜨기 전에** 잡는다 ═══
+     *  ★★★2026-09-02 지금까지 이 코드가 아예 없었다. XIAO ESP32C6 는 온보드
+     *  FM8625H 로 내장 세라믹 ↔ 외장 u.FL 을 고르는데, 기본이 내장이라
+     *  **외장 안테나를 꽂아도 전혀 쓰이지 않았다**(사용자 신고로 발견).
+     *  순서·의미는 boards/xiao-c6.h 주석 참조.
+     *  ※ 여기(NVS 보다 앞)에 두는 이유: 첫 Thread attach 부터 올바른 안테나로
+     *    붙어야 RSSI·재전송이 처음부터 정상이다. */
+#if BOARD_HAS_RF_ANT_SW
+    {
+        const gpio_num_t _en  = (gpio_num_t)BOARD_PIN_RF_SW_EN;
+        const gpio_num_t _sel = (gpio_num_t)BOARD_PIN_RF_ANT_SEL;
+        gpio_config_t _ac = {
+            .pin_bit_mask = (1ULL << _en) | (1ULL << _sel),
+            .mode         = GPIO_MODE_OUTPUT,
+            .pull_up_en   = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&_ac);
+        gpio_set_level(_en, 0);                    /* LOW = 스위치 제어 활성 */
+        vTaskDelay(pdMS_TO_TICKS(100));            /* Seeed 예제와 동일한 여유 */
+        gpio_set_level(_sel, BOARD_RF_EXT_ANT ? 1 : 0);
+        /* ★CONFIG_PM_SLP_DISABLE_GPIO=y 라 자동 절전 때 GPIO 가 통째로 꺼진다.
+         *  그대로 두면 **수면 구간마다 안테나가 내장으로 되돌아간다**(SED 는 자면서
+         *  폴링하므로 치명적). 이 두 핀만 그 기능에서 빼둔다(Kconfig 도움말이
+         *  안내하는 방법). */
+        gpio_sleep_sel_dis(_en);
+        gpio_sleep_sel_dis(_sel);
+        ESP_LOGW("MAIN", "[ANT] RF 스위치: EN(IO%d)=LOW, SEL(IO%d)=%s → **%s 안테나**",
+                 (int)_en, (int)_sel, BOARD_RF_EXT_ANT ? "HIGH" : "LOW",
+                 BOARD_RF_EXT_ANT ? "외장(u.FL)" : "내장(세라믹)");
+    }
+#endif
+
     /* Initialize the ESP NVS layer */
     nvs_flash_init();
 

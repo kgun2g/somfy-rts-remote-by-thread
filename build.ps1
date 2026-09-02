@@ -35,6 +35,11 @@ param(
     [string]$Lp     = "",   # "" | on | off   (LP 코어 PCF 폴링; off = HP 직접 폴링)
     [string]$Bat    = "",   # "" | on | off   (배터리 ADC; off = 측정회로 없는 테스트보드)
     [string]$Rot    = "",   # "" | ab | ba   (로터리 A/B 배선; ba = 뒤바뀐 기판)
+    # ★2026-09-02 XIAO ESP32C6 온보드 RF 스위치(FM8625H) 안테나 선택.
+    #  int = 내장 세라믹(기본·기존 동작) / ext = 외장 u.FL 커넥터.
+    #  ※외장 안테나를 **실제로 꽂은 개체만** ext 로 빌드할 것. 안 꽂고 ext 를 고르면
+    #    급전점이 열려 내장보다 크게 나빠진다.
+    [string]$Ant    = "",   # "" | int | ext
     [switch]$OledTest,      # OLED 단독 부팅 테스트 (Matter/RF/버튼/배터리 전부 비활성, OLED만 구동)
     # ★★2026-08-31 병렬 컴파일 개수 제한 (0 = ninja 기본 = 논리코어 수).
     #  왜: 20코어 기계에서 ninja 가 기본 20+ 개 cc1plus 를 띄우는데, OpenThread 의
@@ -186,6 +191,7 @@ if ($Freq   -and $Freq   -notmatch '^44[0-9]\.\d{2}$')        { Write-Host "[ovr
 if ($Lp     -and $Lp     -notin @('on','off'))                { Write-Host "[ovr] -Lp 는 on|off"  -ForegroundColor Red; exit 1 }
 if ($Bat    -and $Bat    -notin @('on','off'))                { Write-Host "[ovr] -Bat 는 on|off" -ForegroundColor Red; exit 1 }
 if ($Rot    -and $Rot    -notin @('ab','ba'))                  { Write-Host "[ovr] -Rot 는 ab|ba"  -ForegroundColor Red; exit 1 }
+if ($Ant    -and $Ant    -notin @('int','ext'))                { Write-Host "[ovr] -Ant 는 int|ext" -ForegroundColor Red; exit 1 }
 
 $ovrLR   = if ($Pcf -eq '8575') { '1' } elseif ($Pcf -eq '8574') { '0' } else { '' }
 $ovrROT  = if ($Rotary -eq 'ec05') { '1' } elseif ($Rotary -eq 'ec11') { '0' } else { '' }
@@ -201,6 +207,7 @@ $ovrLp   = if ($Lp  -eq 'off') { '0' } elseif ($Lp  -eq 'on') { '1' } else { '' 
 $ovrBat  = if ($Bat -eq 'off') { '0' } elseif ($Bat -eq 'on') { '1' } else { '' }
 # -Rot ba : 엔코더 A/B 가 뒤바뀌게 배선된 기판(예: COM3 H2). 방향이 통째로 반대가 된다.
 $ovrRot  = if ($Rot -eq 'ba') { '1' } elseif ($Rot -eq 'ab') { '0' } else { '' }
+$ovrAnt  = if ($Ant -eq 'ext') { '1' } elseif ($Ant -eq 'int') { '0' } else { '' }
 $ow=''; $oh=''; $ofx=''; $ooff=''
 switch ($Oled) {
     '72x40'  { $ow='72';  $oh='40';  $ofx='1'; $ooff='28' }
@@ -220,10 +227,11 @@ $OvrDefs = @(
     "-D","BOARD_OVR_FREQ=$ovrFreq",
     "-D","BOARD_OVR_PCF_LP_CORE=$ovrLp",
     "-D","BOARD_OVR_HAS_BAT_ADC=$ovrBat",
-    "-D","BOARD_OVR_ROT_AB_SWAP=$ovrRot"
+    "-D","BOARD_OVR_ROT_AB_SWAP=$ovrRot",
+    "-D","BOARD_OVR_RF_EXT_ANT=$ovrAnt"
 )
-if ($Pcf -or $Rotary -or $Oled -or $Rotate -ne '' -or $Freq -ne '' -or $Lp -or $Bat -or $Rot) {
-    Write-Host "[ovr] 변형 빌드: Pcf=$Pcf Rotary=$Rotary Oled=$Oled Rotate=$Rotate Freq=$Freq Lp=$Lp Bat=$Bat Rot=$Rot" -ForegroundColor Cyan
+if ($Pcf -or $Rotary -or $Oled -or $Rotate -ne '' -or $Freq -ne '' -or $Lp -or $Bat -or $Rot -or $Ant) {
+    Write-Host "[ovr] 변형 빌드: Pcf=$Pcf Rotary=$Rotary Oled=$Oled Rotate=$Rotate Freq=$Freq Lp=$Lp Bat=$Bat Rot=$Rot Ant=$Ant" -ForegroundColor Cyan
     if ($Oled) {
         Write-Host "[ovr] ⚠ OLED 해상도 override 는 렌더러·패널크기(ssd1306_init)만 -D 로 바꾼다." -ForegroundColor Yellow
         Write-Host "       물리 컬럼 오프셋은 SSD1306 라이브러리 Kconfig(CONFIG_OFFSETX, sdkconfig)라" -ForegroundColor Yellow

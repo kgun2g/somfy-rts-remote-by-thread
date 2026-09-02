@@ -143,6 +143,17 @@ See main/boards/ for available boards."
  *   0 (기본): P0=A, P1=B
  *   1       : P0=B, P1=A — 엔코더 A/B 가 뒤바뀌게 배선된 기판(예: COM3 H2).
  *   빌드에서 `-Rot ab|ba` 로 덮을 수 있다. 정의는 button_handler.h. */
+/* ★2026-09-02 RF 안테나 스위치 — 이 하드웨어가 없는 보드는 0(아무것도 안 함). */
+#ifndef BOARD_HAS_RF_ANT_SW
+#  define BOARD_HAS_RF_ANT_SW    0
+#endif
+/* 외장 안테나 사용 여부. **기본은 0(내장)** — 지금까지의 동작과 같다.
+ *  외장 안테나를 실제로 꽂은 개체만 빌드에서 `-Ant ext` 로 켠다. 안 꽂은 채로
+ *  외장을 고르면 급전점이 열려 오히려 크게 나빠지므로 기본을 바꾸지 않는다. */
+#ifndef BOARD_RF_EXT_ANT
+#  define BOARD_RF_EXT_ANT       0
+#endif
+
 #ifndef BOARD_ROT_AB_SWAP
 #  define BOARD_ROT_AB_SWAP      0
 #endif
@@ -359,6 +370,11 @@ See main/boards/ for available boards."
 #ifdef BOARD_OVR_ROT_AB_SWAP
 #  undef  BOARD_ROT_AB_SWAP
 #  define BOARD_ROT_AB_SWAP       BOARD_OVR_ROT_AB_SWAP
+#endif
+
+#ifdef BOARD_OVR_RF_EXT_ANT
+#  undef  BOARD_RF_EXT_ANT
+#  define BOARD_RF_EXT_ANT        BOARD_OVR_RF_EXT_ANT
 #endif
 #ifdef BOARD_OVR_PCF_LP_CORE
 #  undef  BOARD_PCF_LP_CORE

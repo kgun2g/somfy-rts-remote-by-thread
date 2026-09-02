@@ -178,5 +178,22 @@
  *   =1 경로(USB/BAT/LOW 텍스트)는 somfy_app·oled_ui 의 #if 로 그대로 보존(삭제 금지). */
 #define BOARD_BAT_SWAPPED          0
 #define BOARD_PIN_BAT_ADC          1   // D1 (GPIO1=A1, spare) ← BAT 100k/100k 분압
+
+/* ═══ RF 안테나 스위치 (FM8625H, XIAO ESP32C6 온보드) ══════════════════════
+ *  ★★★2026-09-02 발견: 우리 펌웨어가 이 두 핀을 **한 번도 건드리지 않았다.**
+ *  그래서 외장 안테나를 u.FL 에 꽂아도 스위치는 계속 내장 세라믹으로 붙어 있었다
+ *  (사용자 신고: "외부 안테나 연결해도 별 차이 없어" — 당연한 결과였다).
+ *
+ *  Seeed 사양:
+ *    GPIO3  (WIFI_ENABLE)     LOW  = RF 스위치 제어 활성  ★먼저 내려야 한다
+ *    GPIO14 (WIFI_ANT_CONFIG) LOW  = 내장 세라믹 (기본) / HIGH = 외장 u.FL
+ *  이름이 WIFI_* 지만 2.4GHz 프런트엔드 공용이라 **802.15.4(Thread)에도 적용**된다.
+ *  447MHz CC1101 은 별도 모듈이라 무관하다.
+ *
+ *  두 핀 모두 우리 핀맵에서 미사용이라 충돌이 없다(GPIO3 은 진동센서가 GPIO0 으로
+ *  옮겨가며 비었다). */
+#define BOARD_HAS_RF_ANT_SW    1
+#define BOARD_PIN_RF_SW_EN     3    // WIFI_ENABLE      (LOW = 스위치 제어 활성)
+#define BOARD_PIN_RF_ANT_SEL   14   // WIFI_ANT_CONFIG  (LOW=내장 / HIGH=외장)
 #define BOARD_BAT_DIV_TOP          100 // 100k/100k → Vbat = Vadc×2
 #define BOARD_BAT_DIV_BOT          100
