@@ -1112,10 +1112,14 @@ static void _lp_core_try_start(void)
    *  components/ulp/lp_core/lp_core/lp_core_startup.c 가 main() 반환 후
    *  LP 타이머를 걸고 ulp_lp_core_halt() 를 호출한다).
    *  ※폴 주기 자체는 그대로다 — 버튼·로터리 응답성에 변화 없음. */
+#if SOMFY_LP_HALT
   ulp_lp_core_cfg_t cfg = {
       .wakeup_source              = ULP_LP_CORE_WAKEUP_SOURCE_LP_TIMER,
       .lp_timer_sleep_duration_us = LP_POLL_US,
   };
+#else
+  ulp_lp_core_cfg_t cfg = { .wakeup_source = ULP_LP_CORE_WAKEUP_SOURCE_HP_CPU };
+#endif
   e = ulp_lp_core_run(&cfg);
   if (e != ESP_OK) {
     ESP_LOGW(TAG, "[LP] 기동 실패(%s) — HP 폴링 유지", esp_err_to_name(e));
@@ -1507,9 +1511,23 @@ static void _vibration_track(bool high_now) {
       bool stuck = (st_high == st_cnt);   /* ★전부 HIGH 만 고장(all-LOW 는 정상 대기) */
       if (stuck != s_vibe_stuck) {
         s_vibe_stuck = stuck;
-        ESP_LOGW(TAG, "[VIBE] %s (최근 %d샘플 HIGH=%d) — 진동 %s",
+        /* ★★★2026-09-02 고장 판정 시 **light sleep 웨이크도 같이 끊는다.**
+         *
+         *  왜: 진동 웨이크는 `gpio_wakeup_enable(VIBE_PIN, GPIO_INTR_HIGH_LEVEL)`
+         *  즉 **레벨** 트리거다. 핀이 HIGH 로 고정되면 조건이 항상 참이라 슬립에
+         *  들어가는 즉시 깨어난다 — 이게 초당 수백 회 반복된다.
+         *  실측(COM7·COM8, 2026-09-02 완충 직후 22분):
+         *      깨어남 340회/초 · 수면 2.5ms · sleep 83.5%  (정상일 땐 32.6회/초·96%)
+         *  지금까지는 고장을 감지해 **소프트웨어에서 무시하기만** 하고 웨이크는
+         *  그대로 걸어 뒀다. 감지해 놓고 원인은 안 끊은 셈이다.
+         *  ※`~INT`(somfy_app.c) 와 **정확히 같은 유형**의 버그다.
+         *  ※복귀하면 다시 건다 — 진동으로 깨우는 기능은 그대로 살린다. */
+        if (stuck) gpio_wakeup_disable(VIBE_PIN);
+        else       gpio_wakeup_enable(VIBE_PIN, GPIO_INTR_HIGH_LEVEL);
+        ESP_LOGW(TAG, "[VIBE] %s (최근 %d샘플 HIGH=%d) — 진동 %s, 웨이크 %s",
                  stuck ? "센서 고장 판정(핀 HIGH 고정)" : "정상 복귀",
-                 st_cnt, st_high, stuck ? "무시함" : "다시 인정");
+                 st_cnt, st_high, stuck ? "무시함" : "다시 인정",
+                 stuck ? "해제" : "재등록");
       }
       st_cnt = 0; st_high = 0;
     }

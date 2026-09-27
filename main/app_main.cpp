@@ -424,6 +424,7 @@ extern "C" void somfy_app_console_select(int n);
 extern "C" void somfy_app_console_cycle(int dir);
 extern "C" void somfy_app_console_setfreq(int idx, float mhz);
 extern "C" void somfy_app_console_printfreq(void);
+extern "C" void somfy_app_console_dsleep(int minutes, int settle_min);   /* ★2026-09-11 깊은잠 대조군 */
 extern "C" void somfy_app_batlog_dump(void);
 extern "C" void somfy_app_batlog_clear(void);
 extern "C" void somfy_app_console_usbsim(int off);
@@ -480,6 +481,54 @@ static int scmd_freq(int argc, char **argv){  /* freq [idx mhz] : set(+NVS저장
  *  ※CONFIG_ESP_TIMER_PROFILING 이 꺼져 있어 호출 횟수·실행시간은 안 나오지만,
  *    주기(period)와 이름은 나온다. 프로파일링을 켜면 상시 오버헤드가 붙으므로
  *    지금은 켜지 않는다(그게 바로 절전 ②로 껐던 종류다). */
+/* ★★2026-09-09 태스크별 실행시간 덤프 — **깨어남의 마지막 미확인 출처**를 잡으려고.
+ *
+ *  지금까지 계측으로 배제된 것: esp_timer(프로파일링 켜고 0개) · LP→HP 깨우기
+ *  (`[LPWAKE] seq +0`) · GPIO(VIBE 만 걸려 있고 `[BTNWAKE] 진동 0`) · 라디오
+ *  (`ot_sleep` 0.31회/초). 그런데 실측은 **초당 314회 수면 진입, 회당 2.69ms** 다.
+ *  `IDLE_TIME_BEFORE_SLEEP=3`(=3ms)이므로 **허용 최소치만 겨우 자는 중**이고,
+ *  이는 "다음 태스크 마감이 늘 3ms 앞"이라는 뜻이다. 남은 용의자는 태스크뿐이라
+ *  여기서 이름을 찍는다. (CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS 필요) */
+/* ★2026-09-11 깊은잠 대조군.
+ *    dsleep        조회(예약 상태 + 지난 결과)
+ *    dsleep <분>   예약 (권장 720 = 12시간)
+ *    dsleep 0      취소
+ *  ★인자 없음을 "기본 720분 예약"으로 뒀다가 되돌렸다 — 조회하려다 실수로
+ *    12시간 예약이 걸리는 사고가 난다. 파괴적 기본값 금지.
+ *  12시간인 이유: ADC 차분 잡음 3mV 대비 3-sigma 로 갈리는 최소가 8시간
+ *  (sim/tools/dsleep_probe_sim.py). */
+static int scmd_dsleep(int argc, char **argv){
+    int m  = (argc >= 2) ? atoi(argv[1]) : -1;   /* -1 = 조회 */
+    int st = (argc >= 3) ? atoi(argv[2]) : 1;    /* 정착(분). 기본 1분 = 기존 60초 */
+    somfy_app_console_dsleep(m, st);
+    return 0;
+}
+
+static int scmd_tasks(int argc, char **argv){
+    (void)argc; (void)argv;
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY && CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS
+    printf("=== 태스크 실행시간 ===\n");
+    printf("Name            State  Prio  Stack  Num\n");
+    char *buf = (char *)malloc(2048);
+    if (buf) {
+        vTaskList(buf);
+        printf("%s", buf);
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+        printf("\n=== 태스크 CPU 점유 ===\n");
+        buf[0] = 0;
+        vTaskGetRunTimeStats(buf);
+        printf("%s", buf);
+#endif
+        free(buf);
+    } else {
+        printf("메모리 부족\n");
+    }
+    printf("=== 끝 ===\n");
+#else
+    printf("CONFIG_FREERTOS_USE_TRACE_FACILITY / STATS_FORMATTING_FUNCTIONS 필요\n");
+#endif
+    return 0;
+}
 static int scmd_tmr(int argc, char **argv){
   (void)argc; (void)argv;
   printf("=== esp_timer 목록 ===\n");
@@ -765,6 +814,19 @@ extern "C" void app_main()
     /* Initialize the ESP NVS layer */
     nvs_flash_init();
 
+    /* ★★2026-09-11 깊은잠 대조군(`dsleep`)이 걸어둔 GPIO hold 를 **여기서** 푼다.
+     *  somfy_app.c 의 _dsleep_probe_hook 은 깊은잠 전에 CC1101 CSn 을 HIGH 로
+     *  붙잡는다(안 그러면 SPWD 인 CC1101 이 깨어 1.7mA — 측정 무효). 그 hold 는
+     *  깨어난 뒤에도 **남아 있어서**, 안 풀면 아래 cc1101_init 이 CSn 을 못 내려
+     *  RF 가 통째로 죽는다. hook 자신은 somfy_app 태스크(=cc1101_init 이후)에서
+     *  도므로 거기서 풀면 이미 늦다. 걸린 적 없어도 무해하므로 무조건 호출한다.
+     *  ※C6 는 개별 IO hold 만으로 깊은잠을 통과하므로 `gpio_deep_sleep_hold_dis()`
+     *    는 부르지 않는다 — 그 API 는 driver/gpio.h 에서
+     *    `#if !SOC_GPIO_SUPPORT_HOLD_SINGLE_IO_IN_DSLP` 로 감싸여 C6 엔 없다. */
+#ifdef BOARD_PIN_CC1101_CS
+    gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_CS);
+#endif
+
     /* ★2026-08-11 부팅 단계 기록 시작 — "USB 없이 배터리만 연결하면 부팅 중 멈춘다"
      *  진단용. USB 를 꽂는 순간 전원이 바뀌어 증상이 사라지므로 시리얼 로그를 볼 수
      *  없다 → 전원이 끊겨도 남는 NVS 에 단계를 남기고, 다음 부팅에 읽어 찍는다.
@@ -1009,8 +1071,12 @@ extern "C" void app_main()
       esp_console_cmd_register(&frq);
       const esp_console_cmd_t rbt={ .command="reboot", .help="재부팅(esp_restart)", .hint=NULL, .func=&scmd_reboot, .argtable=NULL };
       esp_console_cmd_register(&rbt);
+      const esp_console_cmd_t tsk={ .command="tasks", .help="태스크 목록·CPU 점유 (깨어남 출처 추적)", .hint=NULL, .func=&scmd_tasks, .argtable=NULL };
+      esp_console_cmd_register(&tsk);
       const esp_console_cmd_t tmc={ .command="tmr", .help="esp_timer 목록 덤프 (깨어남 출처 추적)", .hint=NULL, .func=&scmd_tmr, .argtable=NULL };
       esp_console_cmd_register(&tmc);
+      const esp_console_cmd_t dsc={ .command="dsleep", .help="깊은잠 대조군 dsleep <측정분> [정착분] (정착=셀 완화 대기, 기본 1분)", .hint=NULL, .func=&scmd_dsleep, .argtable=NULL };
+      esp_console_cmd_register(&dsc);
       const esp_console_cmd_t bdc={ .command="bd", .help="부팅 진단 조회 (bd / bd clear)", .hint=NULL, .func=&scmd_bd, .argtable=NULL };
       esp_console_cmd_register(&bdc);
       const esp_console_cmd_t blc={ .command="bl", .help="배터리 방전 기록 조회 (bl / bl clear)", .hint=NULL, .func=&scmd_bl, .argtable=NULL };

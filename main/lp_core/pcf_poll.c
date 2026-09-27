@@ -112,9 +112,18 @@ static uint32_t prev_low = 0;            /* 2연속 눌림 판정용 직전 표�
  *    그대로 동작해 들여쓰기·로직을 하나도 안 건드리고 옮길 수 있다. */
 int main(void)
 {
-    do {
+#if SOMFY_LP_HALT
+    do {                      /* 1회 실행 후 return → lp_core_startup 이 halt */
+#else
+    while (1) {               /* 옛 방식: 무한루프 + busy-wait */
+#endif
         if (!enabled) {
+#if SOMFY_LP_HALT
             continue;
+#else
+            ulp_lp_core_delay_us(POLL_US);
+            continue;
+#endif
         }
 
         /* PCF8574/8575 는 레지스터 주소가 없다 — 그냥 read 하면 현재 입력이 나온다.
@@ -128,6 +137,9 @@ int main(void)
                         : (uint16_t)buf[0];
         if (err != ESP_OK) {
             i2c_err++;
+#if !SOMFY_LP_HALT
+            ulp_lp_core_delay_us(POLL_US);
+#endif
             continue;
         }
 
@@ -171,6 +183,11 @@ int main(void)
             /* HP 가 light sleep 중이면 깨운다. 깨어 있으면 무해(무시된다). */
             ulp_lp_core_wakeup_main_processor();
         }
+#if SOMFY_LP_HALT
     } while (0);
-    return 0;      /* → lp_core_startup() 이 LP 타이머 세팅 후 halt (위 주석) */
+#else
+        ulp_lp_core_delay_us(POLL_US);
+    }
+#endif
+    return 0;      /* HALT=1 이면 lp_core_startup() 이 LP 타이머 세팅 후 halt */
 }

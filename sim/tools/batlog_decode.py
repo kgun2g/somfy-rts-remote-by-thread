@@ -23,7 +23,19 @@ EVN = ["주기", "LEFT", "RIGHT", "SEL", "UP", "DOWN", "ROT", "PROG", "기타",
 SAMPLE = struct.Struct('<IHBBBBb')   # ★2026-08-17 t_s uint32(18.2h 포화 해소) → 11B
 
 
-def decode(path, div_top=100, div_bot=100, capacity_mah=700):
+def _batlog_ns(path):
+    """NVS 덤프에서 batlog 네임스페이스만 dict 로 꺼낸다(--vs 비교 기준용)."""
+    _, items = parse(open(path, "rb").read())
+    ns = {}
+    for it in items:
+        if it["ns_name"] != "batlog":
+            continue
+        if isinstance(it["value"], (bytes, bytearray)) or it["key"] not in ns:
+            ns[it["key"]] = it["value"]
+    return ns
+
+
+def decode(path, div_top=100, div_bot=100, capacity_mah=700, base_ns=None):
     _, items = parse(open(path, 'rb').read())
     ns = {}
     for it in items:
@@ -127,16 +139,30 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700):
                '20~30ms', '30~60ms', '>=60ms']
         tot = sum(h8) or 1
         print()
-        print('── 수면 길이 분포 (깨어남 출처) ──')
+        _bh = base_ns.get('ls_hist') if base_ns else None
+        if isinstance(_bh, (bytes, bytearray)) and len(_bh) >= 32:
+            b8 = _st.unpack_from('<8I', _bh)
+            h8 = tuple(max(0, x - y) for x, y in zip(h8, b8))
+            tot = sum(h8) or 1
+            print('── 수면 길이 분포 — **이번 구간 차분** ──')
+        else:
+            print('── 수면 길이 분포 ──  ★★이 값은 **평생 누적**이다(세션 아님).')
+            print('   펌웨어가 ls_hist 를 세션 기준으로 차감하지 않는다'
+                  ' (somfy_app.c _batlog_save 주석).')
+            print('   과거 다른 설정의 세션이 섞여 있으니 **모양을 믿지 말 것**.'
+                  ' --vs <이전덤프.bin> 로 차분을 볼 것.')
         print('  LP 코어=%s  버튼 폴 주기=%sms'
               % ('ON' if ns.get('lp_on') else 'OFF', ns.get('poll_ms')))
         for l, v in zip(lbl, h8):
             bar = '#' * int(40.0 * v / tot)
             print('  %-9s %9d  %5.1f%%  %s' % (l, v, 100.0 * v / tot, bar))
         top = lbl[h8.index(max(h8))]
-        print('  ★지배 구간 %s — 버튼 폴 주기(%sms)와 %s'
-              % (top, ns.get('poll_ms'),
-                 '일치' if str(ns.get('poll_ms')) in top else '**불일치**'))
+        if isinstance(_bh, (bytes, bytearray)) and len(_bh) >= 32:
+            print('  ★지배 구간 %s — 버튼 폴 주기(%sms)와 %s'
+                  % (top, ns.get('poll_ms'),
+                     '일치' if str(ns.get('poll_ms')) in top else '**불일치**'))
+        else:
+            print('  (지배 구간 판정은 누적값으로 하면 틀린다 — 생략)')
 
     # ── 깨어난 원인 + 태스크별 실제 반복 (2026-08-20) ─────────────────────
     import struct as _st
@@ -149,7 +175,16 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700):
               'EXT1', 'UNDEFINED', '표에 없음']
         tot = sum(wc) or 1
         print()
-        print('── 깨어난 원인 (esp_sleep_get_wakeup_cause) ──')
+        _bw = base_ns.get('wc_hist') if base_ns else None
+        if isinstance(_bw, (bytes, bytearray)) and len(_bw) >= 36:
+            wb = _st.unpack_from('<9I', _bw)
+            wc = tuple(max(0, x - y) for x, y in zip(wc, wb))
+            tot = sum(wc) or 1
+            print('── 깨어난 원인 — **이번 구간 차분** ──')
+        else:
+            print('── 깨어난 원인 ──  ★★이 값도 **평생 누적**이다(세션 아님).')
+            print('   2026-09-11 실례: 건강한 세션(100%% TIMER)인데도 누적 탓에'
+                  " 'GPIO 81.8%%' 로 찍혔다. --vs 로 차분을 볼 것.")
         for n, v in zip(nm, wc):
             if v:
                 print('  %-16s %9d  %5.1f%%' % (n, v, 100.0 * v / tot))
@@ -177,4 +212,9 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700):
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         print(__doc__); sys.exit(1)
-    sys.exit(decode(sys.argv[1]))
+    _base = None
+    if '--vs' in sys.argv:
+        _i = sys.argv.index('--vs')
+        _base = _batlog_ns(sys.argv[_i + 1])
+        del sys.argv[_i:_i + 2]
+    sys.exit(decode(sys.argv[1], base_ns=_base))

@@ -657,6 +657,30 @@ static inline bool _is_usb_powered(void) {
 #endif /* BOARD_ALWAYS_USB_POWERED */
 }
 
+/* ═══ 레벨 웨이크 안전 등록 (2026-09-02) ═══════════════════════════════════
+ *  레벨 트리거 웨이크는 **이미 그 레벨이면** 슬립 진입 즉시 조건이 참이라
+ *  곧바로 깨어난다. 이것이 초당 수백 회 반복되면 절전이 통째로 무너진다.
+ *  이 프로젝트에서 **같은 유형으로 세 번** 당했다:
+ *    · `~INT`(IO2) LOW 고착   → COM8 1067회/초 · sleep 72% (배터리 방전으로 교체까지)
+ *    · VIBE(IO0) HIGH 고착    → 340회/초 · sleep 83%
+ *    · CHG_STAT(IO17)         → 미확인. 그래서 이제 **세 개 모두** 여기를 거친다.
+ *  → 거는 순간 핀을 읽어 이미 웨이크 레벨이면 **등록하지 않고 로그를 남긴다.**
+ *  ※부팅 시점 검사다. 이후에 고착되는 경우는 각자의 감시가 처리한다
+ *    (진동은 button_handler.c 의 stuck 판정이 gpio_wakeup_disable 을 부른다). */
+static void _arm_level_wake(gpio_num_t pin, gpio_int_type_t lvl, const char *name)
+{
+  const int wake_lvl = (lvl == GPIO_INTR_HIGH_LEVEL) ? 1 : 0;
+  const int now      = gpio_get_level(pin);
+  if (now == wake_lvl) {
+    ESP_LOGW(TAG, "[WAKE] %s(IO%d) 가 이미 %s — 레벨 웨이크 **등록 안 함**(폭주 방지)",
+             name, (int)pin, wake_lvl ? "HIGH" : "LOW");
+    return;
+  }
+  gpio_wakeup_enable(pin, lvl);
+  ESP_LOGW(TAG, "[WAKE] %s(IO%d) %s 레벨 웨이크 등록 (현재 %s)",
+           name, (int)pin, wake_lvl ? "HIGH" : "LOW", now ? "HIGH" : "LOW");
+}
+
 /* ═══════════════════════════════════════════════
    hold_ms 클램핑 헬퍼 (0.1초 ~ 15초)
 ═══════════════════════════════════════════════ */
@@ -1875,6 +1899,33 @@ static void _enable_pm_light_sleep(void) {
    *     ESP_ERR_INVALID_STATE). 같은 공유 I2C 인 H2 는 VBUS=1 이라 PM상태 0
    *    (light sleep OFF)이고 멀쩡했다 — 공유 방식이 아니라 **절전이 차이**였다.
    *  → 배터리가 아예 없는 보드는 전원이 USB 뿐이므로 참으로 고정한다. */
+  /* ★★★2026-09-07 `usbsim off` 가 **light sleep 까지** 시뮬하도록 바꿨다.
+   *
+   *  왜: 지금까지 이 판정이 물리 VBUS(btn_handler_is_charging)만 봐서, `usbsim off`
+   *  는 앱 동작(화면 타임아웃·방전 세션)만 배터리인 척하고 **PM 은 그대로 USB 모드**
+   *  였다(옛 로그 문구 "PM 은 물리 VBUS 기준 유지"). 그래서 절전 동작을 확인하려면
+   *  매번 케이블을 뽑고 몇 시간을 기다려야 했고, 그게 이 건의 진단을 며칠 끌었다.
+   *  → USB 를 꽂아 둔 채 sleep%·깨어남·유령입력을 바로 잴 수 있게 한다.
+   *
+   *  ★주의 1: 배터리는 그동안 **충전된다**. 전압·방전속도는 의미가 없고,
+   *    측정 가능한 것은 sleep%·wake 수·이벤트(유령 입력)뿐이다.
+   *  ★주의 2: light sleep 이 걸리면 **USB-JTAG 콘솔이 죽는다**(기록된 지뢰).
+   *    복구는 esptool 리셋뿐이다 — 어차피 NVS 를 뜰 때 리셋하므로 문제없다.
+   *  ★주의 3: USB 에 꽂힌 채 light sleep 이 돌면 과거 테스트보드에서 I2C 페리페럴
+   *    고착이 관측된 적이 있다(위 주석). 그래서 **기본값이 아니라 콘솔로만** 켠다. */
+  /* ★★★2026-09-07 `usbsim` 을 PM 판정에 **반영하지 않는다** — 되돌려 놓은 것이다.
+   *
+   *  한 번 시도했다: USB 를 꽂은 채 light sleep 을 걸어 절전을 빨리 재려고
+   *  `&& !s_usb_sim_off` 를 넣었다. **쓸 수 없었다** —
+   *  light sleep 이 걸리는 순간 USB-JTAG 패드가 꺼져 **콘솔도 esptool 도 포트를
+   *  열지 못한다**(PermissionError 31). 되돌릴 명령을 보낼 통로 자체가 사라지므로
+   *  전원 재투입 전까지 보드가 먹통이 된다. 실제로 두 보드를 그렇게 만들었다.
+   *  (이 지뢰는 이미 기록돼 있었다 — "USJ 는 light sleep 마다 꺼지고 재연결 무효,
+   *   전원 재투입만 복구". 확인 없이 진행한 것이 실수였다.)
+   *
+   *  USB 를 꽂은 채 절전을 재려면 **콘솔을 UART 로 옮겨야** 한다. 그 전에는
+   *  물리 분리만이 방법이다. `usbsim` 은 원래대로 앱 동작(화면 타임아웃·방전 세션)만
+   *  시뮬하고 PM 은 물리 VBUS 를 따른다. */
   const bool on_usb = BOARD_ALWAYS_USB_POWERED ? true : btn_handler_is_charging();
   /* ★★★2026-08-16 BOARD_DISABLE_LIGHT_SLEEP — **패닉 임시 차단**.
    *  H2 에서 절전 빌드(①MTD ②tick ③PM)를 넣은 뒤 배터리 구동 중 패닉이 반복됐다.
@@ -2794,7 +2845,16 @@ static void _ls_stats_init(void) { ESP_LOGW(TAG, "[LS] PM/tickless 미사용 —
  *    절전이 0 이라 프로파일링 오버헤드로 잃을 것이 없다. */
 #if CONFIG_PM_ENABLE
 #define PMDUMP_MAX 1024
+/* ★★2026-09-10 `locks0`(배터리 진입 첫 스냅샷) 추가 — 차분 계산용.
+ *  사연: esp_pm 의 카운터는 **부팅 기준 누적**이고 `Time since boot up` 에는
+ *  플래시 직후의 USB 구간이 통째로 섞인다. USB 중에는 light sleep 이 아예 꺼져
+ *  있으므로 `light_sleep_counts / boot_s` 는 항상 **과소평가**된다. 이 오염을
+ *  못 보고 집계해 이번 조사에서 두 번 헛짚었다(사용자 지적 "일부만 보지 말고").
+ *  → 배터리 모드 **첫 호출 1회**만 `locks0` 에 남기고, 이후 60초 갱신분은
+ *    `locks` 에 쓴다. 둘의 차이가 곧 **순수 배터리 구간**의 값이다.
+ *  ※`locks0` 는 부팅마다 새로 쓴다(이전 세션 값이 남아 섞이면 더 나쁘다). */
 static void _pmdump_save(void) {
+  static bool s_pm0_done = false;   /* 이번 부팅에서 locks0 를 남겼는가 */
   char  *buf = NULL;
   size_t len = 0;
   FILE  *ms  = open_memstream(&buf, &len);
@@ -2806,6 +2866,9 @@ static void _pmdump_save(void) {
     if (nvs_open("pmdump", NVS_READWRITE, &h) == ESP_OK) {
       if (len > PMDUMP_MAX - 1) len = PMDUMP_MAX - 1;
       buf[len] = 0;
+      if (!s_pm0_done) {            /* 배터리 진입 직후 = 차분의 기준점 */
+        if (nvs_set_str(h, "locks0", buf) == ESP_OK) s_pm0_done = true;
+      }
       nvs_set_str(h, "locks", buf);
       nvs_commit(h);
       nvs_close(h);
@@ -3789,6 +3852,320 @@ void somfy_app_bc_btn_tick(void) {
     s_bc.last_btn_tick_us = esp_timer_get_time();
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ *  ★★2026-09-11  깊은잠 대조군 (`dsleep`) — **수면 전류의 주인을 가린다**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  CHG_STAT 웨이크를 잡은 뒤 C6 는 3.05mA(약 5~6일)다. 목표 15일 = 1.94mA.
+ *  그런데 지금 **96.3% 가 수면**이라 깨어남을 0으로 만들어도 목표에 못 간다.
+ *  남은 건 수면 전류인데 그 값을 **한 번도 잰 적이 없다**. 전류계 직렬 측정은
+ *  이 기판에서 불가능하다(배터리 선을 못 끊고, +/- 직결은 셀 단락).
+ *
+ *  그래서 깊은잠을 대조군으로 쓴다. 깊은잠은 칩이 ~10uA 만 먹으므로:
+ *      깊은잠 강하 ~= 얕은잠 강하  ->  범인은 **기판**(LED·LDO·누설). 펌웨어 무력.
+ *      깊은잠 강하 ~= 0           ->  범인은 **칩**(라디오 등). 펌웨어가 듣는다.
+ *
+ *  ★설계 핵심 — 왜 즉시 자지 않고 재부팅하는가:
+ *    두 전압을 **같은 부하 지점**에서 재야 뺄셈이 의미를 갖는다. 자기 직전을
+ *    풀로드(라디오 ON)에서, 깬 뒤를 부팅 중(저부하)에서 재면 단자전압 회복분이
+ *    섞여 강하를 **과소평가**한다(= 거짓으로 "칩이 범인" 결론). 그래서 명령은
+ *    NVS 에 예약만 하고 재부팅하며, 두 측정 모두 이 훅에서 이뤄진다.
+ *
+ *  ★CC1101 CSn 을 붙잡는 이유: 깊은잠 중 GPIO 가 뜨면 SPWD 인 CC1101 이 CSn LOW
+ *    를 보고 깨어나 IDLE ~1.7mA 를 흘린다 — 측정이 통째로 무효가 된다.
+ *    C6 는 SOC_GPIO_SUPPORT_HOLD_SINGLE_IO_IN_DSLP=1 이라 붙잡을 수 있다.
+ *    ※해제(gpio_deep_sleep_hold_dis)는 **app_main 이 cc1101_init 보다 먼저** 한다.
+ *      여기서 풀면 이미 늦다(그 부팅의 cc1101_init 이 CSn 을 못 내려 실패).
+ *
+ *  검증: sim/tools/dsleep_probe_sim.py — 정상/USB거부/범위밖/브라운아웃/
+ *        phase0 후 전원끊김/중복예약 6케이스. **최소 8시간, 10~12시간 권장**
+ *        (ADC 차분 잡음 3mV 대비 3-sigma).
+ */
+#define DSLEEP_MIN_MINUTES  1
+#define DSLEEP_MAX_MINUTES  720      /* 12시간 — 오타로 일주일 잠드는 사고 방지 */
+#define DSLEEP_SETTLE_S     60       /* USB 뽑고 레일·전압이 안정될 때까지 */
+/* ★★★2026-09-12 무한 재부팅 방어. 실제로 COM8 이 **718회** 재부팅했다
+ *  (12시간 / 60초 = 720 — DSLEEP_SETTLE_S 와 정확히 일치).
+ *  기전: 부팅 훅은 "USB 있음"으로 보고 그냥 지나가는데 메인 루프 감시는
+ *  "USB 없음"으로 봐서 60초마다 esp_restart() 가 걸린다. 두 판독이 어긋나는
+ *  이유는 CHG_STAT 핀이 훅 시점엔 아직 입력으로 설정되기 전이기 때문이다
+ *  (btn_handler_init 이 더 늦게 돈다).
+ *  ★기전을 고치는 것(아래 gpio_set_direction)과 **별개로** 횟수 가드를 둔다.
+ *    진단 기능이 기기를 밤새 벽돌로 만드는 일은 두 번 다시 없어야 한다. */
+#define DSLEEP_MAX_TRIES    3
+#define DSLEEP_SETTLE_MAX_M 240      /* 정착 최대 4시간 */
+
+/* ★★2026-09-14 정착시간을 **런타임 인자**로 뺀다 (`dsleep <측정분> [정착분]`).
+ *  왜: 2분 리허설에서 셀 **완화(relaxation)** 가 드러났다 — COM7 은 2분 자는 동안
+ *  전압이 오히려 +18mV 올랐고 COM8 은 -26mV 떨어졌다. 부하가 사라지면 단자전압이
+ *  OCV 쪽으로 회복하고, 방금 충전을 끝냈으면 표면전하가 빠진다. 그 ±20mV 가
+ *  우리가 12시간에 찾으려는 신호(가설 A -18mV / B -0.5mV)보다 **크다**.
+ *  → mv0 를 재기 전에 셀을 충분히 쉬게 해야 한다. 리튬셀 표면전하는 1~2시간이면
+ *    대부분 빠진다. 그 동안 보드는 평소(얕은잠)대로 돌므로 비용은 1시간치 방전뿐.
+ *  ★컴파일 상수로 두면 두 보드가 같은 펌웨어라 보드별로 못 바꾼다. 런타임이라야
+ *    COM7 1시간 / COM8 60초로 걸어 **완화 영향 자체를 A/B** 할 수 있다. */
+static volatile uint32_t s_dsleep_settle_s = DSLEEP_SETTLE_S;
+
+/* USB 빠짐 감시 — 메인 루프가 100ms 마다 부른다. 예약이 걸려 있고 USB 가
+ *  DSLEEP_SETTLE_S 동안 계속 없으면 **스스로 재부팅**해 측정을 시작한다.
+ *  ★왜 여기서 바로 재지 않고 재부팅하나: mv0(자기 직전)와 mv1(깬 직후)을
+ *    **같은 부팅 지점·같은 부하**에서 재야 뺄셈이 의미를 갖기 때문이다.
+ *    여기서 재면 풀로드(라디오 ON), 깬 뒤엔 부팅 중(저부하)이라 회복분이 섞여
+ *    강하를 과소평가한다(= 거짓으로 "칩이 범인" 결론). */
+/* ★★★2026-09-11 이 플래그를 **콘솔 명령도 직접 갱신해야 한다.**
+ *  처음엔 `static uint8_t cache = 0xFF` 로 두고 "NVS 는 부팅당 1회만 읽는다"고
+ *  최적화했다. 그런데 예약은 **부팅 이후** 콘솔로 걸린다. 부팅 직후 첫 틱에서
+ *  이미 armed=0 을 읽어 캐시에 박아 버리므로, 그 뒤 예약해도 감시가 **영원히
+ *  발동하지 않는다**. 실제로 두 보드를 12시간 방치했는데 측정이 시작조차
+ *  안 됐다(phase=0 그대로). 하룻밤을 통째로 날렸다.
+ *  → 부팅 훅과 콘솔 명령 양쪽에서 세팅한다. NVS 재조회에 기대지 않는다. */
+static volatile uint8_t s_dsleep_armed = 0;
+
+static void _dsleep_watch_usb(void)
+{
+  static uint32_t s_off_ms = 0;
+  if (!s_dsleep_armed) { s_off_ms = 0; return; }
+  if (_is_usb_powered()) { s_off_ms = 0; return; }   /* 다시 꽂히면 리셋 */
+  s_off_ms += 100;
+  if (s_off_ms < s_dsleep_settle_s * 1000u) return;
+  /* ★재부팅 전에 시도 횟수를 센다. 한도를 넘으면 **예약을 버린다**. */
+  {
+    nvs_handle_t h;
+    uint8_t tries = 0;
+    if (nvs_open("dsleep", NVS_READWRITE, &h) == ESP_OK) {
+      nvs_get_u8(h, "tries", &tries);
+      tries++;
+      if (tries > DSLEEP_MAX_TRIES) {
+        nvs_set_u8(h, "armed", 0);
+        nvs_set_u8(h, "tries", 0);
+        nvs_commit(h);
+        nvs_close(h);
+        s_dsleep_armed = 0;
+        ESP_LOGE(TAG, "[DSLEEP] ★루프 방어 — %d회 재시도했는데 깊은잠에 못 들었다. "
+                      "예약을 해제한다(무한 재부팅 방지). USB 판독이 훅과 메인 루프에서 "
+                      "어긋나는 상황이다.", DSLEEP_MAX_TRIES);
+        return;
+      }
+      nvs_set_u8(h, "tries", tries);
+      nvs_commit(h);
+      nvs_close(h);
+    }
+    ESP_LOGW(TAG, "[DSLEEP] USB 빠짐 %lu초 확인 — 재부팅해 측정을 시작한다. (시도 %u/%d)",
+             (unsigned long)s_dsleep_settle_s, (unsigned)tries, DSLEEP_MAX_TRIES);
+  }
+  vTaskDelay(pdMS_TO_TICKS(300));
+  esp_restart();
+}
+
+static void _dsleep_probe_hook(int boot_mv)
+{
+  nvs_handle_t h;
+  if (nvs_open("dsleep", NVS_READWRITE, &h) != ESP_OK) return;
+  uint8_t armed = 0, phase = 0;
+  uint32_t dur_s = 0;
+  int32_t  mv0 = 0;
+  nvs_get_u8(h, "armed", &armed);
+  if (!armed) { nvs_close(h); return; }
+  nvs_get_u8 (h, "phase", &phase);
+  nvs_get_u32(h, "dur_s", &dur_s);
+  nvs_get_i32(h, "mv0",   &mv0);
+
+  if (phase == 0) {
+    /* ★★훅은 btn_handler_init **이전**에 돈다. CHG_STAT 이 아직 설정되기 전이라
+     *  gpio_get_level 이 엉뚱한 값을 준다 → 메인 루프 감시와 판독이 어긋나
+     *  60초 재부팅 루프가 났다(COM8 718회).
+     *  ★★1차 수정에서 gpio_set_direction(INPUT) 만 했는데 **부족했다**(리허설에서
+     *    훅이 여전히 "USB 있음"으로 오독, 루프 가드가 4회에 끊음). 이 핀은
+     *    VBUS 100k/150k **고임피던스 분압 노드**라 내부 풀업/풀다운이 분압을
+     *    짓눌러 이긴다 — 방향만 잡고 풀 저항을 안 끄면 소용없다.
+     *    → btn_handler_init 과 **완전히 동일하게** 설정한다(그쪽 주석 참조).
+     *    BOARD_CHG_STAT_EXT_PULLDOWN=1 이면 하단 150k 가 이미 풀다운이므로
+     *    내부 풀다운도 꺼야 한다. */
+    {
+      gpio_config_t _chg_io = {
+          .pin_bit_mask = (1ULL << CHG_STAT_PIN),
+          .mode         = GPIO_MODE_INPUT,
+          .pull_up_en   = GPIO_PULLUP_DISABLE,
+          .pull_down_en = BOARD_CHG_STAT_EXT_PULLDOWN ? GPIO_PULLDOWN_DISABLE
+                                                      : GPIO_PULLDOWN_ENABLE,
+          .intr_type    = GPIO_INTR_DISABLE,
+      };
+      gpio_config(&_chg_io);
+      vTaskDelay(pdMS_TO_TICKS(20));   /* 고임피던스 노드 정착 여유 */
+      ESP_LOGW(TAG, "[DSLEEP] CHG_STAT(IO%d) 레벨=%d (1=USB, 0=배터리)",
+               (int)CHG_STAT_PIN, gpio_get_level((gpio_num_t)CHG_STAT_PIN));
+    }
+    if (_is_usb_powered()) {
+      /* 예약은 살아 있으나 아직 USB — 정상 부팅하고 메인 루프가 지켜본다.
+       *  (콘솔이 USB 로만 되므로 예약은 USB 에서 받을 수밖에 없다. 설계 주석 참조) */
+      s_dsleep_armed = 1;              /* ★부팅 시점에 이미 예약돼 있던 경우 */
+      {   /* ★정착시간도 함께 복원한다 — 없으면 기본값 */
+        uint32_t st = 0;
+        if (nvs_get_u32(h, "settle_s", &st) == ESP_OK && st) s_dsleep_settle_s = st;
+      }
+      ESP_LOGW(TAG, "[DSLEEP] 예약 %lu초가 대기 중 — USB 를 뽑고 %lu초(정착) 뒤 자동 시작한다."
+                    " (취소: dsleep 0)",
+               (unsigned long)dur_s, (unsigned long)s_dsleep_settle_s);
+      nvs_close(h);
+      return;
+    }
+    /* ── 자러 간다. mv0 를 **커밋한 뒤에** 잠들어야 한다 ── */
+    nvs_set_i32(h, "mv0",   (int32_t)boot_mv);
+    nvs_set_u8 (h, "phase", 1);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGW(TAG, "[DSLEEP] mv0=%dmV 기록 — %lu초(%.2f시간) 깊은잠 진입. "
+                  "깨어나면 자동으로 결과를 찍는다.",
+             boot_mv, (unsigned long)dur_s, dur_s / 3600.0);
+    vTaskDelay(pdMS_TO_TICKS(300));         /* 로그가 빠져나갈 여유 */
+#ifdef BOARD_PIN_CC1101_CS
+    /* CSn 을 HIGH 로 고정 — 뜨면 CC1101 이 SPWD 에서 깨어 1.7mA.
+     *  ★가드는 반드시 실재하는 심볼로 쓸 것. 처음에 `#if BOARD_HAS_CC1101` 로
+     *    썼는데 그런 매크로가 없어 0 으로 평가됐고, 고정이 **조용히 건너뛰어져**
+     *    측정이 통째로 무효가 될 뻔했다(#if 는 미정의 식별자를 0 으로 본다). */
+    gpio_set_direction((gpio_num_t)BOARD_PIN_CC1101_CS, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)BOARD_PIN_CC1101_CS, 1);
+    gpio_hold_en((gpio_num_t)BOARD_PIN_CC1101_CS);
+    /* ★C6 는 `gpio_hold_en` 하나로 깊은잠을 통과한다. `gpio_deep_sleep_hold_en()`
+     *  은 여기서 쓸 수 없다 — driver/gpio.h 에서 그 API 는
+     *  `#if !SOC_GPIO_SUPPORT_HOLD_SINGLE_IO_IN_DSLP` 로 감싸여 있고, C6 는 그
+     *  캡이 1 이라 **선언 자체가 없다**(처음에 호출했다가 implicit declaration
+     *  에러가 났다). 개별 IO hold 를 지원하는 칩에는 불필요한 API다.
+     *  IDF 주석 note 3 의 예외 목록(ESP32/S2/C3/S3/C2)에도 C6 는 없다. */
+#else
+#warning "dsleep: CC1101 CS 핀을 모른다 — 깊은잠 중 CSn 이 떠서 측정이 오염될 수 있다"
+#endif
+    esp_sleep_enable_timer_wakeup((uint64_t)dur_s * 1000000ULL);
+    esp_deep_sleep_start();
+    /* 도달하지 않는다 */
+  }
+
+  /* ── phase 1: 깨어났다. ★무슨 일이 있어도 예약부터 해제한다 ── */
+  nvs_set_u8(h, "armed", 0);
+  nvs_commit(h);
+
+  const esp_sleep_wakeup_cause_t wc = esp_sleep_get_wakeup_cause();
+  if (wc != ESP_SLEEP_WAKEUP_TIMER) {
+    /* 브라운아웃·워치독 등으로 중간에 죽었다 — 경과시간을 모르므로 **버린다**.
+     *  (이 검사가 없으면 거짓 mV/h 가 나온다 — 시뮬 케이스 ④) */
+    ESP_LOGE(TAG, "[DSLEEP] ★측정 무효 — 기상원인이 타이머가 아니다(%d). "
+                  "중간에 리셋된 것으로 보인다. 예약만 해제하고 정상 진행한다.",
+             (int)wc);
+    nvs_close(h);
+    return;
+  }
+  const double hrs = dur_s / 3600.0;
+  const int    dmv = boot_mv - (int)mv0;
+  nvs_set_i32(h, "mv1", (int32_t)boot_mv);
+  nvs_set_i32(h, "dmv", (int32_t)dmv);
+  nvs_commit(h);
+  nvs_close(h);
+
+  /* 얕은잠 기준선(2026-09-11 COM8 실측): 2.79 mV/시간 = 3.05 mA
+   *  -> 1 mA ~= 0.915 mV/시간. 이 환산으로 깊은잠 전류를 바로 추정한다. */
+  const double mvh = hrs > 0 ? (double)dmv / hrs : 0.0;
+  const double ma  = -mvh / 0.915;
+  ESP_LOGE(TAG, "════════ [DSLEEP] 깊은잠 대조군 결과 ════════");
+  ESP_LOGE(TAG, "  %dmV -> %dmV   d=%+dmV / %.2f시간 = %+.3f mV/시간",
+           (int)mv0, boot_mv, dmv, hrs, mvh);
+  ESP_LOGE(TAG, "  추정 깊은잠 전류 %.2f mA   (얕은잠 기준선 2.79mV/h = 3.05mA)", ma);
+  if (ma > 1.0)
+    ESP_LOGE(TAG, "  판정: ★범인은 **기판**이다(LED·LDO·누설). 펌웨어로는 못 잡는다.");
+  else if (ma > 0.3)
+    ESP_LOGE(TAG, "  판정: 기판과 칩이 **반씩**. 양쪽 다 봐야 한다.");
+  else
+    ESP_LOGE(TAG, "  판정: ★범인은 **칩**이다(라디오/주변장치). 펌웨어가 듣는다.");
+  ESP_LOGE(TAG, "══════════════════════════════════════════════");
+}
+
+/* 콘솔 `dsleep <분>` — **예약만** 한다. 0 이면 취소.
+ *  ★USB 꽂힌 채로도 받는다. 처음엔 "USB 면 거부"로 만들었는데, 콘솔이 USB 로만
+ *    되므로 사용자가 이 명령을 **영원히 못 쓰는** 설계였다(실기에서 거부 메시지만
+ *    나와서 발견했다). 실행은 USB 를 뽑는 순간 _dsleep_watch_usb 가 맡는다. */
+void somfy_app_console_dsleep(int minutes, int settle_min)
+{
+  nvs_handle_t hc;
+  if (minutes < 0) {
+    /* ── 조회 — 인자 없이 `dsleep` ──
+     *  ★결과는 깨어난 순간의 부팅 로그에만 찍힌다. 사용자가 12시간 뒤 USB 를
+     *    꽂았을 땐 그 로그가 이미 지나갔다. 그래서 NVS 에 남긴 값을 다시 읽어준다. */
+    if (nvs_open("dsleep", NVS_READONLY, &hc) != ESP_OK) {
+      ESP_LOGW(TAG, "[DSLEEP] 기록 없음 — 아직 한 번도 실행하지 않았다.");
+      return;
+    }
+    uint8_t a = 0, p = 0; uint32_t d = 0; int32_t m0 = 0, m1 = 0, dm = 0;
+    nvs_get_u8(hc, "armed", &a); nvs_get_u8(hc, "phase", &p);
+    nvs_get_u32(hc, "dur_s", &d);
+    nvs_get_i32(hc, "mv0", &m0); nvs_get_i32(hc, "mv1", &m1);
+    esp_err_t e_dm = nvs_get_i32(hc, "dmv", &dm);
+    nvs_close(hc);
+    if (a) {
+      uint32_t st = DSLEEP_SETTLE_S;
+      nvs_handle_t h2;
+      if (nvs_open("dsleep", NVS_READONLY, &h2) == ESP_OK) {
+        nvs_get_u32(h2, "settle_s", &st); nvs_close(h2);
+      }
+      ESP_LOGW(TAG, "[DSLEEP] 예약 대기 중 — 측정 %lu초(%.1f시간), 정착 %lu초(%.1f분), "
+                    "phase=%u.", (unsigned long)d, d / 3600.0,
+               (unsigned long)st, st / 60.0, (unsigned)p);
+    }
+    if (e_dm == ESP_OK && d > 0) {
+      const double hrs = d / 3600.0;
+      const double mvh = (double)dm / hrs;
+      const double ma  = -mvh / 0.915;
+      ESP_LOGW(TAG, "[DSLEEP] 지난 결과: %ldmV -> %ldmV  d=%+ldmV / %.2f시간 "
+                    "= %+.3f mV/시간  ->  깊은잠 약 %.2f mA",
+               (long)m0, (long)m1, (long)dm, hrs, mvh, ma);
+    } else if (!a) {
+      ESP_LOGW(TAG, "[DSLEEP] 완료된 측정 기록이 없다. `dsleep 720` 으로 예약할 것.");
+    }
+    return;
+  }
+  if (minutes == 0) {                       /* 취소 */
+    if (nvs_open("dsleep", NVS_READWRITE, &hc) == ESP_OK) {
+      nvs_set_u8(hc, "armed", 0);
+      nvs_set_u8(hc, "phase", 0);
+      nvs_commit(hc);
+      nvs_close(hc);
+    }
+    s_dsleep_armed = 0;                     /* ★RAM 플래그도 반드시 내린다 */
+    ESP_LOGW(TAG, "[DSLEEP] 예약 취소. (다시 걸려면 dsleep <분>)");
+    return;
+  }
+  if (minutes < DSLEEP_MIN_MINUTES || minutes > DSLEEP_MAX_MINUTES) {
+    ESP_LOGE(TAG, "[DSLEEP] 거부 — %d분은 범위(%d~%d) 밖이다.",
+             minutes, DSLEEP_MIN_MINUTES, DSLEEP_MAX_MINUTES);
+    return;
+  }
+  nvs_handle_t h;
+  if (nvs_open("dsleep", NVS_READWRITE, &h) != ESP_OK) return;
+  uint8_t armed = 0;
+  nvs_get_u8(h, "armed", &armed);
+  if (armed) {
+    ESP_LOGE(TAG, "[DSLEEP] 거부 — 이미 예약되어 있다.");
+    nvs_close(h);
+    return;
+  }
+  if (settle_min < 1) settle_min = 1;                      /* 기본 = 기존 60초 */
+  if (settle_min > DSLEEP_SETTLE_MAX_M) settle_min = DSLEEP_SETTLE_MAX_M;
+  s_dsleep_settle_s = (uint32_t)settle_min * 60u;
+  nvs_set_u8 (h, "armed", 1);
+  nvs_set_u8 (h, "phase", 0);
+  nvs_set_u32(h, "dur_s", (uint32_t)minutes * 60u);
+  nvs_set_u32(h, "settle_s", s_dsleep_settle_s);
+  nvs_commit(h);
+  nvs_close(h);
+  s_dsleep_armed = 1;    /* ★★이 한 줄이 빠져 12시간 측정이 통째로 무산됐다 */
+  if (nvs_open("dsleep", NVS_READWRITE, &hc) == ESP_OK) {   /* 시도 횟수 초기화 */
+    nvs_set_u8(hc, "tries", 0); nvs_commit(hc); nvs_close(hc);
+  }
+  ESP_LOGW(TAG, "[DSLEEP] %d분(%.1f시간) 예약 완료.", minutes, minutes / 60.0);
+  ESP_LOGW(TAG, "[DSLEEP]   → USB 를 뽑고 **%lu초(%.1f분) 정착** 뒤 스스로 재부팅해 "
+                "전압을 재고 깊은잠에 든다. (정착 = 셀 완화 대기)",
+           (unsigned long)s_dsleep_settle_s, s_dsleep_settle_s / 60.0);
+  ESP_LOGW(TAG, "[DSLEEP]   → %.1f시간 뒤 깨어나 결과를 찍는다. 그때 USB 를 다시 "
+                "꽂고 로그를 보면 된다. (취소: dsleep 0)", minutes / 60.0);
+}
+
 void somfy_app_run(void *arg) {
   (void)arg;
   boot_diag_stage2(BOOT_S2_RUN_ENTRY);
@@ -3850,6 +4227,7 @@ void somfy_app_run(void *arg) {
     if (_mv0 > 0) {
       boot_diag_set_bat_mv(_mv0);
       ESP_LOGW(TAG, "[BAT] 부팅 초기 전압 %dmV", _mv0);
+      _dsleep_probe_hook(_mv0);   /* ★2026-09-11 깊은잠 대조군 — 아래 주석 참조 */
     }
   }
 #endif
@@ -3945,12 +4323,55 @@ void somfy_app_run(void *arg) {
    *     슬립 진입 즉시 발사돼 슬립 불가. 진동 시 brief open(HIGH)이므로
    *     HIGH_LEVEL 웨이크 사용 → 가만히 둘 땐 슬립 유지, 진동 시 wake.
    *   CHG_STAT(IO3): active-LOW. */
-  gpio_wakeup_enable(PCF8574_INT_PIN, GPIO_INTR_LOW_LEVEL);
-  gpio_wakeup_enable(VIBE_PIN,        GPIO_INTR_HIGH_LEVEL);
-#if BOARD_CHG_STAT_ACTIVE_HIGH
-  gpio_wakeup_enable(CHG_STAT_PIN,    GPIO_INTR_HIGH_LEVEL); /* VBUS HIGH = USB 꽂힘 */
+  /* ★★★2026-09-02 `~INT` 레벨 웨이크를 **BOARD_PCF_INT_ISR 인 보드에서만** 건다.
+   *
+   *  실측(COM8, LP_I2C 배선 일부 미납땜 개체):
+   *      [INTOBS] 표본 16152  LOW 16152 (100.0%)  전이 0
+   *      깨어남 1067회/초 · 수면 0.7ms · <2ms 구간 91.2% · sleep 72%
+   *      방전 -23.8 mV/시간 (COM7 은 -5.0) → **배터리가 방전돼 교체까지 했다**
+   *
+   *  기전: `~INT` 가 LOW 로 고착된 선에 LOW **레벨** 웨이크를 걸면, 슬립에 들어가는
+   *  즉시 조건이 참이라 곧바로 깨어난다. 이것이 초당 1000회 반복된다.
+   *  C6 는 이미 `BOARD_PCF_INT_ISR=0` 으로 "이 선은 못 쓴다"고 선언해 ISR 을 등록하지
+   *  않는데(intdiag 실측 전이 0회), **웨이크만은 무조건 걸고 있었다.** 앞뒤가 안 맞았다.
+   *  C6 의 버튼 기상은 LP 코어(ULP 웨이크 → btn_handler_notify_from_lp)가 담당하므로
+   *  이 웨이크는 애초에 필요 없다. H2 는 `~INT` 가 실제로 동작해(전이 36회) 그대로 둔다. */
+#if BOARD_PCF_INT_ISR
+  _arm_level_wake(PCF8574_INT_PIN, GPIO_INTR_LOW_LEVEL,  "~INT");
+#endif
+  /* ★2026-09-02 원인 격리용 스위치 — 0 이면 진동 웨이크를 아예 안 건다.
+   *  실측에서 깨어남의 **92%가 GPIO** 인데, 이 시점 걸려 있는 GPIO 웨이크는
+   *  VIBE 하나뿐이다(~INT·CHG_STAT 은 이미 뺐다). 확정을 위해 A/B 한다. */
+#ifndef SOMFY_VIBE_WAKE
+#define SOMFY_VIBE_WAKE 1
+#endif
+#if SOMFY_VIBE_WAKE
+  _arm_level_wake(VIBE_PIN,        GPIO_INTR_HIGH_LEVEL, "VIBE");
 #else
-  gpio_wakeup_enable(CHG_STAT_PIN,    GPIO_INTR_LOW_LEVEL);  /* STAT active-LOW */
+  ESP_LOGW(TAG, "[WAKE] VIBE(IO%d) 웨이크 **비활성**(원인 격리 빌드)", (int)VIBE_PIN);
+#endif
+#if BOARD_CHG_STAT_ACTIVE_HIGH
+  /* ★★★2026-09-02 이 보드의 CHG_STAT 웨이크는 **걸지 않는다.**
+   *
+   *  실측(COM7·COM8, 두 덤프 차분 2시간):
+   *      깨어남 원인  GPIO 91.2% / 91.9%   (TIMER 8.8% / 8.1%)
+   *      수면 길이    2~5ms 87.5% / 94.6%  → '고착'이 아니라 **문턱 근처 토글**
+   *      초당 약 280회. sleep 96% → 82%.
+   *  배터리 구동 중 걸려 있는 GPIO 웨이크는 VIBE 와 CHG_STAT 둘뿐인데,
+   *  VIBE 는 `[BTNWAKE] 깨움: 진동 0` 으로 무죄다. 남는 건 CHG_STAT 이다.
+   *
+   *  기전: 이 핀은 VBUS 100k/150k **분압 노드**이고 BOARD_CHG_STAT_EXT_PULLDOWN=1
+   *  이라 내부 풀다운이 꺼져 있다. USB 를 뽑으면 위쪽 100k 가 죽은 VBUS 레일에
+   *  매달려 노드가 **고임피던스**가 되고, 잡음으로 문턱을 오르내린다. 오래 충전한
+   *  직후일수록 레일이 천천히 빠지며 문턱 근처에 오래 머문다 — 실측에서 "완충
+   *  직후에만 나쁘다"로 나타난 이유다(저전압 세션은 96%였다).
+   *
+   *  잃는 것: USB 를 꽂는 순간의 **즉시** 기상. 하지만 메인 루프가 100ms 마다
+   *  돌며 `_is_usb_powered()` 를 보므로 0.1초 안에 감지된다 — 체감 차이가 없다.
+   *  ※GNPE(BOARD_CHG_STAT_ACTIVE_HIGH=0)는 충전 IC STAT 핀 직결이라 임피던스가
+   *    낮고 이 문제가 없으므로 그대로 둔다. */
+#else
+  _arm_level_wake(CHG_STAT_PIN,    GPIO_INTR_LOW_LEVEL,  "CHG_STAT"); /* STAT active-LOW */
 #endif
   esp_sleep_enable_gpio_wakeup();
   /* ★ v3.15: 버튼은 PCF8574(I2C 익스팬더) 뒤에 있어 ~INT(IO17) GPIO 웨이크가
@@ -4893,6 +5314,7 @@ void somfy_app_run(void *arg) {
     _time_tick_sched(now_us);
     _time_persist_sched(now_us);
     g_wake_iter[WI_MAIN]++;            /* ★깨어남 출처 계측 */
+    _dsleep_watch_usb();               /* ★2026-09-11 깊은잠 대조군 — USB 빠짐 감시 */
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
