@@ -2384,6 +2384,10 @@ static adc_channel_t             s_bat_ch;
 static bool                      s_bat_adc_ok = false;
 
 static void _bat_adc_init(void) {
+  /* ★2026-09-28 멱등. app_main 이 무선 시작 전에 먼저 부르고(저부하 전압 캡처)
+   *  somfy_app_run 이 다시 부른다. 두 번째 adc_oneshot_new_unit 은 유닛 중복
+   *  점유로 실패하며 핸들이 어떻게 남을지 보장이 없다. */
+  if (s_bat_adc_ok) return;
   adc_unit_t unit;
   if (adc_oneshot_io_to_channel(BOARD_PIN_BAT_ADC, &unit, &s_bat_ch) != ESP_OK) {
     ESP_LOGW(TAG, "[BAT] GPIO%d 는 ADC 핀 아님 — 시간기반으로 폴백", BOARD_PIN_BAT_ADC);
@@ -3956,6 +3960,98 @@ static void _dsleep_watch_usb(void)
   esp_restart();
 }
 
+/* ★★★2026-09-28 깊은잠 진입을 훅에서 **분리**한다 — OLED 를 끈 뒤에 잔다.
+ *
+ *  사고: 12시간 측정 중 사용자가 "화면이 켜진 채 멈췄다"며 재부팅했다.
+ *  SSD1306 은 ESP32 와 **별개 칩**이라 ESP32 가 리셋·깊은잠에 들어도 전원이
+ *  살아 있는 한 마지막 화면을 계속 띄운다. 그런데 훅은 oled_ui_init **이전**에
+ *  돌아서, 깊은잠 진입 시점에 패널 상태를 전혀 건드리지 않았다.
+ *    ① 사용자 눈엔 "켜진 채 멈춤" → 재부팅 → POR 로 깨어 측정 무효(이번 일)
+ *    ② 켜진 OLED 가 수 mA 를 먹으니, 12시간을 버텼어도 "기판이 범인"이라는
+ *       **거짓 결론**이 나왔을 것이다 — ①보다 더 나쁜 실패다.
+ *  → mv0 는 여전히 훅(부팅 초기, mv1 과 같은 부하 지점)에서 재고, **잠드는 것만**
+ *    oled_ui_init 뒤로 미룬다. 거기서 안내 3초 → 패널 OFF(0xAE, 평소 화면 끌 때와
+ *    **같은 상태** — 그래야 얕은잠과 공정 비교) → 깊은잠.
+ *  ★OLED init 이 멈추는 경우(과거 실제로 있었다 — BOOT_S2_OLED_ENTER 주석)에도
+ *    반드시 잠들도록 20초 비상 타이머를 건다. 그땐 패널 상태를 모르므로
+ *    oled_off=0 으로 남겨 결과를 의심할 수 있게 한다. */
+/* ★2026-09-28 무선 시작 **전** 저부하 전압. app_main 이 esp_matter::start() 직전에
+ *  부른다. _read_bat_mv 는 8표본 절사평균이고, 4번 더 평균해 32표본으로 만든다.
+ *  이 시점엔 뮤텍스들이 아직 NULL 이라 잠금을 건너뛴다(_read_bat_mv 주석) —
+ *  PCF 비트뱅(같은 ADC1)도 아직 안 돌아 충돌이 없다. */
+static int s_early_mv = -1;
+int somfy_app_early_bat_capture(void)
+{
+#if BOARD_HAS_BAT_ADC
+  _bat_adc_init();
+  int sum = 0, n = 0;
+  for (int i = 0; i < 4; i++) {
+    const int v = _read_bat_mv();
+    if (v > 0) { sum += v; n++; }
+  }
+  s_early_mv = n ? sum / n : -1;
+  ESP_LOGW(TAG, "[BAT] 무선 시작 전 전압 %dmV (32표본)", s_early_mv);
+#endif
+  return s_early_mv;
+}
+
+static volatile uint8_t  s_dsleep_enter_pending = 0;
+static uint32_t          s_dsleep_enter_dur_s   = 0;
+static esp_timer_handle_t s_dsleep_fallback_tmr = NULL;
+
+static void _dsleep_enter_now(bool oled_off_ok)
+{
+  nvs_handle_t h;
+  if (nvs_open("dsleep", NVS_READWRITE, &h) == ESP_OK) {
+    nvs_set_u8(h, "oled_off", oled_off_ok ? 1 : 0);   /* 0 = 패널 상태 미확인(오염 의심) */
+    nvs_commit(h);
+    nvs_close(h);
+  }
+  ESP_LOGW(TAG, "[DSLEEP] %lu초(%.2f시간) 깊은잠 진입 — OLED %s. 깨어나면 결과를 찍는다.",
+           (unsigned long)s_dsleep_enter_dur_s, s_dsleep_enter_dur_s / 3600.0,
+           oled_off_ok ? "끔" : "★미확인(비상 진입)");
+  vTaskDelay(pdMS_TO_TICKS(300));         /* 로그가 빠져나갈 여유 */
+#ifdef BOARD_PIN_CC1101_CS
+  /* CSn 을 HIGH 로 고정 — 뜨면 CC1101 이 SPWD 에서 깨어 1.7mA.
+   *  ★가드는 반드시 실재하는 심볼로 쓸 것(#if BOARD_HAS_CC1101 사고 — 그런 매크로가
+   *    없어 0 으로 평가돼 고정이 조용히 건너뛰어질 뻔했다).
+   *  ★C6 는 gpio_hold_en 하나로 깊은잠을 통과한다(SOC_GPIO_SUPPORT_HOLD_SINGLE_IO_IN_DSLP).
+   *    해제는 app_main 이 cc1101_init **전에** 한다. */
+  gpio_set_direction((gpio_num_t)BOARD_PIN_CC1101_CS, GPIO_MODE_OUTPUT);
+  gpio_set_level((gpio_num_t)BOARD_PIN_CC1101_CS, 1);
+  gpio_hold_en((gpio_num_t)BOARD_PIN_CC1101_CS);
+#else
+#warning "dsleep: CC1101 CS 핀을 모른다 — 깊은잠 중 CSn 이 떠서 측정이 오염될 수 있다"
+#endif
+  esp_sleep_enable_timer_wakeup((uint64_t)s_dsleep_enter_dur_s * 1000000ULL);
+  esp_deep_sleep_start();
+  /* 도달하지 않는다 */
+}
+
+static void _dsleep_fallback_cb(void *arg)
+{
+  (void)arg;
+  ESP_LOGE(TAG, "[DSLEEP] ★비상 진입 — OLED 경로가 20초 안에 끝나지 않았다.");
+  _dsleep_enter_now(false);
+}
+
+/* somfy_app_run 이 oled_ui_init 직후 부른다. 대기 중이 아니면 아무것도 안 한다. */
+static void _dsleep_enter_after_oled(void)
+{
+  if (!s_dsleep_enter_pending) return;
+  char msg[16];
+  /* ★uint8_t 로 좁혀야 컴파일러가 최대 3자리임을 안다 — %lu 로 쓰면
+   *  format-truncation(-Werror) 로 빌드가 깨진다. 11+3+1+NUL = 16 딱 맞음. */
+  const uint8_t hrs = (uint8_t)((s_dsleep_enter_dur_s + 1800u) / 3600u);  /* 최대 12 */
+  snprintf(msg, sizeof(msg), "SLEEP TEST %uh", (unsigned)hrs);
+  oled_ui_show_notice(&s_ui, msg, 60000);
+  oled_ui_show_booting(&s_ui, 100);       /* 한 장 그리면 _fb_flush 가 배너를 얹는다 */
+  vTaskDelay(pdMS_TO_TICKS(3000));
+  oled_ui_set_display_on(false);          /* 0xAE — 평소 화면 OFF 와 같은 상태 */
+  vTaskDelay(pdMS_TO_TICKS(50));
+  _dsleep_enter_now(true);
+}
+
 static void _dsleep_probe_hook(int boot_mv)
 {
   nvs_handle_t h;
@@ -4008,35 +4104,24 @@ static void _dsleep_probe_hook(int boot_mv)
       nvs_close(h);
       return;
     }
-    /* ── 자러 간다. mv0 를 **커밋한 뒤에** 잠들어야 한다 ── */
+    /* ── mv0 를 **커밋한 뒤에** 진입 대기로 넘긴다 ──
+     *  ★여기서 바로 자지 않는다 — OLED 를 끈 뒤에 자야 한다(위 _dsleep_enter_now 주석).
+     *  mv0 는 **여기서** 잰다: mv1 과 같은 부팅 지점·같은 부하라야 뺄셈이 의미를 갖는다. */
     nvs_set_i32(h, "mv0",   (int32_t)boot_mv);
+    nvs_set_i32(h, "mv0e",  (int32_t)s_early_mv);   /* ★무선 시작 전 저부하 값 */
     nvs_set_u8 (h, "phase", 1);
     nvs_commit(h);
     nvs_close(h);
-    ESP_LOGW(TAG, "[DSLEEP] mv0=%dmV 기록 — %lu초(%.2f시간) 깊은잠 진입. "
-                  "깨어나면 자동으로 결과를 찍는다.",
-             boot_mv, (unsigned long)dur_s, dur_s / 3600.0);
-    vTaskDelay(pdMS_TO_TICKS(300));         /* 로그가 빠져나갈 여유 */
-#ifdef BOARD_PIN_CC1101_CS
-    /* CSn 을 HIGH 로 고정 — 뜨면 CC1101 이 SPWD 에서 깨어 1.7mA.
-     *  ★가드는 반드시 실재하는 심볼로 쓸 것. 처음에 `#if BOARD_HAS_CC1101` 로
-     *    썼는데 그런 매크로가 없어 0 으로 평가됐고, 고정이 **조용히 건너뛰어져**
-     *    측정이 통째로 무효가 될 뻔했다(#if 는 미정의 식별자를 0 으로 본다). */
-    gpio_set_direction((gpio_num_t)BOARD_PIN_CC1101_CS, GPIO_MODE_OUTPUT);
-    gpio_set_level((gpio_num_t)BOARD_PIN_CC1101_CS, 1);
-    gpio_hold_en((gpio_num_t)BOARD_PIN_CC1101_CS);
-    /* ★C6 는 `gpio_hold_en` 하나로 깊은잠을 통과한다. `gpio_deep_sleep_hold_en()`
-     *  은 여기서 쓸 수 없다 — driver/gpio.h 에서 그 API 는
-     *  `#if !SOC_GPIO_SUPPORT_HOLD_SINGLE_IO_IN_DSLP` 로 감싸여 있고, C6 는 그
-     *  캡이 1 이라 **선언 자체가 없다**(처음에 호출했다가 implicit declaration
-     *  에러가 났다). 개별 IO hold 를 지원하는 칩에는 불필요한 API다.
-     *  IDF 주석 note 3 의 예외 목록(ESP32/S2/C3/S3/C2)에도 C6 는 없다. */
-#else
-#warning "dsleep: CC1101 CS 핀을 모른다 — 깊은잠 중 CSn 이 떠서 측정이 오염될 수 있다"
-#endif
-    esp_sleep_enable_timer_wakeup((uint64_t)dur_s * 1000000ULL);
-    esp_deep_sleep_start();
-    /* 도달하지 않는다 */
+    s_dsleep_enter_dur_s   = dur_s;
+    s_dsleep_enter_pending = 1;
+    ESP_LOGW(TAG, "[DSLEEP] mv0=%dmV 기록 — OLED 를 끈 뒤 깊은잠에 든다.", boot_mv);
+    {
+      const esp_timer_create_args_t a = { .callback = _dsleep_fallback_cb,
+                                          .name = "dsleep_fb" };
+      if (esp_timer_create(&a, &s_dsleep_fallback_tmr) == ESP_OK)
+        esp_timer_start_once(s_dsleep_fallback_tmr, 20ULL * 1000000ULL);
+    }
+    return;
   }
 
   /* ── phase 1: 깨어났다. ★무슨 일이 있어도 예약부터 해제한다 ── */
@@ -4046,7 +4131,11 @@ static void _dsleep_probe_hook(int boot_mv)
   const esp_sleep_wakeup_cause_t wc = esp_sleep_get_wakeup_cause();
   if (wc != ESP_SLEEP_WAKEUP_TIMER) {
     /* 브라운아웃·워치독 등으로 중간에 죽었다 — 경과시간을 모르므로 **버린다**.
-     *  (이 검사가 없으면 거짓 mV/h 가 나온다 — 시뮬 케이스 ④) */
+     *  (이 검사가 없으면 거짓 mV/h 가 나온다 — 시뮬 케이스 ④)
+     *  ★2026-09-28 리셋 사유를 남긴다. 9/28 무효 건은 사용자가 "화면이 멈췄다"며
+     *    재부팅한 POR 였는데, 그걸 알아내려고 벽시계·부팅 이력을 대조해야 했다. */
+    nvs_set_u8(h, "inv_rst", (uint8_t)esp_reset_reason());
+    nvs_commit(h);
     ESP_LOGE(TAG, "[DSLEEP] ★측정 무효 — 기상원인이 타이머가 아니다(%d). "
                   "중간에 리셋된 것으로 보인다. 예약만 해제하고 정상 진행한다.",
              (int)wc);
@@ -4055,10 +4144,18 @@ static void _dsleep_probe_hook(int boot_mv)
   }
   const double hrs = dur_s / 3600.0;
   const int    dmv = boot_mv - (int)mv0;
+  int32_t mv0e = -1;
+  nvs_get_i32(h, "mv0e", &mv0e);
+  const int dmve = (mv0e > 0 && s_early_mv > 0) ? (s_early_mv - (int)mv0e) : 0;
   nvs_set_i32(h, "mv1", (int32_t)boot_mv);
   nvs_set_i32(h, "dmv", (int32_t)dmv);
+  nvs_set_i32(h, "mv1e", (int32_t)s_early_mv);
+  if (mv0e > 0 && s_early_mv > 0) nvs_set_i32(h, "dmve", (int32_t)dmve);
   nvs_commit(h);
   nvs_close(h);
+  ESP_LOGE(TAG, "[DSLEEP] ★저부하(무선 전) %ldmV -> %dmV  d=%+dmV   "
+                "/ 훅(무선 중) d=%+dmV — 저부하 쪽이 더 믿을 만하다",
+           (long)mv0e, s_early_mv, dmve, dmv);
 
   /* 얕은잠 기준선(2026-09-11 COM8 실측): 2.79 mV/시간 = 3.05 mA
    *  -> 1 mA ~= 0.915 mV/시간. 이 환산으로 깊은잠 전류를 바로 추정한다. */
@@ -4093,11 +4190,26 @@ void somfy_app_console_dsleep(int minutes, int settle_min)
       return;
     }
     uint8_t a = 0, p = 0; uint32_t d = 0; int32_t m0 = 0, m1 = 0, dm = 0;
+    uint8_t ir = 0xFF, oo = 0xFF;
     nvs_get_u8(hc, "armed", &a); nvs_get_u8(hc, "phase", &p);
     nvs_get_u32(hc, "dur_s", &d);
     nvs_get_i32(hc, "mv0", &m0); nvs_get_i32(hc, "mv1", &m1);
     esp_err_t e_dm = nvs_get_i32(hc, "dmv", &dm);
+    esp_err_t e_ir = nvs_get_u8(hc, "inv_rst", &ir);
+    nvs_get_u8(hc, "oled_off", &oo);
     nvs_close(hc);
+    /* ★2026-09-28 무효 사유와 OLED 상태를 같이 보여준다 — 둘 다 결과의 신뢰도를
+     *  좌우한다(무효 사유 = 왜 버렸나 / oled_off=0 = 켜진 패널이 섞였을 수 있음). */
+    if (e_ir == ESP_OK) {
+      static const char *const rn[] = { "미상", "전원투입(POR)", "외부핀", "소프트웨어",
+          "패닉", "인터럽트WDT", "태스크WDT", "기타WDT", "깊은잠", "브라운아웃", "SDIO" };
+      ESP_LOGE(TAG, "[DSLEEP] ★지난 측정은 **무효**였다 — 깨어난 원인이 타이머가 아니라 "
+                    "리셋(%s). 전원투입이면 사용자 재부팅·배터리 분리를 뜻한다.",
+               ir < sizeof(rn) / sizeof(rn[0]) ? rn[ir] : "?");
+    }
+    if (oo == 0)
+      ESP_LOGE(TAG, "[DSLEEP] ★OLED 를 끄지 못하고 잠들었다(비상 진입) — 켜진 패널 전류가 "
+                    "섞였을 수 있어 결과를 믿지 말 것.");
     if (a) {
       uint32_t st = DSLEEP_SETTLE_S;
       nvs_handle_t h2;
@@ -4112,9 +4224,23 @@ void somfy_app_console_dsleep(int minutes, int settle_min)
       const double hrs = d / 3600.0;
       const double mvh = (double)dm / hrs;
       const double ma  = -mvh / 0.915;
-      ESP_LOGW(TAG, "[DSLEEP] 지난 결과: %ldmV -> %ldmV  d=%+ldmV / %.2f시간 "
+      ESP_LOGW(TAG, "[DSLEEP] 지난 결과(훅, 무선 중): %ldmV -> %ldmV  d=%+ldmV / %.2f시간 "
                     "= %+.3f mV/시간  ->  깊은잠 약 %.2f mA",
                (long)m0, (long)m1, (long)dm, hrs, mvh, ma);
+      /* ★저부하(무선 시작 전) 쌍이 있으면 그쪽을 먼저 믿는다 — 훅 값은 무선이 켜지며
+       *  셀이 처지는 순간이라 낡은 셀에선 100mV 가까이 흔들린다(COM7 리허설). */
+      int32_t e0 = -1, e1 = -1, de = 0;
+      nvs_handle_t h3;
+      if (nvs_open("dsleep", NVS_READONLY, &h3) == ESP_OK) {
+        nvs_get_i32(h3, "mv0e", &e0); nvs_get_i32(h3, "mv1e", &e1);
+        const esp_err_t ee = nvs_get_i32(h3, "dmve", &de);
+        nvs_close(h3);
+        if (ee == ESP_OK)
+          ESP_LOGW(TAG, "[DSLEEP] ★지난 결과(저부하, 무선 전): %ldmV -> %ldmV  d=%+ldmV "
+                        "= %+.3f mV/시간  ->  깊은잠 약 %.2f mA",
+                   (long)e0, (long)e1, (long)de, (double)de / hrs,
+                   -((double)de / hrs) / 0.915);
+      }
     } else if (!a) {
       ESP_LOGW(TAG, "[DSLEEP] 완료된 측정 기록이 없다. `dsleep 720` 으로 예약할 것.");
     }
@@ -4152,6 +4278,12 @@ void somfy_app_console_dsleep(int minutes, int settle_min)
   nvs_set_u8 (h, "phase", 0);
   nvs_set_u32(h, "dur_s", (uint32_t)minutes * 60u);
   nvs_set_u32(h, "settle_s", s_dsleep_settle_s);
+  /* ★2026-09-28 지난 결과를 지운다. 안 지웠더니 리허설의 mv1/dmv 가 남아
+   *  새 측정이 무효로 끝났을 때 **옛 값이 새 결과처럼** 보였다(mv0=4084 인데
+   *  dmv=18 — 4048-4084=-36 이어야 하는데). */
+  nvs_erase_key(h, "mv0");  nvs_erase_key(h, "mv1");  nvs_erase_key(h, "dmv");
+  nvs_erase_key(h, "inv_rst");  nvs_erase_key(h, "oled_off");
+  nvs_erase_key(h, "mv0e");  nvs_erase_key(h, "mv1e");  nvs_erase_key(h, "dmve");
   nvs_commit(h);
   nvs_close(h);
   s_dsleep_armed = 1;    /* ★★이 한 줄이 빠져 12시간 측정이 통째로 무산됐다 */
@@ -4262,6 +4394,9 @@ void somfy_app_run(void *arg) {
   boot_diag_stage2(BOOT_S2_OLED_ENTER);   /* ★여기서 멈추면 OLED init 이 범인 */
   oled_ui_init(&s_ui);                 /* SSD1306 1회 init (연속 X) */
   boot_diag_stage2(BOOT_S2_OLED_DONE);
+#if BOARD_HAS_BAT_ADC
+  _dsleep_enter_after_oled();          /* ★2026-09-28 깊은잠 대조군 — 대기 중일 때만 */
+#endif
   btn_handler_init(_btn_event_cb, NULL); /* GPIO 설정 (연속 X) */
   boot_diag_stage2(BOOT_S2_BTN_DONE);
 #if BOARD_HAS_BAT_ADC && !TEMP_NO_CHARGE

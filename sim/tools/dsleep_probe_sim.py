@@ -81,6 +81,10 @@ class Dev:
         settle_min = max(1, min(SETTLE_MAX_M, settle_min))
         self.nvs.update(armed=1, phase=0, dur_s=minutes * 60,
                         settle_s=settle_min * 60)
+        # ★2026-09-28 지난 결과를 지운다 — 안 지웠더니 리허설의 mv1/dmv 가 남아
+        #   새 측정이 무효로 끝났을 때 옛 값이 새 결과처럼 보였다.
+        for k in ('mv0', 'mv1', 'dmv', 'inv_rst', 'mv0e', 'mv1e', 'dmve'):
+            self.nvs.pop(k, None)
         self.ram_armed = 1                  # ★이 한 줄이 실기에서 빠져 있었다
         self.log.append('예약 %d분 — 이제 USB 를 뽑으면 %d초 뒤 자동 시작' % (minutes, SETTLE_S))
 
@@ -119,12 +123,15 @@ class Dev:
         self.nvs['armed'] = 0
         self.ram_armed = 0
         if wake_cause != WAKE_TIMER:
+            self.nvs['inv_rst'] = wake_cause          # ★2026-09-28 왜 버렸는지 남긴다
             self.log.append('phase1: 기상원인 %s — **무효**(타이머 아님). 해제만 하고 진행'
                             % wake_cause)
             return 'RUN'
         dmv = mv - self.nvs['mv0']
         hrs = self.nvs['dur_s'] / 3600.0
         self.result = (dmv, hrs)
+        self.nvs['mv1'] = mv
+        self.nvs['dmv'] = dmv
         self.log.append('phase1: mv1=%d  d=%+dmV / %.2fh = %+.3f mV/h'
                         % (mv, dmv, hrs, dmv / hrs))
         return 'RUN'
@@ -212,6 +219,33 @@ def main():
     assert d.nvs['settle_s'] == 60, '0분은 1분으로 올려야 한다'
     d = _run('정착 클램프 상한', [('CMD', 720, 9999)])
     assert d.nvs['settle_s'] == SETTLE_MAX_M * 60
+
+    # ⑩ ★회귀(2026-09-28): 깊은잠 중 사용자가 "화면이 멈췄다"며 재부팅 → POR.
+    #    측정은 버리고, 사유를 남겨야 한다.
+    d = _run('★회귀: 깊은잠 중 사용자 재부팅(POR)',
+             [('CMD', 720, 60), ('TICK', False, 61 * 60),
+              ('BOOT', 4084, WAKE_OTHER, False),      # phase0: mv0 기록 후 잠듦
+              ('BOOT', 4080, 'POWERON', False)])      # 사용자 재부팅
+    assert d.result is None and d.nvs['armed'] == 0
+    assert d.nvs.get('inv_rst') == 'POWERON', '★무효 사유를 남겨야 다음에 바로 안다'
+
+    # ⑪ ★회귀(2026-09-28): 리허설 결과(mv1/dmv)가 남은 채 재예약 → 새 측정 무효.
+    #    옛 dmv 가 새 결과처럼 보이면 안 된다 (실측: mv0=4084, dmv=18 로 보였음).
+    d = Dev()
+    d.nvs.update(mv0=4030, mv1=4048, dmv=18)          # 지난 리허설의 흔적
+    d.cmd(720, 60)
+    assert 'dmv' not in d.nvs and 'mv1' not in d.nvs, '★옛 결과가 남아 새 결과처럼 보인다'
+    for _ in range(61 * 60):
+        if d.tick(False) == 'RESTART':
+            break
+    d.on_boot(4084, WAKE_OTHER, False)
+    d.on_boot(4080, 'POWERON', False)
+    assert 'dmv' not in d.nvs, '★무효 측정 뒤에도 dmv 가 없어야 한다'
+    print()
+    print('=' * 74)
+    print('케이스: ★회귀: 옛 결과 잔존 → 재예약 시 삭제')
+    print('=' * 74)
+    print('   재예약 뒤 mv1/dmv 없음, 무효 측정 뒤에도 dmv 없음 → 통과')
 
     # ── ③ 분해능 ────────────────────────────────────────────────────────
     print('\n' + '=' * 74)

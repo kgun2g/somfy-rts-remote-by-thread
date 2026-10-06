@@ -425,6 +425,7 @@ extern "C" void somfy_app_console_cycle(int dir);
 extern "C" void somfy_app_console_setfreq(int idx, float mhz);
 extern "C" void somfy_app_console_printfreq(void);
 extern "C" void somfy_app_console_dsleep(int minutes, int settle_min);   /* ★2026-09-11 깊은잠 대조군 */
+extern "C" int  somfy_app_early_bat_capture(void);   /* ★2026-09-28 무선 시작 전 저부하 전압 */
 extern "C" void somfy_app_batlog_dump(void);
 extern "C" void somfy_app_batlog_clear(void);
 extern "C" void somfy_app_console_usbsim(int off);
@@ -1016,6 +1017,15 @@ extern "C" void app_main()
 #ifdef CONFIG_CUSTOM_COMMISSIONABLE_DATA_PROVIDER
     esp_matter::set_custom_commissionable_data_provider(&g_efuse_comm_provider);
 #endif
+
+    /* ★★2026-09-28 무선을 켜기 **직전**(저부하)에 배터리 전압을 잡는다.
+     *  깊은잠 대조군의 mv0/mv1 을 원래는 somfy_app 부팅 훅에서 쟀는데, 그 훅은
+     *  esp_matter::start() **뒤**라 무선이 켜지며 큰 전류가 흐르는 순간이다.
+     *  COM7 리허설에서 훅 값(4014mV)이 같은 부팅의 평상시 값(~4120mV)보다
+     *  약 100mV 낮았다 — 낡은 셀의 내부저항 탓이다. 처짐 폭이 무선 타이밍에 따라
+     *  흔들리면 그대로 잡음이 되어 12시간 신호(칩이면 ~1mV)를 덮는다.
+     *  여기는 CPU 만 도는 결정적 구간이라 두 부팅의 부하가 같다. */
+    somfy_app_early_bat_capture();
 
     /* Matter start */
     boot_diag_stage(BOOT_S1_MATTER_START);
