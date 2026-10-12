@@ -176,6 +176,11 @@ void cc1101_enter_tx_mode(cc1101_t *dev);
  */
 void cc1101_idle(cc1101_t *dev);
 
+/* ★2026-10-07 얕은잠 중 CC1101 이 정말 SPWD 로 자는지 확인·보장 (cc1101.c 주석 참조) */
+void cc1101_probe_sleep(cc1101_t *dev);                 /* 깨워서 상태 기록 후 재움 */
+void cc1101_probe_stats(uint32_t *asleep, uint32_t *awake, uint8_t *last);
+void cc1101_sleep_pins_fix(void);                       /* 절전 중 CSn 풀업 등 */
+
 /**
  * @brief 단일 레지스터 쓰기
  */

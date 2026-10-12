@@ -24,6 +24,9 @@
 #include "esp_heap_caps.h"    /* heap_caps_get_largest_free_block — heap 진단 */
 #include "esp_task_wdt.h"    /* Task WDT — 메인 루프 hang 자동 리부트 */
 #include "wake_diag.h"        /* ★2026-08-20 깨어남 출처 계측 */
+#if CONFIG_ESP_SLEEP_DEBUG
+#include "esp_private/esp_sleep_internal.h"   /* ★2026-10-07 절전 전원 도메인 실측 */
+#endif
 #include "esp_attr.h"         /* RTC_NOINIT_ATTR — 리부트 살아남는 메모리 */
 #include "thread_provision.h"
 
@@ -943,9 +946,13 @@ static void _rf_worker_task(void *pvParam)
 {
   rf_job_t job;
   while (1) {
-    if (xQueueReceive(s_rf_queue, &job, portMAX_DELAY) == pdTRUE) {
+    /* ★2026-10-07 큐가 60초 비면 CC1101 수면 탐침(cc1101.c 주석). 이 태스크만 CC1101 을
+     *  만지므로 송신과 SPI 가 겹치지 않는다. 깨어남 +1회/분 — 무시할 수준. */
+    if (xQueueReceive(s_rf_queue, &job, pdMS_TO_TICKS(60000)) == pdTRUE) {
       _do_rf_send(&job);
       s_tilt_inflight = false;   /* 작업 완료 — 다음 틸트 detent 허용 */
+    } else if (g_rf_ready) {
+      cc1101_probe_sleep(&g_cc1101);
     }
   }
 }
@@ -2796,11 +2803,41 @@ static uint32_t s_wc_base[WC_N + 1];
 static int64_t s_ls_mark_us   = 0;            /* 직전 배터리 샘플 시점의 누적값 */
 static int64_t s_ls_mark_wall = 0;            /* 그때의 벽시계 */
 
+/* ★★2026-10-07 얕은잠 중 **실제로 꺼지는 전원 도메인**을 잰다.
+ *
+ *  깊은잠 대조군(9/29)에서 기판 전체가 평소 소비의 약 5%(~0.3mA)로 나왔다 —
+ *  나머지 95% 는 칩이다. 그중 깨어있는 시간 몫을 빼면 **얕은잠 상태 자체가 ~3mA**
+ *  인데, 제대로 설정된 C6 얕은잠은 0.1~0.3mA 다. 즉 꺼져야 할 도메인이 켜진 채 잔다.
+ *  어느 도메인을 끌지는 IDF 가 여러 조건(PM_POWER_DOWN_PERIPHERAL, 모뎀 상태,
+ *  XTAL 요청 등)의 조합으로 정하므로, 추측하지 않고 **하드웨어에 넘긴 최종값**을 본다.
+ *
+ *  CONFIG_ESP_SLEEP_DEBUG 를 켜면 IDF 가 esp_sleep_context_t.sleep_flags 에
+ *  "Enter sleep" 직전의 PMU 전원차단 플래그(PMU_SLEEP_PD_*)를 써 준다(sleep_modes.c).
+ *  그 블록들은 구조체에 값만 쓰고 로그·타이밍엔 손대지 않는다(전수 확인) — 계측이
+ *  측정 대상을 건드리지 않는다.
+ *  비트 1 = 그 도메인을 **끔**. AND 는 "매번 끔", OR 는 "한 번이라도 끔".
+ *  OR 에 없는 비트 = **한 번도 안 꺼진 도메인** = 용의자. */
+#if CONFIG_ESP_SLEEP_DEBUG
+static esp_sleep_context_t s_slp_ctx;
+static uint32_t s_pd_and  = 0xFFFFFFFFu;
+static uint32_t s_pd_or   = 0;
+static uint32_t s_pd_last = 0;
+static uint32_t s_pd_cnt  = 0;
+static uint32_t s_pd_rej  = 0;      /* 절전 요청이 거부된 횟수 */
+#endif
+
 #if CONFIG_PM_ENABLE && CONFIG_FREERTOS_USE_TICKLESS_IDLE
 static esp_err_t _ls_exit_cb(int64_t sleep_time_us, void *arg) {
   (void)arg;
   if (sleep_time_us > 0) {
     s_ls_total_us += sleep_time_us; s_ls_count++;
+#if CONFIG_ESP_SLEEP_DEBUG
+    s_pd_last = s_slp_ctx.sleep_flags;   /* ★방금 절전에 하드웨어로 넘어간 전원차단 플래그 */
+    s_pd_and &= s_pd_last;
+    s_pd_or  |= s_pd_last;
+    s_pd_cnt++;
+    if (s_slp_ctx.sleep_request_result != ESP_OK) s_pd_rej++;
+#endif
     int b = 0;
     while (b < LS_HIST_N - 1 && sleep_time_us >= s_ls_hist_edge[b]) b++;
     s_ls_hist[b]++;
@@ -2828,6 +2865,10 @@ static void _ls_stats_init(void) {
       .enter_cb_prior = 0, .exit_cb_prior = 0 };
   esp_err_t e = esp_pm_light_sleep_register_cbs(&cfg);
   ESP_LOGW(TAG, "[LS] light sleep 계측 등록: %s", esp_err_to_name(e));
+#if CONFIG_ESP_SLEEP_DEBUG
+  esp_sleep_set_sleep_context(&s_slp_ctx);
+  ESP_LOGW(TAG, "[PD] 절전 전원 도메인 계측 등록 (배터리 구동 중 60초마다 NVS pmdump/pd*)");
+#endif
 }
 #else
 static void _ls_stats_init(void) { ESP_LOGW(TAG, "[LS] PM/tickless 미사용 — 계측 없음"); }
@@ -2874,6 +2915,21 @@ static void _pmdump_save(void) {
         if (nvs_set_str(h, "locks0", buf) == ESP_OK) s_pm0_done = true;
       }
       nvs_set_str(h, "locks", buf);
+#if CONFIG_ESP_SLEEP_DEBUG
+      /* ★2026-10-07 전원 도메인 — 값이 같으면 NVS 가 쓰기를 건너뛰므로 마모 걱정 없음 */
+      nvs_set_u32(h, "pdand",  s_pd_and);
+      nvs_set_u32(h, "pdor",   s_pd_or);
+      nvs_set_u32(h, "pdlast", s_pd_last);
+      nvs_set_u32(h, "pdcnt",  s_pd_cnt);
+      nvs_set_u32(h, "pdrej",  s_pd_rej);
+#endif
+      {   /* ★2026-10-07 CC1101 수면 탐침 — bit7=1 이면 SPWD 로 자고 있었다 */
+        uint32_t ca = 0, cw = 0; uint8_t cl = 0xFF;
+        cc1101_probe_stats(&ca, &cw, &cl);
+        nvs_set_u32(h, "ccp_slp", ca);
+        nvs_set_u32(h, "ccp_awk", cw);
+        nvs_set_u8 (h, "ccp_last", cl);
+      }
       nvs_commit(h);
       nvs_close(h);
     }

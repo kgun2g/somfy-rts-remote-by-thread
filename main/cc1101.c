@@ -193,12 +193,66 @@ static uint8_t spi_strobe(cc1101_t *dev, uint8_t cmd)
 #define CC1101_WAKE_US 1000
 #endif
 
+/* ★★2026-10-07 수면 탐침 — CC1101 이 **정말** 자고 있었는지 상태 바이트로 본다.
+ *
+ *  의심: 얕은잠마다 IDF 가 모든 GPIO 를 DISABLE + FLOATING 으로 바꾼다
+ *  (sleep_gpio.c esp_sleep_config_gpio_isolate, 부팅 시 1회 — PM_SLP_DISABLE_GPIO).
+ *  그러면 CSn 이 풀 저항 없이 뜨고, LOW 쪽으로 흐르면 SPWD 인 CC1101 이 깨어
+ *  IDLE(~1.7mA)로 남는다. 깊은잠 대조군 때는 CSn 을 gpio_hold_en 으로 HIGH 고정해서
+ *  기판이 0.3mA 로 나왔다 — 즉 그 기준선엔 이 전류가 **빠져 있다**.
+ *  9/1 에 SPWD 를 넣었을 때도 실제로 전류가 줄었는지는 확인 못 했다(CHG_STAT 폭주가
+ *  모든 측정을 덮고 있었다).
+ *
+ *  판별: SPWD 에서 CSn 을 내리면 크리스털이 기동할 때까지 SO 가 HIGH 다(CHIP_RDYn).
+ *  하드웨어 SPI 는 CSn 을 내리자마자 클럭을 시작하므로 SNOP 이 돌려주는 상태 바이트의
+ *  bit7 이 곧 답이다:  1 = 방금까지 SPWD 로 자고 있었다 / 0 = 이미 깨어 있었다. */
+static uint32_t s_ccp_asleep = 0;
+static uint32_t s_ccp_awake  = 0;
+static uint8_t  s_ccp_last   = 0xFF;
+
 static void _wake_if_pd(cc1101_t *dev)
 {
     if (!dev || !dev->powered_down) return;
     dev->powered_down = false;      /* ★먼저 내린다 — 아래 strobe 가 되돌아오지 않게 */
-    spi_strobe(dev, CC1101_SNOP);   /* CSn 어서트 = 기상 신호 */
+    const uint8_t st = spi_strobe(dev, CC1101_SNOP);   /* CSn 어서트 = 기상 신호 */
+    if (st & 0x80) s_ccp_asleep++; else s_ccp_awake++;
+    s_ccp_last = st;
     esp_rom_delay_us(CC1101_WAKE_US);
+}
+
+/* RF 작업 태스크가 큐가 빈 채 60초 지나면 부른다(같은 태스크라 송신과 SPI 충돌 없음).
+ *  깨워서 상태를 기록하고 즉시 다시 재운다. 송신 중(깨어 있음)이면 건드리지 않는다. */
+void cc1101_probe_sleep(cc1101_t *dev)
+{
+    if (!dev || !dev->powered_down) return;
+    _wake_if_pd(dev);
+    cc1101_idle(dev);
+}
+
+void cc1101_probe_stats(uint32_t *asleep, uint32_t *awake, uint8_t *last)
+{
+    if (asleep) *asleep = s_ccp_asleep;
+    if (awake)  *awake  = s_ccp_awake;
+    if (last)   *last   = s_ccp_last;
+}
+
+/* ★★2026-10-07 얕은잠 중 CC1101 핀을 **정의된 레벨**로 둔다.
+ *  CSn = 입력 + 내부 풀업 → HIGH → SPWD 유지 (핵심)
+ *  SCK·MOSI·GD0 = 입력 + 풀다운 → CSn 이 HIGH 면 칩이 무시하지만, 중간 전위로 뜨면
+ *    CMOS 입력 버퍼에 관통전류가 흐를 수 있어 바닥으로 묶는다.
+ *  MISO 는 CC1101 출력이라 그대로 둔다.
+ *  절전 진입 때 IDF 가 핀마다 이 설정을 적용한다(gpio_sleep_mode_config_apply).
+ *  부팅 시 isolate 가 한 번 걸린 **뒤**에 부르므로 덮어써지지 않는다. */
+void cc1101_sleep_pins_fix(void)
+{
+    gpio_sleep_set_direction(CC1101_PIN_CS,   GPIO_MODE_INPUT);
+    gpio_sleep_set_pull_mode(CC1101_PIN_CS,   GPIO_PULLUP_ONLY);
+    gpio_sleep_set_direction(CC1101_PIN_SCK,  GPIO_MODE_INPUT);
+    gpio_sleep_set_pull_mode(CC1101_PIN_SCK,  GPIO_PULLDOWN_ONLY);
+    gpio_sleep_set_direction(CC1101_PIN_MOSI, GPIO_MODE_INPUT);
+    gpio_sleep_set_pull_mode(CC1101_PIN_MOSI, GPIO_PULLDOWN_ONLY);
+    gpio_sleep_set_direction(CC1101_PIN_GD0,  GPIO_MODE_INPUT);
+    gpio_sleep_set_pull_mode(CC1101_PIN_GD0,  GPIO_PULLDOWN_ONLY);
 }
 
 /* ─── Somfy RTS용 CC1101 기본 레지스터 값 ───── */

@@ -45,6 +45,16 @@ def _get(items, key):
     return None
 
 
+def _get_u32(items, key):
+    """pmdump 네임스페이스의 정수 키 (없으면 None)."""
+    for it in items:
+        if it['ns_name'] == 'pmdump' and it['key'] == key:
+            v = it['value']
+            if isinstance(v, int):
+                return v
+    return None
+
+
 def _ints(line):
     return [int(x) for x in re.findall(r'\d+', line)]
 
@@ -147,6 +157,19 @@ def main(path):
     print()
     print('읽는 법: NO_LIGHT_SLEEP 류 락을 잡고 있는 항목이 범인이다.')
     print('        rtos0 은 결과지 원인이 아니다(깨어 있는 틱마다 잡힌다).')
+    # ★2026-10-07 얕은잠 중 전원 도메인 (펌웨어 CONFIG_ESP_SLEEP_DEBUG 계측)
+    print()
+    import pd_flags
+    pd_flags.report(_get_u32(items, 'pdand'), _get_u32(items, 'pdor'),
+                    _get_u32(items, 'pdlast'), _get_u32(items, 'pdcnt'),
+                    _get_u32(items, 'pdrej'))
+    last = _get_u32(items, 'pdlast')
+    if last:
+        for b, nm in pd_flags.mode_bits(last):
+            print('  (모드 비트 %d: %s)' % (b, nm))
+    print()
+    pd_flags.cc_report(_get_u32(items, 'ccp_slp'), _get_u32(items, 'ccp_awk'),
+                       _get_u32(items, 'ccp_last'))
     return 0
 
 

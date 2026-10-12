@@ -498,6 +498,29 @@ static int scmd_freq(int argc, char **argv){  /* freq [idx mhz] : set(+NVS저장
  *    12시간 예약이 걸리는 사고가 난다. 파괴적 기본값 금지.
  *  12시간인 이유: ADC 차분 잡음 3mV 대비 3-sigma 로 갈리는 최소가 8시간
  *  (sim/tools/dsleep_probe_sim.py). */
+/* ★2026-10-07 `ccfix`        상태 + CC1101 수면 탐침 통계
+ *             `ccfix 0|1`    절전 중 CSn 풀업 끄기/켜기(재부팅 후 적용, A/B 대조군용)
+ *  탐침 해석: bit7=1 "자고 있었음"이 정상. USB 중엔 얕은잠이 없어 CSn 이 뜨지 않으므로
+ *  여기서 "깨어 있었음"이 나오면 탐침 자체가 틀린 것이다. */
+static int scmd_ccfix(int argc, char **argv){
+    nvs_handle_t h;
+    if (argc >= 2) {
+        const uint8_t v = (uint8_t)(atoi(argv[1]) ? 1 : 0);
+        if (nvs_open("diag", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_set_u8(h, "ccfix", v); nvs_commit(h); nvs_close(h);
+        }
+        printf("[CCFIX] %s — 재부팅 후 적용\n", v ? "켜짐(CSn 풀업)" : "꺼짐(대조군)");
+        return 0;
+    }
+    uint8_t fix = 1;
+    if (nvs_open("diag", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "ccfix", &fix); nvs_close(h); }
+    uint32_t a = 0, w = 0; uint8_t last = 0xFF;
+    cc1101_probe_stats(&a, &w, &last);
+    printf("[CCFIX] 설정=%s  탐침: 자고있었음 %lu / 깨어있었음 %lu  마지막 상태 0x%02X\n",
+           fix ? "켜짐" : "꺼짐", (unsigned long)a, (unsigned long)w, last);
+    return 0;
+}
+
 static int scmd_dsleep(int argc, char **argv){
     int m  = (argc >= 2) ? atoi(argv[1]) : -1;   /* -1 = 조회 */
     int st = (argc >= 3) ? atoi(argv[2]) : 1;    /* 정착(분). 기본 1분 = 기존 60초 */
@@ -978,6 +1001,20 @@ extern "C" void app_main()
     if (cc_ok && rts_ok) {
         s_rf_ready = true;
         ESP_LOGI(TAG, "[RF] CC1101 + Somfy RTS init 완료");
+        /* ★★2026-10-07 얕은잠 중 CC1101 CSn 이 뜨지 않게 한다(cc1101.c 주석).
+         *  NVS diag/ccfix 로 끌 수 있다 — A/B 대조군용(콘솔 `ccfix 0` 후 재부팅).
+         *  기본은 켜짐: 대조군이 아니면 늘 적용되어야 하는 수정이다. */
+        {
+            uint8_t fix = 1;
+            nvs_handle_t h;
+            if (nvs_open("diag", NVS_READONLY, &h) == ESP_OK) {
+                nvs_get_u8(h, "ccfix", &fix);
+                nvs_close(h);
+            }
+            if (fix) cc1101_sleep_pins_fix();
+            ESP_LOGW(TAG, "[RF] 절전 중 CC1101 핀 고정: %s",
+                     fix ? "켜짐 (CSn 풀업)" : "★꺼짐 — 대조군(CSn 이 뜬다)");
+        }
     } else {
         s_rf_ready = false;
         ESP_LOGW(TAG, "[RF] RF init 실패/하드웨어 없음 (cc=%d rts=%d) — "
@@ -1087,6 +1124,8 @@ extern "C" void app_main()
       esp_console_cmd_register(&tmc);
       const esp_console_cmd_t dsc={ .command="dsleep", .help="깊은잠 대조군 dsleep <측정분> [정착분] (정착=셀 완화 대기, 기본 1분)", .hint=NULL, .func=&scmd_dsleep, .argtable=NULL };
       esp_console_cmd_register(&dsc);
+      const esp_console_cmd_t ccf={ .command="ccfix", .help="ccfix [0|1] 절전 중 CC1101 CSn 풀업 + 수면 탐침 통계", .hint=NULL, .func=&scmd_ccfix, .argtable=NULL };
+      esp_console_cmd_register(&ccf);
       const esp_console_cmd_t bdc={ .command="bd", .help="부팅 진단 조회 (bd / bd clear)", .hint=NULL, .func=&scmd_bd, .argtable=NULL };
       esp_console_cmd_register(&bdc);
       const esp_console_cmd_t blc={ .command="bl", .help="배터리 방전 기록 조회 (bl / bl clear)", .hint=NULL, .func=&scmd_bl, .argtable=NULL };
