@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE svg
+  PUBLIC '-//W3C//DTD SVG 1.0//EN'
+  'http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd'>
+<svg width="1000" height="515" preserveAspectRatio="xMinYMin meet" viewBox="0 0 1000 515" xmlns="http://www.w3.org/2000/svg" version="1.0" fill-rule="evenodd" xmlns:xlink="http://www.w3.org/1999/xlink">
+	<title>...</title>
+	<desc>...</desc>
+	<clipPath id="clip">
+		<rect x="0" y="0" width="1000" height="515"/>
+	</clipPath>
+	<g id="group" transform="scale(1,-1) translate(0,-515)" style="clip-path: url(#clip)">
+		<g transform="">
+			<rect x="0" y="0" width="1000" height="515" style="stroke: none; stroke-linecap: butt; stroke-width: 1; fill: rgb(100%,100%,100%); fill-rule: evenodd;"/>
+			<text x="28" y="481" style="font-family: MalgunReport; font-size: 22px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,962) scale(1,-1)">수정 항목별 효과의 크기 · 조건부 추가 사용 시간</text>
+			<text x="28" y="453" style="font-family: MalgunReport; font-size: 11px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,906) scale(1,-1)">기준 4.56mA·560mAh / 기상 1회당 추가 전하 50µC / 이벤트 전달 및 주기 변경이 정상 동작하는 경우</text>
+			<path d="M 370,147 L 370,397 Z" style="stroke: rgb(85%,88%,90%); stroke-linecap: butt; stroke-width: 0.65;"/>
+			<text x="367.24609375" y="131" style="font-family: MalgunReport; font-size: 10px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,262) scale(1,-1)">0</text>
+			<path d="M 451.666667,147 L 451.666667,397 Z" style="stroke: rgb(85%,88%,90%); stroke-linecap: butt; stroke-width: 0.65;"/>
+			<text x="448.91276041666663" y="131" style="font-family: MalgunReport; font-size: 10px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,262) scale(1,-1)">3</text>
+			<path d="M 533.333333,147 L 533.333333,397 Z" style="stroke: rgb(85%,88%,90%); stroke-linecap: butt; stroke-width: 0.65;"/>
+			<text x="530.5794270833333" y="131" style="font-family: MalgunReport; font-size: 10px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,262) scale(1,-1)">6</text>
+			<path d="M 615,147 L 615,397 Z" style="stroke: rgb(85%,88%,90%); stroke-linecap: butt; stroke-width: 0.65;"/>
+			<text x="612.24609375" y="131" style="font-family: MalgunReport; font-size: 10px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,262) scale(1,-1)">9</text>
+			<path d="M 696.666667,147 L 696.666667,397 Z" style="stroke: rgb(85%,88%,90%); stroke-linecap: butt; stroke-width: 0.65;"/>
+			<text x="691.1588541666666" y="131" style="font-family: MalgunReport; font-size: 10px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,262) scale(1,-1)">12</text>
+			<path d="M 778.333333,147 L 778.333333,397 Z" style="stroke: rgb(85%,88%,90%); stroke-linecap: butt; stroke-width: 0.65;"/>
+			<text x="772.8255208333334" y="131" style="font-family: MalgunReport; font-size: 10px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,262) scale(1,-1)">15</text>
+			<path d="M 860,147 L 860,397 Z" style="stroke: rgb(85%,88%,90%); stroke-linecap: butt; stroke-width: 0.65;"/>
+			<text x="854.4921875" y="131" style="font-family: MalgunReport; font-size: 10px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,262) scale(1,-1)">18</text>
+			<g transform="">
+				<g transform="">
+					<rect x="370.0" y="161.1304347826087" width="366.03064839714864" height="21.739130434782624" style="stroke: rgb(79%,47%,18%); stroke-linecap: butt; stroke-width: 1; fill: rgb(79%,47%,18%); fill-rule: evenodd;"/>
+					<rect x="370.0" y="211.1304347826087" width="74.95694892437808" height="21.739130434782624" style="stroke: rgb(79%,47%,18%); stroke-linecap: butt; stroke-width: 1; fill: rgb(79%,47%,18%); fill-rule: evenodd;"/>
+					<rect x="370.0" y="261.1304347826087" width="74.95694892437808" height="21.739130434782624" style="stroke: rgb(79%,47%,18%); stroke-linecap: butt; stroke-width: 1; fill: rgb(79%,47%,18%); fill-rule: evenodd;"/>
+					<rect x="370.0" y="311.1304347826087" width="366.03064839714864" height="21.739130434782624" style="stroke: rgb(79%,47%,18%); stroke-linecap: butt; stroke-width: 1; fill: rgb(79%,47%,18%); fill-rule: evenodd;"/>
+					<rect x="370.0" y="361.1304347826087" width="329.4756821971705" height="21.739130434782624" style="stroke: rgb(79%,47%,18%); stroke-linecap: butt; stroke-width: 1; fill: rgb(79%,47%,18%); fill-rule: evenodd;"/>
+					<g transform=""/>
+				</g>
+				<g transform=""/>
+				<g transform=""/>
+			</g>
+			<text x="28" y="368.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,736) scale(1,-1)">LP 버튼 중복 대기 제거</text>
+			<text x="882" y="368.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,736) scale(1,-1)">+12.1시간</text>
+			<text x="28" y="318.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,636) scale(1,-1)">main: 100ms → 이벤트 + 1초 점검</text>
+			<text x="882" y="318.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,636) scale(1,-1)">+13.4시간</text>
+			<text x="28" y="268.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,536) scale(1,-1)">OLED OFF: 500ms → 이벤트</text>
+			<text x="882" y="268.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,536) scale(1,-1)">+2.8시간</text>
+			<text x="28" y="218.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,436) scale(1,-1)">hold 유휴: 500ms → 이벤트</text>
+			<text x="882" y="218.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,436) scale(1,-1)">+2.8시간</text>
+			<text x="28" y="168.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,336) scale(1,-1)">LP 안전망 연장 · 추가분 비교</text>
+			<text x="882" y="168.0" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,336) scale(1,-1)">+13.4시간</text>
+			<text x="512.25" y="107" style="font-family: MalgunReport; font-size: 12px;fill: rgb(9%,19%,27%); stroke:none;" transform="translate(0,214) scale(1,-1)">기준선보다 늘어나는 시간 · 시간</text>
+			<text x="28" y="76" style="font-family: MalgunReport; font-size: 11px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,152) scale(1,-1)">이 그래프는 효과 실측이 아니다. 기상당 전하를 25~100µC로 바꾸면 증가 시간도 달라진다.</text>
+			<text x="28" y="50" style="font-family: MalgunReport; font-size: 11px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,100) scale(1,-1)">개별 결과를 더하지 않는다. 동시 적용 시 기상 겹침과 전원 상태 변화 때문에 효과가 중복된다.</text>
+			<text x="28" y="24" style="font-family: MalgunReport; font-size: 11px;fill: rgb(36%,44%,50%); stroke:none;" transform="translate(0,48) scale(1,-1)">LP 안전망 연장은 중복 대기 정리 후의 추가분만 같은 기준선에서 비교. MODEM·TOP은 미측정.</text>
+		</g>
+	</g>
+</svg>

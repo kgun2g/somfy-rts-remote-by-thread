@@ -360,6 +360,12 @@ bool cc1101_init(cc1101_t *dev)
         .quadwp_io_num   = -1,
         .quadhd_io_num   = -1,
         .max_transfer_sz = 64,   /* DMA 미사용 → FIFO 한도(64B). 실제 최대 9B */
+        /* ★2026-10-15 절전 중 주변장치(TOP) 도메인을 꺼도 되게 레지스터 리텐션을 만든다.
+         *  CONFIG_PM_POWER_DOWN_PERIPHERAL_IN_LIGHT_SLEEP=y 에서 이 플래그가 없으면 SPI 드라이버가
+         *  리텐션 모듈을 "초기화만" 해 두어 TOP 차단을 영영 막는다(sleep_system_peripheral.c
+         *  peripheral_domain_pd_allowed: 초기화된 모듈은 전부 생성돼 있어야 한다).
+         *  평소 동작은 바뀌지 않는다 — 상주 ADC 유닛이 TOP 을 계속 붙잡는다(somfy_app.c lsfloor 주석). */
+        .flags           = SPICOMMON_BUSFLAG_SLP_ALLOW_PD,
     };
     /* ★★★2026-08-16 SPI_DMA_CH_AUTO → SPI_DMA_DISABLED. **패닉의 직접 원인이었다.**
      *

@@ -191,7 +191,11 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700, base_ns=None):
     if isinstance(wib, (bytes, bytearray)) and len(wib) >= 16 and el2:
         it = _st.unpack_from('<4I', wib)
         nm = ['btn_handler', 'somfy_app 메인', 'oled_ui', 'hold_repeat']
-        exp = [40.0, 10.0, 2.0, 2.0]
+        # ★2026-10-18 (감사 F18) btn 의 '예상 40' 은 옛 25ms 폴링 시절 값이었다. LP 경로 유휴는 100ms
+        #  주기라 루프 10회/초가 맞다(10/18 이전 펌웨어는 110ms 라 9.1). 화면 ON 중·눌림 중엔 더 많다.
+        # ★같은 날 3차 펌웨어(버튼 유휴 1000ms 를 poll_ms 로 알린다)는 버튼·메인 1초, OLED·hold 5초 안전망 →
+        #  유휴 기대 1/1/0.2/0.2. 화면이 켜져 있던 시간(OLED 20fps)이 섞이면 oled 가 더 높다.
+        exp = [1.0, 1.0, 0.2, 0.2] if (ns.get('poll_ms') or 0) >= 1000 else [10.0, 10.0, 2.0, 2.0]
         print()
         print('── 태스크별 실제 반복 (부팅 후 누적 / 세션 %ds) ──' % el2)
         tot = 0.0
@@ -204,7 +208,11 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700, base_ns=None):
         if cnt:
             w = cnt / float(el2)
             print('  %-16s %9s  = %6.2f회/초' % ('실제 깨어남', '', w))
-            print('  ★남의 몫(스택 등) %6.2f회/초  = 전체의 %.0f%%'
+            # ★2026-10-18 정정(감사 F18): 이 차이를 "스택 몫"이라 불렀지만, 10/18 이전 펌웨어에서는
+            #  대부분이 **우리 버튼 태스크의 이중 대기**(루프 1회에 통지 대기 + 공통 10ms 지연 = 깨어남 2회)였다.
+            #  위 카운터는 루프 1회에 1 씩만 세므로 두 번째 깨어남이 여기로 빠졌다. 고친 펌웨어에서는 작아져야 한다.
+            print('  ★나머지(루프 밖 대기·SDK 몫) %6.2f회/초  = 전체의 %.0f%%'
+                  '   ※10/18 이전 펌웨어는 대부분 버튼 태스크 이중 대기'
                   % (w - tot, 100.0 * (w - tot) / w if w else 0))
     return 0
 

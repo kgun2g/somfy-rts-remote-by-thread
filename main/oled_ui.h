@@ -121,13 +121,16 @@ typedef enum {
  *  ACTIVE : 페어링 진행 중(fail-safe armed) — "PAIRING" + 회전 스피너
  *  FAIL   : 실패 — "FAILED" + 오류코드 점멸, STOP 복귀 전까지 유지
  *  DONE   : 완료 — "SUCCESS" 표시 후 5초 뒤 메인 화면 복귀(안테나 갱신)
- *  READY  : 사용자가 SETUP 으로 페어링 준비 확정 — "READY" 점멸 */
+ *  READY  : 사용자가 SETUP 으로 페어링 준비 확정 — "READY" 점멸
+ *  ALREADY: ★2026-10-18 이미 등록된 기기에서 메뉴로 들어옴 — "ALREADY PAIRED" 5초 뒤 메인(커미셔닝 창 안 엶).
+ *           사용자 결정 "이미 등록됨을 보여 주고 창을 열지 않기". 글꼴이 영문뿐이라 영어로 쓴다. */
 typedef enum {
     OLED_PAIR_WAIT   = 0,
     OLED_PAIR_ACTIVE = 1,
     OLED_PAIR_FAIL   = 2,
     OLED_PAIR_DONE   = 3,
     OLED_PAIR_READY  = 4,
+    OLED_PAIR_ALREADY = 5,
 } oled_pair_phase_t;
 
 /* ─── 동작 표시 타입 ─────────────────────────── */
@@ -211,8 +214,11 @@ typedef struct {
 #define OLED_ACTION_DISPLAY_MS      2000     // 액션 화면 유지 시간(뗀 뒤) → NORMAL 복귀
 #define OLED_TASK_INTERVAL_MS       50       // 화면 업데이트 주기 (50ms = 20fps)
 /* ★2026-08-11 패널 OFF 시 주기 — 그려도 안 보이므로 느리게 돌아 CPU 를 재운다.
- *  너무 길면 버튼/진동으로 깨울 때 첫 프레임이 늦어 보이므로 500ms 로 절충한다. */
-#define OLED_TASK_INTERVAL_OFF_MS  500
+ *  너무 길면 버튼/진동으로 깨울 때 첫 프레임이 늦어 보이므로 500ms 로 절충한다.
+ *  ★★2026-10-18 500 → 5000 + **통지 대기** (감사 보고서 F10, 사용자 "나머지 진행").
+ *  500ms 로 절충한 이유(켤 때 첫 프레임 지연)는 oled_ui_set_display_on(true) 가 UI 태스크를
+ *  **즉시 깨우게** 해서 없앴다. 꺼진 동안 하는 일(ON/OFF 명령 재시도·패널 재검출)은 5초면 충분하다. */
+#define OLED_TASK_INTERVAL_OFF_MS  5000
 
 /* ─── API ────────────────────────────────────── */
 
@@ -435,8 +441,15 @@ void oled_ui_set_time_edit(oled_ui_ctx_t *ctx, const int v[5], uint8_t field);
  *        light sleep 진입 시 화면 OFF, wake 시 ON 으로 사용.
  *        UI 렌더 task 자체는 그대로 동작하지만 픽셀 데이터가 표시 안 됨.
  * @param on  true: 디스플레이 ON, false: 디스플레이 OFF (저전력)
+ * @return    ★2026-10-18 패널이 명령을 받았는가(3회 재시도 후). false 면 UI 태스크가 계속 재시도한다.
  */
-void oled_ui_set_display_on(bool on);
+bool oled_ui_set_display_on(bool on);
+/* ★2026-10-18 화면 켜기/끄기 **요청**(감사 F13) — I2C 를 안 건드리고 즉시 돌아온다. UI 태스크가 그 회전에
+ *  화면을 그린 뒤 0xAF/0xAE 를 보낸다(켤 때 잔상 없음). 입력·Matter 콜백과 메인 루프의 평소 켜기/끄기용.
+ *  결과가 필요한 측정 경로는 oled_ui_set_display_on() 을 쓴다. UI 태스크 시작 전이면 그쪽으로 넘긴다. */
+void oled_ui_request_display(bool on);
+/* ★2026-10-18 ON/OFF 명령 실패 누적(정상 = 0) — 감사 F14 */
+extern volatile uint32_t g_oled_onoff_fail_cnt;
 /* 패널이 켜져 있는가(배터리 절약 로직이 참조). */
 bool oled_ui_is_panel_on(void);
 

@@ -1,0 +1,151 @@
+{
+  "nominal_mAh": 700.0,
+  "usable_mAh": 560.0,
+  "baseline_mA": 4.56,
+  "assumed_charge_per_wake_uC": 50.0,
+  "items": [
+    {
+      "name": "LP 버튼 중복 대기 제거",
+      "nominal_wake_reduction_per_s": 8.181818181818183,
+      "assumed_charge_uC": 50.0,
+      "conditional_reduction_mA": 0.40909090909090917,
+      "current_mA": 4.15090909090909,
+      "mAh_per_day": 99.62181818181817,
+      "nominal_percent_per_day": 14.231688311688309,
+      "days_700mAh": 7.0265732223682305,
+      "days_560mAh": 5.621258577894584,
+      "gain_days_560mAh": 0.5042995135670978,
+      "current_reduction_percent": 8.97129186602871,
+      "gain_days_at_25uC": 0.2403080337035446,
+      "gain_days_at_100uC": 1.1188686000716075
+    },
+    {
+      "name": "main: 100ms → 이벤트 + 1초 점검",
+      "nominal_wake_reduction_per_s": 9,
+      "assumed_charge_uC": 50.0,
+      "conditional_reduction_mA": 0.45,
+      "current_mA": 4.109999999999999,
+      "mAh_per_day": 98.63999999999999,
+      "nominal_percent_per_day": 14.091428571428569,
+      "days_700mAh": 7.096512570965127,
+      "days_560mAh": 5.677210056772101,
+      "gain_days_560mAh": 0.5602509924446153,
+      "current_reduction_percent": 9.868421052631584,
+      "gain_days_at_25uC": 0.2655861106052324,
+      "gain_days_at_100uC": 1.2582686223756117
+    },
+    {
+      "name": "OLED OFF: 500ms → 이벤트",
+      "nominal_wake_reduction_per_s": 2,
+      "assumed_charge_uC": 50.0,
+      "conditional_reduction_mA": 0.1,
+      "current_mA": 4.46,
+      "mAh_per_day": 107.03999999999999,
+      "nominal_percent_per_day": 15.29142857142857,
+      "days_700mAh": 6.539611360239163,
+      "days_560mAh": 5.23168908819133,
+      "gain_days_560mAh": 0.11473002386384401,
+      "current_reduction_percent": 2.192982456140343,
+      "gain_days_at_25uC": 0.0567290361898829,
+      "gain_days_at_100uC": 0.23472289285905923
+    },
+    {
+      "name": "hold 유휴: 500ms → 이벤트",
+      "nominal_wake_reduction_per_s": 2,
+      "assumed_charge_uC": 50.0,
+      "conditional_reduction_mA": 0.1,
+      "current_mA": 4.46,
+      "mAh_per_day": 107.03999999999999,
+      "nominal_percent_per_day": 15.29142857142857,
+      "days_700mAh": 6.539611360239163,
+      "days_560mAh": 5.23168908819133,
+      "gain_days_560mAh": 0.11473002386384401,
+      "current_reduction_percent": 2.192982456140343,
+      "gain_days_at_25uC": 0.0567290361898829,
+      "gain_days_at_100uC": 0.23472289285905923
+    },
+    {
+      "name": "LP 안전망 연장 · 추가분 비교",
+      "nominal_wake_reduction_per_s": 9,
+      "assumed_charge_uC": 50.0,
+      "conditional_reduction_mA": 0.45,
+      "current_mA": 4.109999999999999,
+      "mAh_per_day": 98.63999999999999,
+      "nominal_percent_per_day": 14.091428571428569,
+      "days_700mAh": 7.096512570965127,
+      "days_560mAh": 5.677210056772101,
+      "gain_days_560mAh": 0.5602509924446153,
+      "current_reduction_percent": 9.868421052631584,
+      "gain_days_at_25uC": 0.2655861106052324,
+      "gain_days_at_100uC": 1.2582686223756117
+    }
+  ],
+  "cases": [
+    {
+      "name": "CC 보정 전 · 장기 기록",
+      "kind": "record_model",
+      "current_mA": 5.62,
+      "mAh_per_day": 134.88,
+      "nominal_percent_per_day": 19.268571428571427,
+      "days_700mAh": 5.189798339264532,
+      "days_560mAh": 4.1518386714116255,
+      "gain_days_560mAh": -0.9651203929158605,
+      "current_reduction_percent": -23.245614035087733
+    },
+    {
+      "name": "CC 보정 후 · 기준선",
+      "kind": "record_model",
+      "current_mA": 4.56,
+      "mAh_per_day": 109.44,
+      "nominal_percent_per_day": 15.634285714285715,
+      "days_700mAh": 6.396198830409357,
+      "days_560mAh": 5.116959064327486,
+      "gain_days_560mAh": 0.0,
+      "current_reduction_percent": 0.0
+    },
+    {
+      "name": "가정: 기상 10회/초 감소",
+      "kind": "conditional",
+      "current_mA": 4.06,
+      "mAh_per_day": 97.44,
+      "nominal_percent_per_day": 13.919999999999998,
+      "days_700mAh": 7.183908045977012,
+      "days_560mAh": 5.74712643678161,
+      "gain_days_560mAh": 0.6301673724541237,
+      "current_reduction_percent": 10.964912280701755
+    },
+    {
+      "name": "가정: 기상 20회/초 감소",
+      "kind": "conditional",
+      "current_mA": 3.5599999999999996,
+      "mAh_per_day": 85.44,
+      "nominal_percent_per_day": 12.205714285714285,
+      "days_700mAh": 8.192883895131088,
+      "days_560mAh": 6.554307116104869,
+      "gain_days_560mAh": 1.4373480517773833,
+      "current_reduction_percent": 21.92982456140351
+    },
+    {
+      "name": "목표: 평균 2.50mA",
+      "kind": "target",
+      "current_mA": 2.5,
+      "mAh_per_day": 60.0,
+      "nominal_percent_per_day": 8.571428571428571,
+      "days_700mAh": 11.666666666666666,
+      "days_560mAh": 9.333333333333334,
+      "gain_days_560mAh": 4.216374269005848,
+      "current_reduction_percent": 45.175438596491226
+    },
+    {
+      "name": "15일 목표: 평균 1.50mA",
+      "kind": "target",
+      "current_mA": 1.5,
+      "mAh_per_day": 36.0,
+      "nominal_percent_per_day": 5.142857142857142,
+      "days_700mAh": 19.444444444444446,
+      "days_560mAh": 15.555555555555555,
+      "gain_days_560mAh": 10.438596491228068,
+      "current_reduction_percent": 67.10526315789474
+    }
+  ]
+}

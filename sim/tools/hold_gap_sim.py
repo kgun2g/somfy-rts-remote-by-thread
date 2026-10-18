@@ -33,7 +33,11 @@ UP, DOWN, MY, UP_DOWN, MY_UP, MY_DOWN, NONE = 'UP', 'DOWN', 'MY', 'UP_DOWN', 'MY
 
 class Sim:
     def __init__(self, design):
-        self.design = design          # 'old' | 'new'
+        # 'old' | 'new' | ★2026-10-18 'new2' = new + 유휴 통지 대기(감사 F10): 아무것도 안 눌렸으면 틱 없이 자다가
+        #  누름이 깨운다(_hold_task_kick) → 그 시각부터 500ms 박자. 누르고 있는 동안의 동작은 new 와 같다.
+        self.design = design
+        self.hold_idle = (design == 'new2')
+        self.hold_ticks = 0           # 태스크가 깬 횟수(유휴 깨어남 비교용)
         self.t = 0
         self.held = {'up': False, 'down': False, 'rot': False}
         self.press_us = None
@@ -44,7 +48,7 @@ class Sim:
         self.busy_left = 0            # 남은 프레임 수
         self.busy_done = 0            # 이미 보낸 프레임 수
         self.tx = []                  # (t_start, t_end, cmd) 실제 전파 구간
-        self.next_hold_tick = HOLD_REPEAT_MS
+        self.next_hold_tick = None if design == 'new2' else HOLD_REPEAT_MS
         self.combo_wait = None        # new 설계의 '조합변경 대기' 상태
         self.next_combo_poll = 0
 
@@ -69,6 +73,9 @@ class Sim:
     def press(self, which):
         first = not any(self.held.values())
         self.held[which] = True
+        if self.design == 'new2' and self.hold_idle:   # _hold_task_kick — 자던 태스크가 지금 깬다
+            self.hold_idle = False
+            self.next_hold_tick = self.t
         self.abort = False                       # 실제 코드: 새 누름 → 중단요청 해제
         cmd = {'up': UP, 'down': DOWN, 'rot': MY}[which]
         if first:
@@ -170,9 +177,15 @@ class Sim:
                 _, kind, which = evs[ei]
                 (self.press if kind == 'press' else self.release)(which)
                 ei += 1
-            if self.t >= self.next_hold_tick:
-                self.hold_tick()
-                self.next_hold_tick += HOLD_REPEAT_MS
+            if self.next_hold_tick is not None and self.t >= self.next_hold_tick:
+                self.hold_ticks += 1
+                if (self.design == 'new2' and not any(self.held.values())
+                        and self.combo_wait is None):
+                    self.hold_idle = True              # 펌웨어: !held && 조합대기 없음 → 통지까지 잔다
+                    self.next_hold_tick = None
+                else:
+                    self.hold_tick()
+                    self.next_hold_tick = self.t + HOLD_REPEAT_MS
             if self.t >= self.next_combo_poll:
                 self.combo_wait_tick()
                 self.next_combo_poll = self.t + COMBO_POLL_MS
@@ -246,10 +259,21 @@ def phase_sweep():
     print('── _hold_repeat_task 위상 0~499ms 스윕 (UP 3초 누름) ──')
     evs = [(0, 'press', 'up'), (3000, 'release', 'up')]
     out = {}
-    for design in ('old', 'new'):
+    for design in ('old', 'new', 'new2'):
         worst, worst_ph, allgaps = 0, 0, 0
         for ph in range(0, 500, 10):
             sim = Sim(design)
+            if design == 'new2':               # 위상이 누름에 맞춰지므로 스윕 대신 누름 시각을 민다
+                evs_p = [(ph, 'press', 'up'), (ph + 3000, 'release', 'up')]
+                runs = sim.run(evs_p, 5000 + ph)
+                held = sim.held_log
+                for i in range(1, len(runs)):
+                    g0, g1 = runs[i - 1][1], runs[i][0]
+                    if g1 - g0 > IFG_OK_MS and all(held[t] for t in range(g0, min(g1, len(held)))):
+                        allgaps += 1
+                        if g1 - g0 > worst:
+                            worst, worst_ph = g1 - g0, ph
+                continue
             sim.next_hold_tick = ph            # 위상 어긋남
             runs = sim.run(evs, 5000)
             held = sim.held_log
@@ -282,17 +306,25 @@ ADVERSARIAL = [
 ]
 
 if __name__ == '__main__':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     bad = 0
     for name, evs, total, span in CASES + ADVERSARIAL:
         print(name)
-        for design in ('old', 'new'):
+        for design in ('old', 'new', 'new2'):
             gaps, leak = report(name, design, evs, total, span)
-            if design == 'new' and (gaps or leak > FRAME_MS * MIN_LOOPS + 50):
+            if design in ('new', 'new2') and (gaps or leak > FRAME_MS * MIN_LOOPS + 50):
                 bad += 1
         print()
     sweep = phase_sweep()
-    if sweep['new'][1] != 0:
+    if sweep['new'][1] != 0 or sweep['new2'][1] != 0:
         bad += 1
+    # ★2026-10-18 유휴 깨어남 — 60초 동안 아무것도 안 누름
+    for design in ('new', 'new2'):
+        s = Sim(design)
+        s.run([], 60000)
+        print('  %-5s 60초 유휴 동안 hold 태스크 깸 %d회 (%.2f회/초)' % (design, s.hold_ticks, s.hold_ticks / 60.0))
+        if design == 'new2' and s.hold_ticks != 0:
+            bad += 1
     print()
     print('=== new 설계 실패 케이스: %d개 ===' % bad)
     sys.exit(1 if bad else 0)

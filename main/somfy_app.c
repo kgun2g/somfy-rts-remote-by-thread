@@ -27,6 +27,12 @@
 #if CONFIG_ESP_SLEEP_DEBUG
 #include "esp_private/esp_sleep_internal.h"   /* ★2026-10-07 절전 전원 도메인 실측 */
 #endif
+#if SOC_PAU_SUPPORTED
+#include "esp_private/sleep_retention.h"      /* ★2026-10-13 MODEM·TOP 차단 모듈 실측 */
+#endif
+#if SOC_PM_SUPPORT_CPU_PD
+#include "esp_private/sleep_cpu.h"            /* ★2026-10-15 lsfloor TOP 측정 — CPU 리텐션을 먼저 올린다 */
+#endif
 #include "esp_attr.h"         /* RTC_NOINIT_ATTR — 리부트 살아남는 메모리 */
 #include "thread_provision.h"
 
@@ -176,6 +182,9 @@ static setup_screen_t s_setup_screen = SETUP_NONE;
  *  SETUP_MATTER_PAIR 진입/이탈 시 false 로 리셋, 페어링 트랜잭션
  *  시작(is_pairing_in_progress) 시에도 클리어한다. */
 static bool           s_pair_ready  = false;
+/* ★2026-10-18 페어링 메뉴에 들어올 때 이미 등록돼 있었다 — "ALREADY PAIRED" 만 보여 주고 커미셔닝 창·보호를
+ *  건드리지 않는다(MA_PAIR 주석, 사용자 결정). 화면을 나가면 메인 루프 페어링 블록이 false 로 되돌린다. */
+static bool           s_pair_already = false;
 static uint8_t        s_setup_cursor = 0;          // 0..SETUP_CURSOR_MAX-1
 /* 설정 메뉴 cursor → 동작 매핑. 조건부 항목(Time/OTA)은 컴파일 시 제외되어
  * 커서 인덱스가 자동으로 당겨진다 (oled_ui.c SETUP_MENU_ITEMS 와 동일 순서·동기). */
@@ -214,6 +223,11 @@ static inline bool _in_setup_mode(void) {
   return s_setup_screen != SETUP_NONE;
 }
 
+/* ★2026-10-18 배터리 유휴 60초 자동 종료를 해도 되는 화면인가 (감사 F15 — CFG_SETUP_IDLE_EXIT_SEC 주석).
+ *  페어링: 사용자가 폰으로 진행 중일 수 있어 실패 표시(FAIL)일 때만 나간다(성공은 5초 뒤 스스로 나간다).
+ *  FW 업데이트: OTA 가 질의·다운로드·적용 중이면 남는다. 나머지(메뉴·주파수·시각·Thread 리셋 확인)는 나간다. */
+static bool _setup_idle_exit_ok(void);
+
 /* 모든 화면에서 공통 — 메인 복귀 */
 static void _setup_exit_to_main(const char *reason) {
   s_setup_screen = SETUP_NONE;
@@ -222,6 +236,19 @@ static void _setup_exit_to_main(const char *reason) {
   oled_ui_set_freq(&s_ui, _freq_edit_current());
   s_ui.freq_edit_dirty = false;
   ESP_LOGI(TAG, "[SETUP] 메인 복귀 (%s)", reason ? reason : "");
+}
+
+static bool _setup_idle_exit_ok(void) {
+  /* ★2026-10-18 ALREADY 도 나가도 된다(어차피 5초 뒤 스스로 나간다 — 보호·창 없음) */
+  if (s_setup_screen == SETUP_MATTER_PAIR)
+    return s_ui.pair_phase == OLED_PAIR_FAIL || s_ui.pair_phase == OLED_PAIR_ALREADY;
+#if !BOARD_DISABLE_OTA
+  if (s_setup_screen == SETUP_FW_UPDATE) {
+    const matter_ota_state_t st = matter_ota_get_state(NULL);
+    return !(st == MATTER_OTA_QUERYING || st == MATTER_OTA_DOWNLOADING || st == MATTER_OTA_APPLYING);
+  }
+#endif
+  return true;
 }
 
 /* 페어링(커미셔닝) 보호 — Settings>Matter Pair 윈도우 동안에만.
@@ -268,6 +295,22 @@ static void _setup_activate_menu_item(void) {
     case MA_PAIR: { /* Matter Pair — BLE commissioning window 재오픈 */
       s_setup_screen = SETUP_MATTER_PAIR;
       s_pair_ready   = false;          /* 진입 시 항상 WAITING 부터 */
+      /* ★★2026-10-18 이미 등록된 기기 — "ALREADY PAIRED" 만 보여 주고 커미셔닝 창을 열지 않는다
+       *  (사용자 결정 "이미 등록됨을 보여 주고 창을 열지 않기").
+       *  예전: 등록 여부와 무관하게 보호(SNTP 정지·CPU 최대 고정) + 15분 커미셔닝 창을 열고, 메인 루프가 곧바로
+       *  '등록 완료'를 보고 SUCCESS → 5초 뒤 메인. 창은 메뉴를 나가도 안 닫혔다(15분 동안 광고/서비스 유지).
+       *  지금: 보호·창·SNTP 를 건드리지 않고 phase=ALREADY → 같은 5초 뒤 메인(메인 루프 페어링 블록).
+       *  판정은 SUCCESS 를 띄우던 것과 같은 matter_blinds_is_commissioning_complete(). 미등록이면 아래 그대로.
+       *  ※다른 앱(멀티 관리자)에 추가하는 창은 이제 이 메뉴로 못 연다 — 필요해지면 이미 연결된 컨트롤러 쪽에서
+       *    창을 열거나(Matter Administrator Commissioning 클러스터) 이 분기를 되돌린다.
+       *  시뮬: sim/tools/pair_already_sim.py (등록 = 보호 0·창 0·SNTP 정지 0, 미등록 흐름은 옛과 동일) */
+      s_pair_already = matter_blinds_is_commissioning_complete();
+      if (s_pair_already) {
+        oled_ui_show_pairing(&s_ui, "");
+        oled_ui_set_pair_phase(&s_ui, OLED_PAIR_ALREADY);   /* WAIT 가 한 프레임도 안 보이게 바로 */
+        ESP_LOGI(TAG, "[SETUP] Matter 페어링 — 이미 등록됨: 커미셔닝 창 안 엶, 보호 안 켬 (5초 뒤 메인)");
+        break;
+      }
       /* ★ 커미셔닝 보호 시작 — open 직전에 SNTP off + CPU max 고정
        *  (수분 뒤 수동 페어링 시 39-517 방지). */
       _pairing_protect_begin();
@@ -629,6 +672,63 @@ static inline void _mark_activity(void) {
  *  ※실제 전류·전압 하강은 시뮬로 재현되지 않는다 — 그건 물리 분리로만 잴 수 있다. */
 static volatile bool s_usb_sim_off = false;
 
+/* ★★2026-10-18 USB 물리 판정을 **한 곳**에서, 시간 기준으로 안정화한다 (감사 보고서 F16, 사용자 "F13·F16·F17 우선 구현").
+ *  예전: PM(_enable_pm_light_sleep)·화면 정책(usb_mode)·메인 루프 주기·[PWR] 이 각자 btn_handler_is_charging() 으로
+ *    핀을 **그때그때** 읽었고, 방전 기록(BATLOG)만 'USB→배터리 2초 연속'을 따로 확인했다(8/13 기록 삭제 사고 대응).
+ *    → 핀이 한 번만 튀어도 PM·화면은 그 순간값을 따랐다. 특히 **USB 연결 중 한 번 LOW 로 읽히면 그 회전에
+ *      light sleep 을 켰다** — 이 기판에서 USB 를 꽂은 채 light sleep 이 걸리면 USB 콘솔이 죽고 전원 재투입만 복구된다
+ *      (_enable_pm_light_sleep 의 9/07 주석). 배터리 중 한 번 HIGH 로 튀면 방전 세션이 끊겼다.
+ *  지금: 메인 루프가 회전마다 _usb_phys_update() 를 **한 번** 부르고 PM·화면·기록·주기·[PWR] 이 모두 그 결과를 쓴다.
+ *    · 배터리→USB: 원시값이 USB_PLUG_CONFIRM_MS(200ms) 동안 계속 USB 여야 인정(판독 3번 — 한 번 튄 것은 버린다)
+ *    · USB→배터리: 원시값이 USB_DROP_CONFIRM_MS(2초 — 방전 기록이 쓰던 그 값) 동안 계속 배터리여야 인정
+ *    · 확인 중(원시값 ≠ 확정값)에는 메인 루프가 1초 주기로 늦추지 않는다(_usb_phys_settling) — 확인이 바로 끝나게
+ *    · 부팅 첫 판독은 그대로 확정 — 예전 방전 기록의 '첫 판독 보정'(배터리 부팅을 분리로 오인해 기록을 지우던 사고)과 같다
+ *  시뮬(sim/tools/vbus_stable_sim.py, 3일): USB 중 판독이 1e-4 로 튀면 옛 'USB 인데 light sleep' 29회 → 0,
+ *    배터리 중 1e-4 로 튀면 옛 세션 135/116 → 116/116. 대가: 꽂기 감지 +0.2~0.3초, 뽑기 감지 +2초(그동안 USB 모드).
+ *  ※확인 시간 둘은 상수 하나씩 — 바꾸려면 여기서. CHG_STAT 레벨 웨이크는 다시 걸지 않는다(9/02 깨어남 폭주 원인).
+ *  ※메인 루프 이전(부팅 훅: dsleep·lsfloor 예약 확인)은 아직 갱신 전이라 원시값을 그대로 읽는다 — 예전과 같다.
+ *  ※문턱에 붙어 영원히 반반으로 흔들리는 고장(시뮬 stuck_mid)은 옛=PM·세션 폭주, 새=USB 모드 고정. 둘 다 하드웨어 문제. */
+#ifndef USB_PLUG_CONFIRM_MS
+#define USB_PLUG_CONFIRM_MS   200
+#endif
+#ifndef USB_DROP_CONFIRM_MS
+#define USB_DROP_CONFIRM_MS  2000    /* 원래 방전 기록 블록에 있던 값(8/13) — 여기로 올렸다 */
+#endif
+static volatile bool s_usb_phys_on   = false;   /* 확정값 */
+static bool          s_usb_phys_init = false;
+static bool          s_usb_raw_prev  = false;   /* 마지막 원시 판독 */
+static int64_t       s_usb_raw_since_us = 0;    /* 원시값이 지금 값으로 바뀐 시각 */
+
+static inline bool _usb_phys_raw(void) {
+#if BOARD_ALWAYS_USB_POWERED
+  return true;                     /* 배터리·충전회로가 없는 보드 — 아래 _is_usb_powered 주석 */
+#else
+  return btn_handler_is_charging();
+#endif
+}
+/* 메인 루프 전용(회전마다 1번 — 다른 문맥에서 부르지 말 것). */
+static void _usb_phys_update(int64_t now_us) {
+  const bool raw = _usb_phys_raw();
+  if (!s_usb_phys_init) {
+    s_usb_phys_init = true;
+    s_usb_phys_on = s_usb_raw_prev = raw;
+    s_usb_raw_since_us = now_us;
+    return;
+  }
+  if (raw != s_usb_raw_prev) { s_usb_raw_prev = raw; s_usb_raw_since_us = now_us; }
+  if (raw != s_usb_phys_on) {
+    const int64_t need_us = (int64_t)(raw ? USB_PLUG_CONFIRM_MS : USB_DROP_CONFIRM_MS) * 1000;
+    if (now_us - s_usb_raw_since_us >= need_us) {
+      s_usb_phys_on = raw;
+      ESP_LOGI(TAG, "[USB] 물리 판정 %s 확정 (%dms 연속)", raw ? "USB" : "배터리",
+               (int)((now_us - s_usb_raw_since_us) / 1000));
+    }
+  }
+}
+/* 확정값 — 메인 루프 시작 전에는 아직 판정이 없으므로 원시값(예전과 같다). */
+static inline bool _usb_phys_on(void) { return s_usb_phys_init ? s_usb_phys_on : _usb_phys_raw(); }
+static inline bool _usb_phys_settling(void) { return s_usb_phys_init && (s_usb_raw_prev != s_usb_phys_on); }
+
 /* USB 모드 여부 — 충전 중이거나 최근(USB_DETECT_HOLD_MS) 충전 감지됨 */
 static inline bool _is_usb_powered(void) {
 #if BOARD_ALWAYS_USB_POWERED
@@ -638,7 +738,7 @@ static inline bool _is_usb_powered(void) {
   return true;
 #else
   if (s_usb_sim_off) return false;          /* 시뮬: 배터리 모드로 강제 */
-  if (btn_handler_is_charging()) return true;
+  if (_usb_phys_on()) return true;          /* ★2026-10-18 F16 — 원시 핀 대신 안정화된 판정(위 주석) */
 #if BOARD_CHG_STAT_ACTIVE_HIGH
   /* ★★2026-08-11 이 보드(xiao-c6/h2)는 **hold 를 쓰지 않는다**.
    *
@@ -1051,6 +1151,14 @@ static inline somfy_command_t _held_combo_cmd(void) {
  *  검증: sim/tools/hold_gap_sim.py — 케이스 ①~⑩ + 위상 스윕 전부 공백 0. */
 #define COMBO_SWITCH_POLL_MS 20   /* 조합 전환 **대기 중에만** 쓰는 촘촘한 주기 */
 static volatile somfy_command_t s_combo_pending = 0;  /* 전환 대기 중(0=없음) */
+/* ★★2026-10-18 아무것도 안 눌렸을 때는 **통지까지 잔다** (감사 보고서 F10, 사용자 "나머지 진행").
+ *  이 태스크의 일은 누르고 있는 동안의 조합 변경뿐인데(위 주석), 유휴에도 500ms 마다 깨어나
+ *  할 일 없이 돌아갔다(2회/초). 누름 처리(_btn_event_cb 의 s_held_* = true)가 _hold_task_kick() 으로
+ *  깨우고, 누르고 있는 동안은 기존 500ms·조합 대기 20ms 주기를 **그대로** 쓴다.
+ *  HOLD_IDLE_WAIT_MS 는 통지가 어긋날 때의 안전망이다. */
+#define HOLD_IDLE_WAIT_MS 5000
+static TaskHandle_t s_hold_task_h = NULL;
+static inline void _hold_task_kick(void) { if (s_hold_task_h) xTaskNotifyGive(s_hold_task_h); }
 
 static void _hold_repeat_task(void *pvParam) {
   while (1) {
@@ -1058,6 +1166,11 @@ static void _hold_repeat_task(void *pvParam) {
     const int64_t press_us = s_action_press_us;
     const bool held = (s_held_up || s_held_down || s_held_rot);
 
+    if (!held && s_combo_pending == 0) {
+      g_wake_iter[WI_HOLD]++;            /* ★깨어남 출처 계측 */
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(HOLD_IDLE_WAIT_MS));
+      continue;
+    }
 
     if (s_combo_pending != 0) {
       /* ── 조합 전환 대기: 진행 중 송신이 끝나기를 기다린다 ── */
@@ -1362,6 +1475,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
        *  생략하고 플래그만 세운다 — 태스크가 s_held_* 조합으로 combo 를 재송신한다. */
       bool first = !(s_held_up || s_held_down || s_held_rot);
       s_held_up = true;
+      _hold_task_kick();   /* ★2026-10-18 유휴로 자던 hold 태스크를 깨운다(F10) — 이 콜백이 끝난 뒤에 돈다(우선순위 8<10) */
       if      (s_held_down) oled_ui_notify_action_start(&s_ui, OLED_ACTION_UP_DOWN);
       else if (s_held_rot)  oled_ui_notify_action_start(&s_ui, OLED_ACTION_MY_UP);
       else                  oled_ui_notify_action_start(&s_ui, OLED_ACTION_UP);
@@ -1409,6 +1523,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
       /* ★버튼 지속 누름 → 연속 송신(위 UP 과 동일 구조). */
       bool first = !(s_held_up || s_held_down || s_held_rot);
       s_held_down = true;
+      _hold_task_kick();   /* ★2026-10-18 F10 (UP 과 같음) */
       if      (s_held_up)  oled_ui_notify_action_start(&s_ui, OLED_ACTION_UP_DOWN);
       else if (s_held_rot) oled_ui_notify_action_start(&s_ui, OLED_ACTION_MY_DOWN);
       else                 oled_ui_notify_action_start(&s_ui, OLED_ACTION_DOWN);
@@ -1626,6 +1741,7 @@ static void _btn_event_cb(btn_event_data_t *evt, void *user_data) {
       /* ★버튼 지속 누름 → 연속 송신(위 UP/DOWN 과 동일 구조). */
       bool first = !(s_held_up || s_held_down || s_held_rot);
       s_held_rot = true;
+      _hold_task_kick();   /* ★2026-10-18 F10 (UP 과 같음) */
       if      (s_held_up)   oled_ui_notify_action_start(&s_ui, OLED_ACTION_MY_UP);
       else if (s_held_down) oled_ui_notify_action_start(&s_ui, OLED_ACTION_MY_DOWN);
       else                  oled_ui_notify_action_start(&s_ui, OLED_ACTION_STOP);
@@ -1834,10 +1950,15 @@ static void _matter_action_cb(uint8_t endpoint_idx, somfy_command_t cmd,
    (Thread role 변경 이벤트는 matter_blinds.cpp 의 app_event_cb 에서 감지)
 ═══════════════════════════════════════════════ */
 /* SNTP 시간 동기화 이벤트 콜백 — sync 직후 NVS 즉시 저장 */
+/* ★2026-10-18 F17 — 쓰는 곳(_sntp_apply)이 시각 기능 보드에만 있어 같이 가둔다.
+ *  ※H2(BOARD_DISABLE_TIME=1)는 "SNTP 를 만들지 않는다"(_start_app_tasks_once 주석)였는데 옛 _on_thread_attached 가
+ *    가드 없이 _sntp_start_once 를 불러 **부착 때 SNTP 가 시작되고 있었다**. 이제 H2 는 정말로 SNTP 가 없다. */
+#if !BOARD_DISABLE_TIME
 static void _sntp_sync_cb(struct timeval *tv) {
   ESP_LOGI(TAG, "[TIME] SNTP 동기화 → epoch=%lld", (long long)tv->tv_sec);
   _time_persist_save();
 }
+#endif
 
 /* ═══════════════════════════════════════════════
    PM 설정 (idempotent) — DFS 는 항상, light sleep 은 **등록 완료 후에만**
@@ -1933,7 +2054,9 @@ static void _enable_pm_light_sleep(void) {
    *  USB 를 꽂은 채 절전을 재려면 **콘솔을 UART 로 옮겨야** 한다. 그 전에는
    *  물리 분리만이 방법이다. `usbsim` 은 원래대로 앱 동작(화면 타임아웃·방전 세션)만
    *  시뮬하고 PM 은 물리 VBUS 를 따른다. */
-  const bool on_usb = BOARD_ALWAYS_USB_POWERED ? true : btn_handler_is_charging();
+  /* ★2026-10-18 F16 — 원시 핀(btn_handler_is_charging) 대신 안정화된 물리 판정(_usb_phys_update 주석).
+   *  usbsim 은 여전히 반영하지 않는다(위 9/07 주석). USB 중 한 번 튄 LOW 로 light sleep 을 켜던 길이 막힌다. */
+  const bool on_usb = BOARD_ALWAYS_USB_POWERED ? true : _usb_phys_on();
   /* ★★★2026-08-16 BOARD_DISABLE_LIGHT_SLEEP — **패닉 임시 차단**.
    *  H2 에서 절전 빌드(①MTD ②tick ③PM)를 넣은 뒤 배터리 구동 중 패닉이 반복됐다.
    *  부팅진단 근거: 리셋사유가 PM 적용 전 `USB리셋` → 적용 후 `★패닉/예외` 로 바뀌고
@@ -1998,22 +2121,60 @@ static void _enable_pm_light_sleep(void) {
  *  operational mDNS/SRP 와 갓 올라온 Thread netif IPv6 자원이 경합 →
  *  "Failed to advertise records: CHIP_ERROR_INVALID_ADDRESS(46)" → 페어링
  *  영구 실패(39-517). 따라서 커미셔닝이 끝난 뒤에만 SNTP 를 시작한다. */
-static void _sntp_start_once(void) {
-  static bool s_sntp_started = false;
-  if (s_sntp_started || esp_sntp_enabled()) {
-    esp_sntp_restart();
-    return;
+/* ★★2026-10-18 _sntp_start_once → _sntp_apply (감사 보고서 F17, 사용자 "F13·F16·F17 우선 구현").
+ *  옛 구조의 문제 셋:
+ *   ① _start_app_tasks_once 가 **미등록이어도** 시작했다 — 위 v3.6 규칙과 어긋난다. 미등록 기기는 부팅 25초 뒤
+ *      무선을 끄므로(RADIO_GRACE_SEC) DNS 가 영영 실패하고, lwIP 가 15→30→…→150초 간격으로 끝없이 재시도한다
+ *      (lwip sntp_opts.h SNTP_RETRY_TIMEOUT 15000, ×2, 최대 ×10).
+ *   ② 등록 기기는 부팅마다 init(앱 시작) + restart(부착) 두 번.
+ *   ③ ★버그: esp_sntp_restart() 는 **켜져 있을 때만** stop+init 한다(esp-idf components/lwip/apps/sntp/sntp.c
+ *      sntp_restart: `if (sntp_enabled())`). 그런데 페어링 화면 진입 때 esp_sntp_stop() 으로 끄고 나올 때
+ *      restart 로 '재개'했으므로 **실제로는 재개되지 않았다**(로그만 "SNTP 재개"). 부착 때의 restart 도 같은 이유로
+ *      무효 → 페어링 화면을 한 번 다녀오면, 그리고 **새로 등록한 직후부터** 재부팅 전까지 시각 동기화가 멈춰 있었다.
+ *  지금: 원하는 상태 = 시각 기능 ∧ 등록 완료 ∧ Thread 부착 ∧ 페어링 보호 아님. 다를 때만 init/stop(재개도 init).
+ *    부르는 곳: 앱 시작·부착 변화(_thread_attach_sync)·등록 완료 변화(메인 루프)·페어링 보호 시작/끝.
+ *    분리되면 멈춘다 — 도달 불가 동안 헛 재시도를 안 한다. 다시 붙으면 init(시작 지연 0~5초 뒤 1회 요청 —
+ *    CONFIG_LWIP_SNTP_MAXIMUM_STARTUP_DELAY). 이미 돌고 있으면 아무것도 안 한다(불필요한 재시작 없음).
+ *  esp_sntp_* 는 tcpip 태스크로 **비동기**라 esp_sntp_enabled() 를 믿지 않고 마지막 요청(s_sntp_run)을 기억한다.
+ *  경합: 페어링 보호 시작은 버튼 태스크(prio 10)라 메인 루프의 이 함수를 끊을 수 있다 → init 직후 보호를 다시 보고
+ *    켜졌으면 바로 stop 한다. tcpip 콜백은 순서대로 실행되므로 어디서 끊겨도 끝 상태는 '정지'다.
+ *  시뮬(sim/tools/sntp_thread_sim.py, 3일): 미등록 헛시도 1731 → 0, 페어링 다녀온 뒤 동기화 1 → 73회,
+ *    신규 등록 뒤 0 → 72회, 선점 위치 전부 '정지'로 끝남. */
+static bool s_pair_protect_on = false;    /* 커미셔닝 보호(아래) — _sntp_apply 가 읽어서 여기로 올렸다 */
+static bool s_thr_attached    = false;    /* 마지막으로 확인한 Thread 부착 상태 — _thread_attach_sync 만 쓴다 */
+#if !BOARD_DISABLE_TIME
+static bool s_sntp_run = false;           /* 마지막으로 요청한 상태 */
+static bool s_sntp_cfg = false;           /* 운영 모드·서버·주기·콜백은 처음 한 번(운영 모드는 정지 중에만 바꿀 수 있다) */
+static void _sntp_apply(const char *why) {
+  const bool want = matter_blinds_is_commissioning_complete() && s_thr_attached && !s_pair_protect_on;
+  if (want == s_sntp_run) return;
+  if (want) {
+    if (!s_sntp_cfg && !esp_sntp_enabled()) {
+      esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+      esp_sntp_setservername(0, CFG_SNTP_SERVER);
+      esp_sntp_set_sync_interval(60 * 60 * 1000);          /* 1시간 (ms) */
+      esp_sntp_set_time_sync_notification_cb(_sntp_sync_cb);
+      setenv("TZ", CFG_TIMEZONE, 1);   /* 부팅 때 _init_rtc_from_build_time 이 이미 했지만 예전 자리라 남긴다 */
+      tzset();
+      s_sntp_cfg = true;
+    }
+    esp_sntp_init();
+    s_sntp_run = true;
+    if (s_pair_protect_on) {              /* 그 사이 버튼 태스크가 페어링 보호를 켰다(위 경합 주석) */
+      esp_sntp_stop();
+      s_sntp_run = false;
+      return;
+    }
+    ESP_LOGI(TAG, "[TIME] SNTP 시작 (%s — server=%s, 1시간 주기)", why, CFG_SNTP_SERVER);
+  } else {
+    esp_sntp_stop();
+    s_sntp_run = false;
+    ESP_LOGI(TAG, "[TIME] SNTP 정지 (%s)", why);
   }
-  esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-  esp_sntp_setservername(0, CFG_SNTP_SERVER);
-  esp_sntp_set_sync_interval(60 * 60 * 1000);          /* 1시간 (ms) */
-  esp_sntp_set_time_sync_notification_cb(_sntp_sync_cb);
-  esp_sntp_init();
-  setenv("TZ", CFG_TIMEZONE, 1);
-  tzset();
-  s_sntp_started = true;
-  ESP_LOGI(TAG, "[TIME] SNTP 시작 (server=%s, 1시간 주기)", CFG_SNTP_SERVER);
 }
+#else
+static inline void _sntp_apply(const char *why) { (void)why; }   /* BOARD_DISABLE_TIME(H2) — 시각 기능 없음 */
+#endif
 
 /* ═══════════════════════════════════════════════
    커미셔닝 보호 (Settings>Matter Pair 윈도우 한정)
@@ -2027,17 +2188,13 @@ static void _sntp_start_once(void) {
 #if CONFIG_PM_ENABLE
 static esp_pm_lock_handle_t s_pair_cpu_lock = NULL;
 #endif
-static bool s_pair_protect_on  = false;
-static bool s_pair_sntp_was_on = false;
+/* ★2026-10-18 F17 — s_pair_protect_on 은 위(_sntp_apply 앞)로 옮겼다. s_pair_sntp_was_on 은 없앴다:
+ *  재개 여부는 나갈 때의 등록·부착 상태로 _sntp_apply 가 정한다(옛 restart 는 꺼진 SNTP 를 못 살렸다 — 위 ③). */
 
 static void _pairing_protect_begin(void) {
   if (s_pair_protect_on) return;
   s_pair_protect_on = true;
-  s_pair_sntp_was_on = esp_sntp_enabled();
-  if (s_pair_sntp_was_on) {
-    esp_sntp_stop();
-    ESP_LOGI(TAG, "[PAIR] SNTP 일시중지 (커미셔닝 mDNS/SRP 보호)");
-  }
+  _sntp_apply("페어링 보호 — 커미셔닝 mDNS/SRP 보호");   /* ★2026-10-18 돌고 있으면 정지(F17) */
 #if CONFIG_PM_ENABLE
   if (!s_pair_cpu_lock) {
     esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "pair", &s_pair_cpu_lock);
@@ -2053,10 +2210,9 @@ static void _pairing_protect_end(void) {
 #if CONFIG_PM_ENABLE
   if (s_pair_cpu_lock) esp_pm_lock_release(s_pair_cpu_lock);
 #endif
-  if (s_pair_sntp_was_on) {
-    esp_sntp_restart();          /* 평상시 시계 동작 복귀 */
-    ESP_LOGI(TAG, "[PAIR] SNTP 재개");
-  }
+  /* ★2026-10-18 F17 — 예전 esp_sntp_restart() 는 꺼진 SNTP 에 무효였다(위 _sntp_apply 주석 ③).
+   *  등록·부착이면 여기서 init 으로 재개한다 — 방금 새로 등록한 경우도 여기서 처음 시작된다. */
+  _sntp_apply("페어링 보호 해제");
   ESP_LOGI(TAG, "[PAIR] 커미셔닝 보호 OFF (CPU 정상)");
 }
 
@@ -2065,16 +2221,36 @@ static void _pairing_protect_end(void) {
 
 static void _on_thread_attached(void) {
   ESP_LOGI(TAG, "✅ Thread 네트워크 부착 완료 — Matter 트랜스포트 활성화");
-  oled_ui_set_thread(&s_ui, true);
   /* Thread 부착이 사용자 화면(ACTION/메뉴 등)을 지우면 안 된다 —
    *  state 강제 변경하지 않는다. */
   /* ★ 커미셔닝 완료 전에는 SNTP 시작 금지 (operational mDNS/SRP 보호).
-   *   미완료면 _deferred_task_starter 가 완료 후 _sntp_start_once() 호출. */
-  if (matter_blinds_is_commissioning_complete()) {
-    _sntp_start_once();
-  } else {
+   * ★2026-10-18 그 판단과 시작은 _sntp_apply 가 한다(_thread_attach_sync 가 이 함수 다음에 부른다, F17).
+   *  oled_ui_set_thread 도 _thread_attach_sync 로 옮겼다. 옛 주석의 "_deferred_task_starter 가 완료 후
+   *  _sntp_start_once() 호출" 은 이미 사실이 아니었다(그런 호출 없음) — 이제 등록 완료 변화를 메인 루프가 본다. */
+  if (!matter_blinds_is_commissioning_complete())
     ESP_LOGI(TAG, "[TIME] SNTP 지연 — 커미셔닝 완료 후 시작 (operational 보호)");
-  }
+}
+
+/* ★★2026-10-18 Thread 부착 변화 = CHIP 이벤트 (감사 보고서 F17, 사용자 "F13·F16·F17 우선 구현").
+ *  예전엔 메인 루프가 **회전마다**(화면 ON 100ms / OFF 1초) thread_prov_is_attached() 로 OpenThread 락을 잡고
+ *  물었다(portMAX_DELAY). 쓰임새는 '부착/분리 전이' 하나뿐이다.
+ *  CHIP 는 부착 상태가 **실제로 바뀔 때만** kThreadConnectivityChange 를 보낸다(connectedhomeip
+ *  GenericThreadStackManagerImpl_OpenThread::_OnPlatformEvent — role 변화 중 attach 여부가 달라진 경우만).
+ *  → app_main.cpp app_event_cb 가 somfy_app_thread_changed() 를 부르면 다음 회전에 **한 번만** 묻는다.
+ *  첫 회전에도 한 번 묻는다(s_thr_chk_req 초기값 — 이벤트가 메인 루프 전에 지나갔을 수 있다).
+ *  보험(PostEvent 실패 시 CHIP 는 로그만 남긴다): 이미 OT 락을 잡는 두 시한에 얹는다 — 7초 Matter 상태(화면 ON·등록)
+ *  와 60초 [PWR](여기에 조회 1번 추가). 새 주기를 만들지 않았다. 시뮬(sntp_thread_sim.py): 부착 확인용 OT 락
+ *  3일 259,363 → 4,324회, 이벤트 50% 유실에도 최대 17초 안에 맞춤. */
+static volatile bool s_thr_chk_req = true;
+void somfy_app_main_kick(void);           /* 정의는 아래(_exit_sleep 위) */
+void somfy_app_thread_changed(void) { s_thr_chk_req = true; somfy_app_main_kick(); }
+static void _thread_attach_sync(bool att, const char *why) {
+  if (att == s_thr_attached) return;
+  s_thr_attached = att;
+  oled_ui_set_thread(&s_ui, att);
+  if (att) _on_thread_attached();
+  else     ESP_LOGI(TAG, "Thread 분리 감지 (%s)", why);
+  _sntp_apply(att ? "Thread 부착" : "Thread 분리");
 }
 
 /* ─── (제거됨) 버튼 누름유지 반복 태스크 ───────────────
@@ -2127,13 +2303,16 @@ static void _start_app_tasks_once(void) {
   oled_ui_start_task(&s_ui);                                            /* _ui_task 4096 (콜론 anim) */
   btn_handler_start_task();                                             /* 3072 (버튼 폴링) */
   xTaskCreate(_rf_worker_task,    "rf_worker",   3072, NULL, 9, NULL);  /* composed 로 free 확보 → 원래 3072 복원 */
-  xTaskCreate(_hold_repeat_task,  "hold_repeat", 2048, NULL, 8, NULL);  /* 버튼 지속 누름 → 신호 연속 발생 */
+  xTaskCreate(_hold_repeat_task,  "hold_repeat", 2048, NULL, 8, &s_hold_task_h);  /* 버튼 지속 누름 → 신호 연속 발생 (★2026-10-18 핸들 보관 — 누름 통지용) */
   /* 시계 폴링 + 시간 NVS 영속. BOARD_DISABLE_TIME(H2)=1 이면 BLE 커미셔닝 heap
    *  확보를 위해 time 태스크(스택 ~5KB)·SNTP 를 만들지 않는다. */
 #if !BOARD_DISABLE_TIME
   /* ★2026-08-20 time_persist(3072B)·time_update(2048B) 생성을 없앴다 —
    *  둘 다 메인 루프 틱으로 흡수(_time_tick 위 주석). RAM 5,120B 회수. */
-  _sntp_start_once();
+  /* ★2026-10-18 F17 — 등록·부착일 때만 시작한다(_sntp_apply 주석). 아직 부착 확인 전이면 여기선 아무 일도 없고
+   *  메인 루프의 첫 부착 확인(_thread_attach_sync)이 시작한다. 미등록이면 시작하지 않는다
+   *  (옛: 무선 OFF 미등록 기기에서도 시작해 DNS 실패 재시도를 끝없이 했다). */
+  _sntp_apply("앱 시작");
 #endif
 
   /* 단독(미페어링) 시작: 부팅 시 그린 페어링 화면(OLED_STATE_PAIRING)에서
@@ -2295,22 +2474,36 @@ static void _deferred_task_starter(void *pv) {
 static void _time_tick(void) {
   static int last_min = -1;
   static time_t prev = 0;
+  static int64_t prev_mono_us = 0;   /* ★2026-10-18 직전 호출의 단조 시각(esp_timer) — 아래 오탐 수정 */
   {
     time_t now = 0;
     struct tm ti = {0};
     time(&now);
+    const int64_t mono_us = esp_timer_get_time();
 
     /* ★ 외부 권위 시각 동기 감지: 본 루프는 1초 주기인데 시각이 크게
      *  앞으로 점프하면 SmartThings Matter SetUTCTime 또는 SNTP 가 시계를
      *  보정한 것. 즉시 NVS 에 저장해 다음 부팅에도 정확히 유지(드리프트
      *  방지) + 로그로 동기 발생을 가시화. */
-    if (prev > 0 && (now - prev) > 120) {
-      ESP_LOGW(TAG,
-               "[TIME] 외부 시각 동기 감지: +%llds 점프 (epoch=%lld) — NVS 즉시 저장",
-               (long long)(now - prev), (long long)now);
-      _time_persist_save();
+    /* ★★2026-10-18 오탐 수정 (사용자 결정 "시각 점프 오탐 고치기").
+     *  "1초 주기" 가정이 틀렸다 — _time_tick_sched 는 **화면 OFF 면 300초**마다 부른다. 그래서 화면이 꺼져 있는
+     *  동안 **매 호출(5분마다)** 300초 > 120초로 '외부 시각 동기'를 오판하고 NVS 에 썼고, 화면을 켤 때도 그동안
+     *  흐른 시간을 점프로 봤다(10/18 실측 "+248s 점프" — 실제 보정 아님). 반대로 앞으로만 봐서 시계가 빨랐다가
+     *  뒤로 맞춰지는 보정은 못 잡았다.
+     *  → 벽시계 차이에서 **실제로 흐른 시간**(esp_timer, light sleep 중에도 흐른다)을 뺀 것이 점프다.
+     *    문턱 120초는 그대로, 앞·뒤 모두 본다. 시뮬(sim/tools/time_jump_sim.py, 7일): 오탐 1,967 → 0,
+     *    큰 보정(>120초) 35건 중 감지 19 → 35(옛은 뒤로 맞춤·화면 OFF 중 보정을 놓쳤다). */
+    if (prev > 0) {
+      const int64_t jump_s = (int64_t)(now - prev) - (mono_us - prev_mono_us) / 1000000;
+      if (jump_s > 120 || jump_s < -120) {
+        ESP_LOGW(TAG,
+                 "[TIME] 외부 시각 동기 감지: %+llds 점프 (epoch=%lld) — NVS 즉시 저장",
+                 (long long)jump_s, (long long)now);
+        _time_persist_save();
+      }
     }
     prev = now;
+    prev_mono_us = mono_us;
 
     localtime_r(&now, &ti);
 
@@ -2389,6 +2582,82 @@ static adc_oneshot_unit_handle_t s_bat_adc  = NULL;
 static adc_cali_handle_t         s_bat_cali = NULL;
 static adc_channel_t             s_bat_ch;
 static bool                      s_bat_adc_ok = false;
+/* ★★★2026-10-13 ADC 유닛은 **잴 때만** 만들고 재자마자 지운다.
+ *
+ *  실측(pd* 계측): 얕은잠 중 MODEM·TOP 도메인이 한 번도 안 꺼졌다. 리텐션 모듈은
+ *  전부 정상 생성돼 있었는데도 그랬다(rtmod). 범인은 IDF 의 ADC 드라이버다:
+ *      esp_adc/adc_oneshot.c  adc_oneshot_new_unit()
+ *        #elif ADC_LL_ADC_FE_ON_MODEM_DOMAIN          // C6 = 1
+ *          esp_sleep_pd_config(ESP_PD_DOMAIN_MODEM, ESP_PD_OPTION_ON);
+ *  C6 는 ADC 프런트엔드가 모뎀 도메인에 있어서, **유닛이 존재하는 동안** IDF 가 모뎀
+ *  도메인을 절전 중에도 켜둔다. adc_oneshot_del_unit() 이 다시 풀어준다.
+ *  우리는 5초에 한 번 몇 ms 재려고 유닛을 부팅 때 만들어 영원히 살려뒀다 — 그래서
+ *  모뎀 도메인이 24시간 켜져 있었다. TOP 은 MODEM 이 꺼질 수 있어야만 꺼지므로
+ *  (sleep_modes.c top_domain_pd_allowed) TOP 까지 같이 막혔다. 예전에 "TOP 전원 차단은
+ *  SARADC 와 충돌"이라고 기각한 것의 정체도 이것이다.
+ *
+ *  캘리브레이션 핸들(s_bat_cali)은 소프트웨어 객체라 계속 둔다. 측정 주기(5초)와
+ *  표본 수(8)는 **건드리지 않는다** — 유닛의 수명만 바꾼다.
+ *  콘솔 진단(intpd)이 다른 태스크에서 같은 유닛을 쓰므로 참조 카운트 + 뮤텍스로 묶는다.
+ *  NVS diag/adcfix=0 이면 옛 동작(계속 살려둠) — A/B 대조군용.
+ *
+ *  ★★2026-10-13 실측 결과 — **이 수정은 실패했고 위험하다. 기본값을 '상주'로 되돌린다.**
+ *  배터리 4.19시간 A/B (logs/nvs_COM7_1013_0653_adcab.bin / nvs_COM8_1013_0653_adcab.bin):
+ *    · COM7(수정): MODEM 은 의도대로 절전마다 꺼졌다(2102회 전부). 그런데 배터리 진입
+ *      **약 28초 뒤** `ot_sleep` 락이 잡힌 채 풀리지 않아 그 뒤로 한 번도 못 잤다
+ *      (절전 0.2%, 0.1회/초). +236초 기록부터는 Thread 부모 RSSI 도 없다.
+ *      4.2시간에 90% → 37% (자체 추정 평균 89mA) — 이대로면 8시간 안에 방전.
+ *    · COM8(대조군, 유닛 상주): 31.2회/초, 절전 98.4%, Thread 유지. 정상.
+ *  즉 MODEM 을 끄면 802.15.4 가 못 버틴다. IDF 가 ADC 때문에 MODEM 을 켜둔 것이
+ *  결과적으로 무선을 지켜주고 있었다. 원인이 IDF 의 802.15.4 모뎀 절전 경로 자체인지,
+ *  유닛을 5초마다 만들고 지운 것과의 간섭인지는 **아직 가르지 못했다**.
+ *  → 기본값 = 상주(0). adcfix=1 은 실험 전용이며 무인 배터리 구동에 쓰면 안 된다. */
+static adc_unit_t        s_bat_unit  = ADC_UNIT_1;
+static SemaphoreHandle_t s_adc_mtx   = NULL;
+static int               s_adc_ref   = 0;
+static bool              s_adc_keep  = false;   /* true = 대조군(유닛 상주) */
+
+static bool _bat_adc_open(void) {
+  if (s_adc_mtx) xSemaphoreTake(s_adc_mtx, portMAX_DELAY);
+  bool ok = true;
+  if (s_bat_adc == NULL) {
+    adc_oneshot_unit_init_cfg_t ucfg = { .unit_id = s_bat_unit };
+    ok = (adc_oneshot_new_unit(&ucfg, &s_bat_adc) == ESP_OK);
+    if (ok) {
+      adc_oneshot_chan_cfg_t ccfg = { .atten = ADC_ATTEN_DB_12,
+                                      .bitwidth = ADC_BITWIDTH_DEFAULT };
+      adc_oneshot_config_channel(s_bat_adc, s_bat_ch, &ccfg);
+    } else {
+      s_bat_adc = NULL;
+    }
+  }
+  if (ok) s_adc_ref++;
+  if (s_adc_mtx) xSemaphoreGive(s_adc_mtx);
+  return ok;
+}
+
+static void _bat_adc_close(void) {
+  if (s_adc_mtx) xSemaphoreTake(s_adc_mtx, portMAX_DELAY);
+  if (s_adc_ref > 0) s_adc_ref--;
+  if (s_adc_ref == 0 && !s_adc_keep && s_bat_adc != NULL) {
+    adc_oneshot_del_unit(s_bat_adc);     /* → IDF 가 MODEM 도메인 강제 ON 을 푼다 */
+    s_bat_adc = NULL;
+  }
+  if (s_adc_mtx) xSemaphoreGive(s_adc_mtx);
+}
+
+/* NVS diag/adcfix → 유닛 상주 여부. ★기본은 상주(0) — 1(측정할 때만 생성)은 배터리에서
+ *  Thread 가 멈춘다(위 2026-10-13 실측). NVS 키가 없는 보드가 실험 모드로 떨어지면 안 된다.
+ *  lsfloor 가 측정을 마친 뒤 유닛을 원래 상태로 되돌릴 때도 이 함수를 쓴다. */
+static bool _bat_adc_keep_from_nvs(void) {
+  uint8_t fix = 0;
+  nvs_handle_t hn;
+  if (nvs_open("diag", NVS_READONLY, &hn) == ESP_OK) {
+    nvs_get_u8(hn, "adcfix", &fix);
+    nvs_close(hn);
+  }
+  return fix == 0;
+}
 
 static void _bat_adc_init(void) {
   /* ★2026-09-28 멱등. app_main 이 무선 시작 전에 먼저 부르고(저부하 전압 캡처)
@@ -2400,6 +2669,9 @@ static void _bat_adc_init(void) {
     ESP_LOGW(TAG, "[BAT] GPIO%d 는 ADC 핀 아님 — 시간기반으로 폴백", BOARD_PIN_BAT_ADC);
     return;
   }
+  s_bat_unit = unit;
+  if (s_adc_mtx == NULL) s_adc_mtx = xSemaphoreCreateMutex();
+  s_adc_keep = _bat_adc_keep_from_nvs();   /* A/B 스위치 — 기본은 상주(위 함수 주석) */
   adc_oneshot_unit_init_cfg_t ucfg = { .unit_id = unit };
   if (adc_oneshot_new_unit(&ucfg, &s_bat_adc) != ESP_OK) return;
   adc_oneshot_chan_cfg_t ccfg = { .atten = ADC_ATTEN_DB_12,
@@ -2411,6 +2683,13 @@ static void _bat_adc_init(void) {
   if (adc_cali_create_scheme_curve_fitting(&calcfg, &s_bat_cali) != ESP_OK)
     s_bat_cali = NULL;   /* 캘리 미지원 시 raw 근사 */
   s_bat_adc_ok = true;
+  if (!s_adc_keep) {                    /* ★초기화가 끝났으면 유닛을 지운다 */
+    adc_oneshot_del_unit(s_bat_adc);
+    s_bat_adc = NULL;
+  }
+  ESP_LOGW(TAG, "[BAT] ADC 유닛 수명: %s",
+           s_adc_keep ? "상주(기본) — MODEM 도메인이 절전 중에도 켜진다"
+                      : "★실험: 측정할 때만 생성 — 배터리에서 Thread 가 멈춘다(2026-10-13 실측)");
   ESP_LOGI(TAG, "[BAT] ADC 초기화 GPIO%d (분압 %dk/%dk → Vbat=Vadc×%d/%d)",
            BOARD_PIN_BAT_ADC, BOARD_BAT_DIV_TOP, BOARD_BAT_DIV_BOT,
            BOARD_BAT_DIV_TOP + BOARD_BAT_DIV_BOT, BOARD_BAT_DIV_BOT);
@@ -2486,12 +2765,18 @@ static int _read_bat_mv(void) {
   }
   int _s[8];
   int _rmin = 4096, _rmax = -1;             /* ★A: 같은 측정 안의 표본 산포 */
+  if (!_bat_adc_open()) {                   /* ★2026-10-13 잴 때만 유닛을 만든다 */
+    oled_ui_i2c_unlock();
+    if (_locked) xSemaphoreGive(_i2c_mtx);
+    return -1;
+  }
   for (int i = 0; i < 8; i++)
     if (adc_oneshot_read(s_bat_adc, s_bat_ch, &raw) == ESP_OK) {
       _s[n++] = raw; sum += raw;
       if (raw < _rmin) _rmin = raw;
       if (raw > _rmax) _rmax = raw;
     }
+  _bat_adc_close();                         /* ★재자마자 지운다 → MODEM 도메인 해방 */
   oled_ui_i2c_unlock();
   if (_locked) xSemaphoreGive(_i2c_mtx);
   if (n == 0) return -1;
@@ -2854,6 +3139,12 @@ static esp_err_t _ls_exit_cb(int64_t sleep_time_us, void *arg) {
        *  "너무 느리다"로 되돌아간 이유). IDF 에 LP→HP 인터럽트 API 가 없어
        *  이 콜백이 유일한 통로다. 자세한 배경은 btn_handler_notify_from_lp 주석. */
       if (wc == ESP_SLEEP_WAKEUP_ULP) btn_handler_notify_from_lp();
+      /* ★★2026-10-18 진동(GPIO 레벨 웨이크)도 버튼 태스크를 즉시 깨운다 (감사 F09/F05).
+       *  버튼 태스크 유휴 대기를 1000ms 로 늘렸으므로, 이게 없으면 진동으로 화면 켜기가 최대 1초 늦는다.
+       *  C6 의 GPIO 웨이크는 진동 핀뿐이다(CHG_STAT 웨이크는 9/11 에 껐고, PCF ~INT 는 C6 에서 안 건다).
+       *  HIGH 고정 고장 센서면 웨이크 폭주가 여기를 계속 부르지만, 그 덕에 표본이 빨리 쌓여 버튼 태스크가
+       *  약 2초 만에 고장으로 판정하고 웨이크를 끊는다(btn_handler _vibration_track). */
+      else if (wc == ESP_SLEEP_WAKEUP_GPIO) btn_handler_notify_from_lp();
     }
   }
   return ESP_OK;
@@ -2930,6 +3221,12 @@ static void _pmdump_save(void) {
         nvs_set_u32(h, "ccp_awk", cw);
         nvs_set_u8 (h, "ccp_last", cl);
       }
+#if SOC_PAU_SUPPORTED
+      /* ★2026-10-13 리텐션 모듈 — "inited 인데 created 아님" 비트가 MODEM·TOP 을
+       *  못 끄게 막는 범인이다(app_main.cpp rtmod 주석). 배터리 얕은잠 중의 값이 최종. */
+      nvs_set_u32(h, "rt_init", sleep_retention_get_inited_modules().bitmap[0]);
+      nvs_set_u32(h, "rt_crt",  sleep_retention_get_created_modules().bitmap[0]);
+#endif
       nvs_commit(h);
       nvs_close(h);
     }
@@ -3176,7 +3473,35 @@ static void _batlog_flush_if_due(int64_t now_us, bool force) { (void)now_us; (vo
 static void _batlog_reset(void) {}
 static void _batlog_new_session(void) {}
 static void _batlog_ls_session_begin(bool resume) { (void)resume; }
-static void _ls_stats_init(void) {}   /* BATLOG 끔 — light sleep 계측 없음 */
+/* ★2026-10-18 BATLOG=0 빌드가 컴파일되지 않던 것 — [PWR] 줄의 _pmdump_save() 호출은 가드 밖인데
+ *  정의(실물·빈 함수 둘 다)가 BATLOG 블록 안에만 있었다(감사 F12 "플래그 하나로 진단 없는 빌드가 안 됨"). */
+static void _pmdump_save(void) {}
+/* ★★2026-10-18 BATLOG 를 꺼도 **버튼 통지는 남긴다** (감사 보고서 F12).
+ *  위 BATLOG 블록의 _ls_exit_cb 는 계측과 함께 "ULP 깨움 → 버튼 태스크 통지"(btn_handler_notify_from_lp)
+ *  도 하는 유일한 통로다. 예전엔 BATLOG 를 끄면 여기가 빈 함수라 그 통로까지 사라져, LP 가 버튼을
+ *  보고 HP 를 깨워도 태스크는 100ms 타임아웃까지 몰랐다(제품 빌드에서 진단을 끄는 순간 반응이 느려짐).
+ *  계측은 빼고 통지만 하는 최소 콜백을 등록한다. 지금 두 보드는 BATLOG=1 이라 이 분기를 안 쓴다. */
+#if CONFIG_PM_ENABLE && CONFIG_FREERTOS_USE_TICKLESS_IDLE
+static esp_err_t _ls_exit_cb_min(int64_t sleep_time_us, void *arg) {
+  (void)arg;
+  if (sleep_time_us > 0) {
+    const esp_sleep_wakeup_cause_t wc = esp_sleep_get_wakeup_cause();
+    /* ULP = LP 가 본 버튼·로터리, GPIO = 진동(위 _ls_exit_cb 와 같은 규칙) */
+    if (wc == ESP_SLEEP_WAKEUP_ULP || wc == ESP_SLEEP_WAKEUP_GPIO) btn_handler_notify_from_lp();
+  }
+  return ESP_OK;
+}
+static void _ls_stats_init(void) {
+  esp_pm_sleep_cbs_register_config_t cfg = {
+      .enter_cb = NULL, .exit_cb = _ls_exit_cb_min,
+      .enter_cb_user_arg = NULL, .exit_cb_user_arg = NULL,
+      .enter_cb_prior = 0, .exit_cb_prior = 0 };
+  esp_err_t e = esp_pm_light_sleep_register_cbs(&cfg);
+  ESP_LOGW(TAG, "[LS] BATLOG 끔 — 계측 없이 ULP→버튼 통지만 등록: %s", esp_err_to_name(e));
+}
+#else
+static void _ls_stats_init(void) {}   /* PM/tickless 미사용 — 등록할 것이 없다 */
+#endif
 /* 버튼/안테나 이벤트 기록 — BATLOG 끔이면 no-op (호출부는 가드 밖에 있다). */
 void somfy_app_batlog_button(int ev) { (void)ev; }
 static void _batlog_add(int t_s, int mv, int pct, bool radio, bool panel, int pm) {
@@ -3370,7 +3695,7 @@ void somfy_app_vibelog_clear(void) { somfy_app_vibelog_dump(); }
  *  ※ADC1 은 BAT_ADC(GPIO1)·PCF 비트뱅(GPIO6)과 공유라 버튼 뮤텍스로 직렬화한다
  *    (안 하면 변환이 교란된다 — _read_bat_mv 주석 참조). */
 static int _intpd_read_mv(adc_channel_t ch) {
-  if (!s_bat_adc_ok) return -1;
+  if (!s_bat_adc_ok || s_bat_adc == NULL) return -1;
   int raw = 0, sum = 0, n = 0;
   for (int i = 0; i < 8; i++)
     if (adc_oneshot_read(s_bat_adc, ch, &raw) == ESP_OK) { sum += raw; n++; }
@@ -3388,8 +3713,9 @@ void somfy_app_intpd_test(void) {
   ESP_LOGW(TAG, "[INTPD] `~INT`(IO%d) 풀다운 진단 — 버튼은 건드리지 마세요", pin);
 
   adc_unit_t unit; adc_channel_t ch;
+  const bool _adc_held = s_bat_adc_ok && _bat_adc_open();   /* ★시험 내내 유닛 유지 */
   const bool adc_ok = (adc_oneshot_io_to_channel(pin, &unit, &ch) == ESP_OK)
-                      && s_bat_adc_ok;
+                      && _adc_held;
   if (adc_ok) {
     adc_oneshot_chan_cfg_t ccfg = { .atten = ADC_ATTEN_DB_12,
                                     .bitwidth = ADC_BITWIDTH_DEFAULT };
@@ -3463,6 +3789,7 @@ void somfy_app_intpd_test(void) {
                   " LOW=GPIO2 배선 단선");
   }
   ESP_LOGW(TAG, "[INTPD] ================================================");
+  if (_adc_held) _bat_adc_close();
 }
 
 /* 콘솔 `usbsim off|on` — 배터리 모드 시뮬레이션 토글. */
@@ -3749,7 +4076,7 @@ static void _enter_screensaver(void) {
   if (s_setup_screen == SETUP_NONE) {
     s_ui.state = OLED_STATE_SCREENSAVER;
   }
-  oled_ui_set_display_on(false);
+  oled_ui_request_display(false);   /* ★2026-10-18 F13 — 0xAE 는 UI 태스크가(_exit_sleep 주석) */
 }
 
 static void _exit_screensaver(const char *reason) {
@@ -3774,11 +4101,10 @@ static void _exit_screensaver(const char *reason) {
   }
   s_ui.anim_frame++;
   /* ★ 패널 켜기 전에 새 화면을 framebuffer 에 미리 렌더 → 켜진 순간 잔상
-   *  (스크린세이버) 안 보이고 곧장 메인 화면이 나온다. */
-  if (s_setup_screen == SETUP_NONE) {
-    oled_ui_render_main_once(&s_ui);
-  }
-  oled_ui_set_display_on(true);
+   *  (스크린세이버) 안 보이고 곧장 메인 화면이 나온다.
+   *  ★2026-10-18 F13 — 그 렌더와 0xAF 를 UI 태스크가 한다(_exit_sleep 주석). 순서(그린 뒤 켠다)는 같다. */
+  oled_ui_wake(&s_ui);              /* oled_ui 자체 유휴 타이머 리셋 — 예전 render_main_once 가 하던 몫 */
+  oled_ui_request_display(true);
   if (was_active) {
     ESP_LOGI(TAG, "화면 보호기 해제 (%s)", reason ? reason : "");
   } else {
@@ -3814,13 +4140,44 @@ static void _enter_sleep(void) {
   if (s_setup_screen == SETUP_NONE) {
     s_ui.state = OLED_STATE_SCREENSAVER;
   }
-  oled_ui_set_display_on(false);
+  oled_ui_request_display(false);   /* ★2026-10-18 F13 — 0xAE 는 UI 태스크가 최대 한 회전(50ms) 안에 보낸다 */
 }
+
+/* ★★2026-10-18 메인 루프 깨우기 (감사 보고서 F10, 사용자 "나머지 진행").
+ *  메인 루프는 화면 OFF·배터리·특수 상태 아님일 때 100ms 대신 MAIN_LOOP_SLOW_MS(1초)로 돈다
+ *  (루프 끝 주석). 그때 바로 반응해야 하는 두 가지가 이걸 부른다:
+ *    · 진동 감지 — 화면 켜기를 메인 루프가 한다(button_handler.c _vibration_track 이 부른다)
+ *      ★2026-10-18 지금은 아래 somfy_app_vibe_kick 을 거친다(화면 ON 이면 1초 1회)
+ *    · 버튼·Matter 로 화면이 켜짐 — 100ms 주기로 즉시 복귀하려고(아래 _exit_sleep)
+ *  USB 연결은 인터럽트가 없어 최대 1초 늦게 감지된다(9/11 이후 CHG_STAT 웨이크를 안 건다).
+ *  ★2026-10-18 F16 이후 여기에 꽂기 확인 200ms 가 더해진다(USB_PLUG_CONFIRM_MS — 확인 중엔 100ms 주기). */
+static TaskHandle_t s_main_task_h = NULL;
+void somfy_app_main_kick(void) { if (s_main_task_h) xTaskNotifyGive(s_main_task_h); }
+/* ★★2026-10-18 진동 판정용 깨우기 — 화면이 켜져 있으면 **1초에 한 번만** (사용자 결정 "화면이 켜져 있을 때 진동
+ *  감지로 메인 루프를 깨우는 것은 1초 변경(화면이 켜져 있어도 움직일때 화면이 꺼지지 않아야함)").
+ *  왜: 버튼 태스크는 손에 들고 있는 동안 ISR 재활성(30ms)마다 진동을 판정하고 그때마다 깨웠다 — 10/18 2분 배터리
+ *    시험에서 메인 루프가 화면 켜짐만으로 예상되는 ~580회보다 ~300회 더 돌았다(vibelog 의 진동 구간과 일치).
+ *  화면 OFF(잠듦, 메인 루프 1초 대기)면 예전처럼 **즉시** 깨운다 — 두드리면 바로 켜진다.
+ *  화면 ON 이면 메인 루프가 어차피 100ms 마다 돌며 진동 시각을 읽어 활동으로 치고 5초 holdoff 로 끄지 않는다
+ *    → 깨우기가 1초에 한 번이어도 움직이는 동안 화면이 꺼지지 않는다.
+ *  시뮬(sim/tools/vibe_kick_rate_sim.py, 6시간): 움직이는데 꺼짐 0 = 0, 두드림→켜짐 지연 같음,
+ *    손에 든 동안 메인 회전 30.8 → 10.4회/초, 마지막 움직임 → 꺼짐 10.45 ≈ 10.49초.
+ *  버튼 태스크(button_handler.c _vibration_track)만 부른다 — s_last_us 는 그 태스크 전용. */
+void somfy_app_vibe_kick(void) {
+  static int64_t s_last_us = -1000000000LL;
+  const int64_t now = esp_timer_get_time();
+  if (s_is_sleeping || (now - s_last_us) >= 1000000LL) {
+    s_last_us = now;
+    somfy_app_main_kick();
+  }
+}
+#define MAIN_LOOP_SLOW_MS 1000   /* 화면 OFF·배터리일 때 메인 루프 주기(평소 100ms) — 루프 끝 주석 */
 
 /* sleep 모드 탈출 — 버튼/Matter 명령 등이 활동을 표시했을 때 호출 */
 static void _exit_sleep(const char *reason) {
   if (!s_is_sleeping) return;
   s_is_sleeping = false;
+  somfy_app_main_kick();   /* ★2026-10-18 1초 주기로 자던 메인 루프를 100ms 로 즉시 복귀(F10) */
 
   switch (s_setup_screen) {
     case SETUP_MENU_SCR:     s_ui.state = OLED_STATE_SETUP_MENU; break;
@@ -3833,11 +4190,16 @@ static void _exit_sleep(const char *reason) {
     default:                 s_ui.state = OLED_STATE_NORMAL;     break;
   }
   s_ui.anim_frame++;
-  /* ★ 패널 켜기 전 메인 미리 렌더 — 스크린세이버 잔상 안 보이게. */
-  if (s_setup_screen == SETUP_NONE) {
-    oled_ui_render_main_once(&s_ui);
-  }
-  oled_ui_set_display_on(true);
+  /* ★ 패널 켜기 전 메인 미리 렌더 — 스크린세이버 잔상 안 보이게.
+   * ★★2026-10-18 그 렌더(비트뱅 I2C 1~4페이지 ≈ 4~15ms)와 0xAF(3회 재시도)를 여기서 하지 않고 UI 태스크에
+   *  요청한다 (감사 보고서 F13, 사용자 "F13·F16·F17 우선 구현"). 이 함수는 버튼 태스크(prio 10)·Matter 콜백
+   *  (CHIP 태스크)에서 불려, 화면 전송이 끝날 때까지 **RF 요청이 뒤로 밀렸다**. 또 IDF I2C 의 NACK 무한 스핀이
+   *  prio 10 에서 나면 기기 전체가 멈춘다(oled_ui_start_task 의 prio 3 격리 주석) — 이제 그 길이 없다.
+   *  UI 태스크는 그 회전에 현재 화면(이 함수가 정한 state, 또는 콜백이 곧이어 정한 ACTION)을 그린 **뒤** 켠다
+   *  → 잔상 방지는 그대로이고, 설정 화면도 이제 그린 뒤 켠다(예전엔 설정 화면은 옛 프레임을 켠 뒤 다시 그렸다).
+   *  시뮬(sim/tools/oled_req_sim.py): 명령 경로 묶임 중앙 11.5ms → 0, 켜짐 중앙 11.5 → 16.4ms, 잔상 0·불일치 0. */
+  oled_ui_wake(&s_ui);              /* oled_ui 자체 유휴 타이머 리셋 — 예전 render_main_once 가 하던 몫 */
+  oled_ui_request_display(true);
   _wake_time_task();   /* 시계 태스크 즉시 깨움 — 5분 대기 중이어도 바로 갱신 */
   _mark_activity();
   ESP_LOGI(TAG, "절전 모드 해제 (%s)", reason ? reason : "");
@@ -3982,11 +4344,16 @@ static volatile uint8_t s_dsleep_armed = 0;
 
 static void _dsleep_watch_usb(void)
 {
-  static uint32_t s_off_ms = 0;
-  if (!s_dsleep_armed) { s_off_ms = 0; return; }
-  if (_is_usb_powered()) { s_off_ms = 0; return; }   /* 다시 꽂히면 리셋 */
-  s_off_ms += 100;
-  if (s_off_ms < s_dsleep_settle_s * 1000u) return;
+  /* ★2026-10-18 호출 횟수(+100ms/회) → **경과 시간**. 메인 루프가 화면 OFF·배터리에서 1초 주기로 돌 수
+   *  있게 되며(감사 F10) "호출 1번 = 100ms" 전제가 깨진다. 예약 중에는 메인 루프가 100ms 로 돌지만
+   *  주기와 무관하게 맞도록 바꿔 둔다. */
+  static int64_t s_off_since_us = 0;
+  if (!s_dsleep_armed) { s_off_since_us = 0; return; }
+  if (_is_usb_powered()) { s_off_since_us = 0; return; }   /* 다시 꽂히면 리셋 */
+  const int64_t now_w = esp_timer_get_time();
+  if (s_off_since_us == 0) s_off_since_us = now_w;
+  if (now_w - s_off_since_us < (int64_t)s_dsleep_settle_s * 1000000LL) return;
+  s_off_since_us = 0;
   /* ★재부팅 전에 시도 횟수를 센다. 한도를 넘으면 **예약을 버린다**. */
   {
     nvs_handle_t h;
@@ -4354,8 +4721,714 @@ void somfy_app_console_dsleep(int minutes, int settle_min)
                 "꽂고 로그를 보면 된다. (취소: dsleep 0)", minutes / 60.0);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ *  ★★2026-10-13  얕은잠 바닥 전류 대조군 (`lsfloor`) — MODEM 도메인이 3mA 의 주인인가
+ * ══════════════════════════════════════════════════════════════════════════
+ *  배경: 깊은잠 대조군(9/29)으로 "기판 ~0.3mA, 범인은 칩"까지 좁혔다. 평소 4.56mA 에서
+ *  깨어남·무선 몫을 빼면 얕은잠 **상태 자체**에 약 3mA 가 남는데 정체를 모른다.
+ *  데이터시트의 얕은잠 0.18mA 는 "무선 모듈 전원 차단"이 전제인데, 이 기기는 ADC 유닛
+ *  때문에 MODEM 도메인이 절전 중에도 늘 켜져 있다(위 _bat_adc_open 주석).
+ *  같은 날 MODEM 을 꺼 봤더니(adcfix=1) 28초 뒤 Thread 가 멈췄다 — 무선이 떠 있는
+ *  상태에서는 시험할 수 없다.
+ *
+ *  그래서 **무선을 켜기 전**(esp_matter::start 이전, app_main 이 부른다)에 순수 얕은잠만
+ *  돌리면서 MODEM 을 켬-끔-켬-끔 으로 바꾸고, 표본마다 전압을 NVS 에 남긴다.
+ *  무선이 아직 없으니 멈출 것도 없다. 끝나면 **그대로 정상 부팅을 이어간다** —
+ *  기기는 저절로 제어 가능 상태로 돌아온다(깊은잠 대조군과 달리 깨어남이 리셋이 아니다).
+ *
+ *  흐름 (dsleep 과 같은 뼈대 — 거기서 밟은 지뢰를 전부 물려받는다):
+ *    `lsfloor <단계분> [정착분] [표본초]`  USB 에서 **예약만**(콘솔이 USB 로만 된다)
+ *    → 전원이 끊기면 메인 루프가 정착 시간을 기다린 뒤 화면을 끄고 스스로 재부팅
+ *    → 부팅 훅이 4단계를 돈다 → 정상 부팅
+ *    `lsfloor dry <단계초> <표본초>`  USB 꽂힌 채 흐름만 확인(절전 대신 대기)
+ *
+ *  ★설계 원칙
+ *    · 측정은 **한 부팅에서 한 번만** 돈다. 시작과 동시에 예약을 해제하고, 도중에
+ *      리셋되면 다음 부팅은 "도중 리셋"만 기록하고 정상 진행한다(재부팅 루프 금지).
+ *    · 표본은 받는 즉시 NVS 에 하나씩 적는다(u64 키 하나 = NVS 한 칸). 중간에 죽어도
+ *      그때까지는 남는다. 예약할 때 빈 칸이 모자라면 **거부**한다.
+ *    · 모든 표본을 **새로 만든 ADC 유닛**으로 잰다. 상주 유닛과 새 유닛 사이에 계통
+ *      오프셋이 있으면 단계 경계마다 계단이 생겨 결과처럼 보인다.
+ *    · 절전마다 실제 전원차단 플래그(esp_sleep_context)를 표본에 같이 적는다 —
+ *      "끄라고 했다"가 아니라 "꺼졌다"를 확인한다.
+ *    · 끝나면 ADC 유닛을 NVS 설정대로 되돌린다. 안 그러면 유닛이 없는 채 무선이 떠서
+ *      같은 날의 Thread 멈춤이 재현된다.
+ *
+ *  검증: sim/tools/lsfloor_sim.py (18케이스). 해석: sim/tools/lsfloor_decode.py
+ *  ★판정은 단계별 기울기가 아니라 **톱니 진폭 + 주기 평균**으로 한다 — 셀 완화가
+ *    기울기 차이를 45% 넘게 부풀린다(시뮬레이터가 잡아냄, 해석기 주석 참조).
+ */
+#define LSF_NS              "lsfl"
+#define LSF_PHASES          4        /* 켬-끔-켬-끔 (fac 0~2). fac=3 은 _lsf_nph() — 5단계 */
+/* (2026-10-16) 단계당 표본 상한은 이제 (LSF_MAX_SAMPLES-1)/단계수 로 계산한다 — 4단계 23, 5단계 19 */
+#define LSF_MAX_TRIES       3
+#define LSF_PHASE_MIN_S     60
+#define LSF_PHASE_MIN_DRY_S 20
+#define LSF_PHASE_MAX_S     7200
+#define LSF_SAMP_MIN_S      5
+#define LSF_SAMP_MAX_S      600
+#define LSF_SETTLE_MIN_S    60
+#define LSF_SETTLE_MAX_S    14400
+#define LSF_SETTLE_DEF_S    3600
+#define LSF_NVS_MARGIN      12
+#define LSF_NVS_RESERVED    126      /* nvs_get_stats 의 free_entries 는 예약 페이지를 포함한다 */
+#define LSF_FLAGS_NONE      0xFFFFu  /* 절전 없이 찍은 표본(첫 표본·모의 실행) */
+enum { LSF_RUN_NONE = 0, LSF_RUN_ACTIVE = 1, LSF_RUN_DONE = 2, LSF_RUN_RESET = 3, LSF_RUN_USB = 4 };
+/* ★★2026-10-16 fac=3 `lsfloor wake` — 깨어남 비용 + 현장 교정.
+ *  MODEM·TOP·LP 세 밤이 전부 무죄였고, LP 밤에서 바닥이 같은 보드 직후 평소의 ~40% 로 나왔다.
+ *  나머지 ~60% 의 유력 후보가 **깨어남**(초당 31.8회 × 하드웨어 전환 2.52ms)인데, mV/h → mA 계수가
+ *  전압대마다 3배쯤 달라 어느 숫자도 mA 로 확정할 수 없었다. 그래서 크기를 아는 부하를 같이 건다.
+ *    A = 바닥(평소처럼 ADC 상주 → TOP·MODEM 켜짐, LP 코어 폴링 그대로)
+ *    B = 바닥 + 평소처럼 깨어남(초당 ~31.8회, 회당 0.7ms 일) — 평소 절전 플래그 0x3C12 와 같은 경로
+ *    C = 바닥 + CC1101 IDLE(데이터시트 1.7mA, 크리스털만 돎) — 교정 부하
+ *  B·C 의 톱니 비 = 전류 비(셀 계수·완화가 약분된다) → 깨어남 몫 = 1.7mA × S_B/S_C.
+ *  설계 검토: 5단계×60분, 밤 잡음에서 추정이 참값 ±15%(10~90%) — sim 스크래치 wake_design_study. */
+#define LSF_PHASES_MAX       5
+#define LSF_MAX_SAMPLES      96      /* 키 s00~s95 */
+#define LSF_WAKE_PERIOD_US   31450   /* 평소 초당 31.8회 (COM8 10/16 배터리 8.4시간 pmdump) */
+#define LSF_WAKE_BUSY_US     700     /* 평소 깨어남 1회의 실작업 ~0.70ms (batlog 회당 0.88ms − 오버헤드 0.17ms) */
+#define LSF_WAKE_YIELD_EVERY 64      /* 이만큼마다 한 번은 IDLE 을 돌려 태스크 WDT(5초, IDLE 감시)를 먹인다 */
+
+#if BOARD_HAS_BAT_ADC
+/* ★RAM 플래그 — 콘솔 예약과 부팅 훅 **양쪽에서** 세운다(dsleep 의 12시간 날린 버그). */
+static volatile uint8_t  s_lsf_armed    = 0;
+static volatile uint32_t s_lsf_settle_s = LSF_SETTLE_DEF_S;
+static bool _lsf_is_armed(void) { return s_lsf_armed != 0; }   /* ★2026-10-18 메인 루프 주기 판단용 */
+#if CONFIG_ESP_SLEEP_DEBUG
+static esp_sleep_context_t s_lsf_ctx;
+#endif
+
+static inline bool _lsf_phase_pd(unsigned p) { return (p & 1u) != 0; }   /* 홀수 단계 = 끔 */
+/* ★2026-10-16 단계 수·종류 — fac=3 만 5단계 'ABACA', 그 밖은 4단계 켬('A')/끔('X') */
+static const char LSF_PAT_WAKE[] = "ABACA";   /* ★sim/tools/lsfloor_decode.py WAKE_PATS[5] 와 같아야 한다 */
+_Static_assert(sizeof(LSF_PAT_WAKE) - 1 <= LSF_PHASES_MAX, "LSF_PAT_WAKE 가 LSF_PHASES_MAX 보다 길다");
+_Static_assert(LSF_PHASES <= LSF_PHASES_MAX, "LSF_PHASES 가 LSF_PHASES_MAX 보다 크다");
+static inline unsigned _lsf_nph(unsigned fac) { return fac == 3 ? (unsigned)(sizeof(LSF_PAT_WAKE) - 1) : LSF_PHASES; }
+static inline char _lsf_kind(unsigned fac, unsigned p)
+{
+  if (fac == 3) return p < sizeof(LSF_PAT_WAKE) - 1 ? LSF_PAT_WAKE[p] : '?';
+  return _lsf_phase_pd(p) ? 'X' : 'A';
+}
+
+/* ★★2026-10-15 무엇을 켰다 껐다 하는가 — NVS lsfl/fac.
+ *    0 = MODEM (첫 본측정 10/14 밤: 차이 없음, MODEM 몫 < 0.6mA)
+ *    2 = LP    (★2026-10-16) LP 코어 5ms PCF 폴링을 멈춤/돌림. TOP·MODEM 무죄(10/14·10/15 밤)인데
+ *        바닥이 평소의 70~80% 라, 잠자는 동안 계속 도는 유일한 일인 LP 폴링을 잰다. ADC 는 상주,
+ *        CPU 리텐션·LP_PERIPH ON 은 TOP 과 같다(평소와 같은 조건). 검증은 단계별 LP 폴링 수(lp0~lp3).
+ *    1 = TOP   (주변장치 도메인). 손잡이는 똑같이 ADC 유닛 상주/삭제다 —
+ *        CONFIG_PM_POWER_DOWN_PERIPHERAL_IN_LIGHT_SLEEP=y 에서는 IDF ADC 유닛이 MODEM 과 TOP 을
+ *        **둘 다** 붙잡기 때문이다(esp_adc/adc_oneshot.c). MODEM 몫은 0 이었으니 남는 차이가 TOP 몫.
+ *  TOP 을 끄려면 세 가지가 더 필요하다(IDF sleep_modes.c top_domain_pd_allowed):
+ *    ① CPU 도 꺼질 수 있어야 한다 → CPU 리텐션을 여기서 먼저 올린다(esp_pm_configure 보다 앞이라
+ *       아직 없다 — 첫 본측정 플래그 0x3C02 에 CPU 차단 비트가 없던 이유). 멱등이라 뒤에서 또 불려도 무해.
+ *    ② 이미 초기화된 주변장치 드라이버가 전부 리텐션을 가져야 한다 → CC1101 SPI·RMT 에 allow_pd.
+ *    ③ TOP 을 끄면 HP 패드가 출력 레지스터 전원을 잃어 뜬다 → 아래 핀을 측정 내내 붙잡는다.
+ *       CSn 이 뜨면 CC1101 이 SPWD 에서 깨어 1.7mA 가 **꺼짐 단계에만** 섞여 결과가 뒤집힌다(10/07 사건). */
+static const int s_lsf_hold_pins[] = {
+#ifdef BOARD_PIN_CC1101_CS
+  BOARD_PIN_CC1101_CS, BOARD_PIN_CC1101_SCK, BOARD_PIN_CC1101_MOSI, BOARD_PIN_CC1101_GD0,
+#endif
+#if BOARD_HAS_RF_ANT_SW
+  BOARD_PIN_RF_SW_EN, BOARD_PIN_RF_ANT_SEL,
+#endif
+  -1 };
+
+/* 켬·끔 단계 **모두** 같은 조건이 되도록 처음부터 끝까지 붙잡는다. hold 는 리셋을 넘어 남으므로
+ *  ★app_main 이 부팅 맨 앞에서 이 핀들을 전부 푼다(도중 리셋 대비 — 안 풀면 SPI·RMT 가 굳어 RF 가 죽는다). */
+static void _lsf_hold(bool on)
+{
+  for (int i = 0; s_lsf_hold_pins[i] >= 0; i++) {
+    if (on) gpio_hold_en((gpio_num_t)s_lsf_hold_pins[i]);
+    else    gpio_hold_dis((gpio_num_t)s_lsf_hold_pins[i]);
+  }
+}
+
+/* ★sim/tools/lsfloor_decode.py 의 pack() 과 비트 단위로 같아야 한다. */
+static uint64_t _lsf_pack(uint32_t t_s, uint32_t mv10, unsigned phase, unsigned cause,
+                          bool usb, bool want_pd, uint32_t flags16, bool rej)
+{
+  if (t_s  > 0xFFFFFu) t_s  = 0xFFFFFu;
+  if (mv10 > 0xFFFFu)  mv10 = 0xFFFFu;
+  if (cause > 15u)     cause = 15u;
+  return  (uint64_t)t_s
+        | ((uint64_t)mv10                 << 20)
+        | ((uint64_t)(phase & 7u)         << 36)
+        | ((uint64_t)cause                << 39)
+        | ((uint64_t)(usb ? 1u : 0u)      << 43)
+        | ((uint64_t)(want_pd ? 1u : 0u)  << 44)
+        | ((uint64_t)(flags16 & 0xFFFFu)  << 45)
+        | ((uint64_t)(rej ? 1u : 0u)      << 61);
+}
+
+/* 전압 1회(256표본) — **새 유닛**으로 재고, 다음 절전에 맞춰 유닛을 남기거나 지운다.
+ *  pd_next=true 면 지운다(→ IDF 가 MODEM 강제 ON 을 풀어 절전 중 꺼진다). 반환: mV×10.
+ *
+ *  ★깬 뒤 100ms 를 기다렸다 잰다. MODEM 을 끈 절전에서 깨면 ADC 프런트엔드(모뎀 도메인)가
+ *    방금 전원을 받은 상태고, 켠 절전에서 깨면 5분째 켜져 있던 상태다. 그 차이가 판독에
+ *    실리면 **전류 차이가 없어도 톱니가 생긴다**(측정 인공물). 정착 시간을 주고 유닛도
+ *    매번 새로 만들어 두 경우의 조건을 같게 한다.
+ *    그래도 남는 인공물은 짧은 리허설(2분 단계)이 드러낸다 — 실제 전류 차이는 단계가
+ *    길수록 커지고, 인공물은 길이와 무관하게 같은 크기로 나온다.
+ *  ★모의 실행(USB) 실측 잡음이 표본당 약 0.6mV 였다(128표본). 판정선이 0.8mV 라 빠듯해서
+ *    256표본으로 늘리고 3ms 간격을 둬 LP 코어 폴링(5ms)·리플과의 상관을 흩는다.
+ *    깨어 있는 시간이 약 0.25초 늘지만 5분에 한 번이라 평균 0.02mA 로, 모든 단계에 똑같이 실린다. */
+static int _lsf_measure_mv10(bool pd_next)
+{
+  vTaskDelay(pdMS_TO_TICKS(100));
+  s_adc_keep = false;
+  if (_bat_adc_open()) _bat_adc_close();          /* 남아 있던 유닛을 지운다 */
+  if (!_bat_adc_open()) return -1;                /* 새 유닛 — 아래 32회 동안 참조를 쥔다 */
+  esp_rom_delay_us(2000);
+  long sum = 0;
+  int  n   = 0;
+  for (int i = 0; i < 32; i++) {
+    const int v = _read_bat_mv();                 /* 8표본 절사평균 */
+    if (v > 0) { sum += v; n++; }
+    esp_rom_delay_us(3000);
+  }
+  s_adc_keep = !pd_next;
+  _bat_adc_close();                               /* 참조 0 → pd_next 면 여기서 삭제 */
+  return n ? (int)(sum * 10 / n) : -1;
+}
+
+/* 표본 간격만큼 잔다(모의 실행이면 그냥 기다린다). 일찍 깨면 남은 시간을 채워 일정을 지킨다. */
+static void _lsf_wait(uint32_t samp_s, bool dry, unsigned *cause, uint32_t *flags16, bool *rej)
+{
+  *cause = 0; *flags16 = LSF_FLAGS_NONE; *rej = false;
+  if (dry) { vTaskDelay(pdMS_TO_TICKS(samp_s * 1000u)); return; }
+  const int64_t t_in = esp_timer_get_time();
+  esp_sleep_enable_timer_wakeup((uint64_t)samp_s * 1000000ULL);
+  const esp_err_t e = esp_light_sleep_start();
+  *cause = (unsigned)esp_sleep_get_wakeup_cause();
+#if CONFIG_ESP_SLEEP_DEBUG
+  *flags16 = s_lsf_ctx.sleep_flags & 0xFFFFu;
+  *rej = (e != ESP_OK) || (s_lsf_ctx.sleep_request_result != ESP_OK);
+#else
+  *flags16 = 0;                                   /* 계측 없음 — 해석기가 무효로 본다 */
+  *rej = (e != ESP_OK);
+#endif
+  const int64_t slept_ms = (esp_timer_get_time() - t_in) / 1000;
+  if (slept_ms + 1000 < (int64_t)samp_s * 1000) {
+    *rej = true;                                  /* 못 잤거나 일찍 깼다 — 표본에 표시 */
+    vTaskDelay(pdMS_TO_TICKS((uint32_t)((int64_t)samp_s * 1000 - slept_ms)));
+  }
+}
+
+/* ★★2026-10-16 fac=3 B 단계 — 표본 간격 동안 **평소처럼** 깨어났다 잔다(초당 ~31.8회, 회당 0.7ms 일).
+ *  평소 auto light sleep 도 결국 같은 esp_light_sleep_start() 를 부르므로 하드웨어 전환(2.52ms)이 같다.
+ *  박자는 esp_timer 로 맞춘다(밀리면 다시 잡는다). 반환 *nwake = 이 간격의 절전 횟수.
+ *  ★태스크 WDT 가 IDLE 을 5초로 감시한다(CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0). 이 루프는
+ *    양보 없이 돌므로 64회마다 vTaskDelay(1)(1ms, 틱 1kHz)로 IDLE 을 한 번 돌린다 — 그 회차는
+ *    0.7ms 일 대신 1ms WFI 다(1/64 이라 무시할 만하다). */
+static void _lsf_wait_wakes(uint32_t samp_s, bool dry, unsigned *cause, uint32_t *flags16, bool *rej,
+                            uint32_t *nwake)
+{
+  *cause = 0; *flags16 = LSF_FLAGS_NONE; *rej = false;
+  const int64_t t0    = esp_timer_get_time();
+  const int64_t t_end = t0 + (int64_t)samp_s * 1000000;
+  int64_t  next = t0;
+  uint32_t n = 0;
+  for (;;) {
+    next += LSF_WAKE_PERIOD_US;
+    if (next >= t_end) break;
+    const int64_t slp = next - esp_timer_get_time();
+    if (slp < 2000) { next = esp_timer_get_time(); continue; }     /* 밀렸다 — 박자를 다시 잡는다 */
+    if (dry) {
+      vTaskDelay(pdMS_TO_TICKS((uint32_t)(slp / 1000)));
+    } else {
+      esp_sleep_enable_timer_wakeup((uint64_t)slp);
+      const esp_err_t e = esp_light_sleep_start();
+      *cause = (unsigned)esp_sleep_get_wakeup_cause();
+#if CONFIG_ESP_SLEEP_DEBUG
+      *flags16 = s_lsf_ctx.sleep_flags & 0xFFFFu;
+      if (e != ESP_OK || s_lsf_ctx.sleep_request_result != ESP_OK) *rej = true;
+#else
+      *flags16 = 0;
+      if (e != ESP_OK) *rej = true;
+#endif
+    }
+    n++;
+    if ((n % LSF_WAKE_YIELD_EVERY) == 0) vTaskDelay(1);
+    else esp_rom_delay_us(LSF_WAKE_BUSY_US);
+  }
+  /* 남은 조각(1주기 미만)은 한 번에 잔다 — 표본 시각을 다른 단계와 맞춘다 */
+  const int64_t rest = t_end - esp_timer_get_time();
+  if (rest > 2000) {
+    if (dry) {
+      vTaskDelay(pdMS_TO_TICKS((uint32_t)(rest / 1000)));
+    } else {
+      esp_sleep_enable_timer_wakeup((uint64_t)rest);
+      esp_light_sleep_start();
+      n++;
+    }
+  }
+  *nwake = n;
+}
+
+/* USB 빠짐 감시 — 메인 루프가 부른다(_dsleep_watch_usb 와 같은 구조).
+ *  ★2026-10-18 호출 횟수(+100ms/회) → 경과 시간(위 _dsleep_watch_usb 주석, 감사 F10). */
+static void _lsf_watch_usb(void)
+{
+  static int64_t s_off_since_us = 0;
+  if (!s_lsf_armed) { s_off_since_us = 0; return; }
+  if (_is_usb_powered()) { s_off_since_us = 0; return; }   /* 다시 꽂히면 리셋 */
+  const int64_t now_w = esp_timer_get_time();
+  if (s_off_since_us == 0) s_off_since_us = now_w;
+  if (now_w - s_off_since_us < (int64_t)s_lsf_settle_s * 1000000LL) return;
+  s_off_since_us = 0;
+  nvs_handle_t h;
+  uint8_t tries = 0;
+  if (nvs_open(LSF_NS, NVS_READWRITE, &h) != ESP_OK) { s_lsf_armed = 0; return; }
+  nvs_get_u8(h, "tries", &tries);
+  tries++;
+  if (tries > LSF_MAX_TRIES) {                    /* ★루프 방어(dsleep 718회 재부팅 사고) */
+    nvs_set_u8(h, "armed", 0);
+    nvs_set_u8(h, "tries", 0);
+    nvs_commit(h);
+    nvs_close(h);
+    s_lsf_armed = 0;
+    ESP_LOGE(TAG, "[LSF] ★루프 방어 — %d회 재부팅했는데 측정이 시작되지 않았다. 예약을 해제한다.",
+             LSF_MAX_TRIES);
+    return;
+  }
+  nvs_set_u8(h, "tries", tries);
+  /* ★화면을 끄고 들어간다. SSD1306 은 별개 칩이라 ESP32 가 재부팅해도 이 상태를 유지하고,
+   *  훅은 oled_ui_init 보다 먼저 돌아 패널을 건드리지 않는다. 켜진 채 들어가면
+   *  패널 전류(수 mA)가 4시간 내내 섞인다(dsleep 9/28 사고와 같은 종류). */
+  /* ★2026-10-18 "껐다"가 아니라 "꺼졌다"를 남긴다(oled_ui_set_display_on 반환값, 감사 F14).
+   *  1 = 패널이 OFF 명령을 받음 / 0 = 못 받음(패널 미검출 포함) — 0 이면 패널 전류가 섞였을 수 있다. */
+  nvs_set_u8(h, "oled_off", oled_ui_set_display_on(false) ? 1 : 0);
+  nvs_commit(h);
+  nvs_close(h);
+  ESP_LOGW(TAG, "[LSF] 전원 빠짐 %lu초 확인 — 화면을 끄고 재부팅해 측정을 시작한다. (시도 %u/%d)",
+           (unsigned long)s_lsf_settle_s, (unsigned)tries, LSF_MAX_TRIES);
+  vTaskDelay(pdMS_TO_TICKS(300));
+  esp_restart();
+}
+
+/* app_main 이 esp_matter::start() **직전**에 부른다(somfy_app_early_bat_capture 다음). */
+void somfy_app_lsfloor_boot_hook(void)
+{
+  nvs_handle_t h;
+  if (nvs_open(LSF_NS, NVS_READWRITE, &h) != ESP_OK) return;
+  uint8_t armed = 0, run = LSF_RUN_NONE, dry = 0, fac = 0;
+  nvs_get_u8(h, "armed", &armed);
+  nvs_get_u8(h, "run",   &run);
+  nvs_get_u8(h, "fac",   &fac);
+  if (run == LSF_RUN_ACTIVE) {
+    /* 지난 부팅이 측정 도중 죽었다. ★다시 시작하지 않는다 — 받은 표본은 NVS 에 남아 있다. */
+    nvs_set_u8(h, "run",   LSF_RUN_RESET);
+    nvs_set_u8(h, "rst",   (uint8_t)esp_reset_reason());
+    nvs_set_u8(h, "armed", 0);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGE(TAG, "[LSF] ★지난 측정이 도중에 리셋됐다(사유 %d). 다시 돌리지 않고 정상 부팅한다.",
+             (int)esp_reset_reason());
+    return;
+  }
+  if (!armed) { nvs_close(h); return; }
+  uint32_t phase_s = 0, samp_s = 0, settle_s = 0;
+  nvs_get_u8 (h, "dry",      &dry);
+  nvs_get_u32(h, "phase_s",  &phase_s);
+  nvs_get_u32(h, "samp_s",   &samp_s);
+  nvs_get_u32(h, "settle_s", &settle_s);
+  const unsigned nph = _lsf_nph(fac);              /* ★2026-10-16 fac=3 은 5단계 */
+  if (phase_s == 0 || samp_s == 0 || phase_s / samp_s < 2 ||
+      nph * (phase_s / samp_s) + 1 > LSF_MAX_SAMPLES || nph > LSF_PHASES_MAX) {
+    nvs_set_u8(h, "armed", 0);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGE(TAG, "[LSF] 예약 인자가 깨졌다 — 해제한다.");
+    return;
+  }
+  if (!dry) {
+    /* CHG_STAT 은 VBUS 고임피던스 분압 노드다 — 풀 저항까지 꺼야 제대로 읽힌다
+     *  (_dsleep_probe_hook 과 **완전히 같은** 설정. 그쪽 주석의 60초 재부팅 루프 참조). */
+    gpio_config_t _chg_io = {
+        .pin_bit_mask = (1ULL << CHG_STAT_PIN),
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = BOARD_CHG_STAT_EXT_PULLDOWN ? GPIO_PULLDOWN_DISABLE
+                                                    : GPIO_PULLDOWN_ENABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&_chg_io);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    if (_is_usb_powered()) {
+      s_lsf_armed = 1;                            /* ★부팅 시점에 이미 예약돼 있던 경우 */
+      if (settle_s) s_lsf_settle_s = settle_s;
+      ESP_LOGW(TAG, "[LSF] 예약 대기 중 — 전원을 끊으면 %lu초(정착) 뒤 자동 시작한다. (취소: lsfloor 0)",
+               (unsigned long)s_lsf_settle_s);
+      nvs_close(h);
+      return;
+    }
+  }
+
+  /* ── 측정 시작. ★무슨 일이 있어도 예약부터 해제한다 — 이 부팅에서 한 번만 돈다 ── */
+  nvs_set_u8 (h, "armed", 0);
+  nvs_set_u8 (h, "tries", 0);
+  nvs_set_u8 (h, "run",   LSF_RUN_ACTIVE);
+  nvs_set_u16(h, "n",     0);
+  nvs_commit(h);
+  s_lsf_armed = 0;
+  const uint32_t n_per = phase_s / samp_s;
+  const char *const fname = (fac == 1) ? "TOP" : (fac == 2 ? "LP" : (fac == 3 ? "WAKE" : "MODEM"));
+  ESP_LOGW(TAG, "[LSF] ════ 얕은잠 바닥 전류 측정 시작%s — %s %s, %u단계 × %lu초, 표본 %lu초마다 (%lu개) ════",
+           dry ? " (모의: 절전 없음)" : "", fname,
+           fac == 3 ? "(A 바닥 / B +깨어남 / C +CC1101 IDLE 교정)" : "를 켬/끔", nph, (unsigned long)phase_s,
+           (unsigned long)samp_s, (unsigned long)(nph * n_per + 1));
+  if (fac == 1 || fac == 2 || fac == 3) {          /* TOP·LP·WAKE 측정의 전제 — 위 s_lsf_hold_pins 주석 */
+    uint8_t cpu_ok = 0;
+#if SOC_PM_SUPPORT_CPU_PD
+    cpu_ok = (sleep_cpu_configure(true) == ESP_OK) ? 1 : 0;
+#endif
+    nvs_set_u8(h, "cpu_ok", cpu_ok);
+    /* ★★2026-10-15 LP 주변장치(LP_I2C)를 **켜 둔다**. 첫 TOP 리허설에서 TOP 과 함께 LP_PERIPH 까지
+     *  꺼져(플래그 0x7C17 의 bit14) PCF 를 읽던 LP 코어가 첫 꺼짐 단계에서 멈췄고(폴링 23106회 =
+     *  첫 단계 2분치뿐), 정상 부팅이 그 LP 코어를 못 살려 버튼이 10ms HP 폴링으로 떨어졌다
+     *  (깨어남 32 → 106회/초). 평소 동작에서는 btn_handler 가 ULP 깨움을 등록하므로 IDF 가
+     *  RTC_PERIPH 를 알아서 켜 둔다(sleep_modes.c: RTC_LP_CORE_TRIG_EN → ON). 여기(무선 시작 전)는
+     *  그 등록 전이라 AUTO → TOP 과 같이 꺼졌다. 평소와 같은 조건을 만들려고 명시적으로 켠다.
+     *  ★절대 OFF 로 되돌리지 말 것 — 참조가 0 이 되면 pd_option 이 OFF(강제 차단)로 남아
+     *    평소 동작에서도 LP 가 죽는다. 켜 둔 채로 두면 평소와 같다(어차피 ON).
+     *  ★2026-10-18 가드 추가 — H2 에는 이 전원 영역이 없어(SOC_PM_SUPPORT_RTC_PERIPH_PD 미정의)
+     *    10/15 이후 H2 빌드가 컴파일되지 않았다(compile_commands 문법 검사로 발견). */
+#if SOC_PM_SUPPORT_RTC_PERIPH_PD
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+#endif
+    if (fac == 1) _lsf_hold(true);          /* LP 측정은 TOP 이 켜진 채라 핀을 붙잡을 필요가 없다 */
+    ESP_LOGW(TAG, "[LSF] %s 측정 준비: CPU 리텐션 %s, 핀 고정 %d개", fname,
+             cpu_ok ? "켜짐" : "★실패",
+             fac == 1 ? (int)(sizeof(s_lsf_hold_pins) / sizeof(s_lsf_hold_pins[0])) - 1 : 0);
+  }
+#if SOC_PAU_SUPPORTED
+  {   /* 측정 시작 때의 리텐션 모듈 — TOP 이 안 꺼지면 막은 모듈 이름을 해석기가 보여준다 */
+    const uint32_t ri = sleep_retention_get_inited_modules().bitmap[0];
+    const uint32_t rc = sleep_retention_get_created_modules().bitmap[0];
+    nvs_set_u32(h, "rt_i", ri);
+    nvs_set_u32(h, "rt_c", rc);
+    ESP_LOGW(TAG, "[LSF] 리텐션 모듈 inited=0x%08lX created=0x%08lX", (unsigned long)ri, (unsigned long)rc);
+  }
+#endif
+  nvs_commit(h);
+#if CONFIG_ESP_SLEEP_DEBUG
+  esp_sleep_set_sleep_context(&s_lsf_ctx);        /* 뒤에 _ls_stats_init 이 자기 것으로 바꾼다 */
+#endif
+  uint32_t cc_a0 = 0, cc_w0 = 0;
+  uint8_t  cc_last = 0xFF;
+  cc1101_probe_stats(&cc_a0, &cc_w0, &cc_last);
+  /* LP 코어: 소프트 재부팅으로는 안 멈추므로 지난 부팅의 폴링이 계속 돈다(평소 절전과 같은
+   *  조건). 측정 내내 돌았는지 폴링 횟수 증가분으로 남긴다 — btn_handler_lp_poll_raw 주석. */
+  const uint32_t lp0 = btn_handler_lp_poll_raw();
+
+  const int64_t t0 = esp_timer_get_time();
+  uint32_t idx = 0;
+  bool     stop_usb  = false;
+  bool     cc_cal_on = false;                     /* ★2026-10-16 C 단계에서 CC1101 을 IDLE 로 깨워 둔 상태 */
+  char     key[16];
+  int      end_mv10[LSF_PHASES_MAX];
+  for (int i = 0; i < LSF_PHASES_MAX; i++) end_mv10[i] = -1;
+  /* LP·WAKE 측정은 ADC 유닛을 평소처럼 상주시킨다(= TOP·MODEM 켜짐, 평소 절전 플래그 0x3C12) */
+  const bool adc_resident = (fac == 2 || fac == 3);
+
+  int mv10 = _lsf_measure_mv10(adc_resident ? false : _lsf_phase_pd(0));
+  snprintf(key, sizeof(key), "s%02u", (unsigned)idx);
+  nvs_set_u64(h, key, _lsf_pack(0, mv10 > 0 ? (uint32_t)mv10 : 0, 0, 0, false, false,
+                                LSF_FLAGS_NONE, false));
+  idx++;
+  nvs_set_u16(h, "n", (uint16_t)idx);
+  nvs_commit(h);
+  ESP_LOGW(TAG, "[LSF] #0  시작 %d.%dmV", mv10 / 10, mv10 % 10);
+
+  for (unsigned p = 0; p < nph && !stop_usb; p++) {
+    const char kind = _lsf_kind(fac, p);
+    const bool pd   = (fac == 3) ? (kind != 'A') : _lsf_phase_pd(p);   /* fac=3: 바닥이 아닌 단계 표시 */
+    if (fac == 2) {   /* ★2026-10-16 LP 켬/끔 — 단계 시작 때 바꾼다. ADC·TOP·MODEM 은 평소처럼 켜 둔다 */
+      const bool ok = pd ? btn_handler_lp_pause() : btn_handler_lp_resume();
+      snprintf(key, sizeof(key), "lpk%u", p);
+      nvs_set_u8(h, key, ok ? 1 : 0);
+      nvs_commit(h);
+      ESP_LOGW(TAG, "[LSF] 단계%u: LP 코어 %s%s", p, pd ? "멈춤" : "돌림",
+               ok ? "" : (pd ? " ★I2C 선이 LOW 로 남았다(풀업 전류가 섞인다)" : " ★다시 돌리기 실패"));
+    }
+    if (fac == 3 && kind == 'C' && g_rf_ready) {
+      /* ★2026-10-16 교정 부하: CC1101 을 SPWD 에서 깨워 IDLE(크리스털만 돎, 1.7mA)로 둔다.
+       *  "켰다"가 아니라 "IDLE 이다"를 값으로 남긴다(MARCSTATE 0x01) — IDLE 이 아니면 해석기가 무효로 본다.
+       *  절전 중 CSn 은 풀업(cc1101_sleep_pins_fix)이라 SPI 가 안 움직이고, IDLE 은 CSn 과 무관하게 유지된다. */
+      cc1101_strobe(&g_cc1101, CC1101_SIDLE);
+      esp_rom_delay_us(1000);
+      const uint8_t ms = cc1101_read_reg(&g_cc1101, 0x35 | 0xC0) & 0x1F;
+      cc_cal_on = true;
+      snprintf(key, sizeof(key), "cs%u", p);
+      nvs_set_u8(h, key, ms);
+      nvs_commit(h);
+      ESP_LOGW(TAG, "[LSF] 단계%u(C): CC1101 IDLE 교정 부하 켬 — MARCSTATE=0x%02X%s", p, ms,
+               ms == 0x01 ? "" : " ★IDLE 이 아니다");
+    }
+    uint32_t wk = 0;                                /* 이 단계의 절전 횟수(B 는 깨어남 수) */
+    for (uint32_t i = 0; i < n_per; i++) {
+      unsigned cause; uint32_t flags16; bool rej;
+      if (fac == 3 && kind == 'B') {
+        uint32_t nw = 0;
+        _lsf_wait_wakes(samp_s, dry != 0, &cause, &flags16, &rej, &nw);
+        wk += nw;
+      } else {
+        _lsf_wait(samp_s, dry != 0, &cause, &flags16, &rej);
+        if (!dry) wk++;
+      }
+      const uint32_t t_s = (uint32_t)((esp_timer_get_time() - t0 + 500000) / 1000000);
+      const bool usb_now = (!dry) && _is_usb_powered();
+      const bool last    = (p == nph - 1) && (i + 1 == n_per);
+      const unsigned next_p = (i + 1 < n_per) ? p : p + 1;
+      /* 마지막 표본 뒤에는 절전이 없다 — 유닛을 남겨 두고 아래에서 NVS 설정대로 되돌린다 */
+      mv10 = _lsf_measure_mv10((last || adc_resident) ? false : _lsf_phase_pd(next_p));
+      snprintf(key, sizeof(key), "s%02u", (unsigned)idx);
+      nvs_set_u64(h, key, _lsf_pack(t_s, mv10 > 0 ? (uint32_t)mv10 : 0, p, cause, usb_now, pd,
+                                    flags16, rej));
+      idx++;
+      nvs_set_u16(h, "n", (uint16_t)idx);
+      nvs_commit(h);
+      end_mv10[p] = mv10;
+      if (fac == 3) {
+        ESP_LOGW(TAG, "[LSF] #%lu  단계%u(%c%s)  +%lu초  %d.%dmV  기상=%u  플래그=0x%04lX  깨어남 %lu%s%s",
+                 (unsigned long)(idx - 1), p, kind,
+                 kind == 'B' ? " +깨어남" : (kind == 'C' ? " +CC1101" : " 바닥"), (unsigned long)t_s,
+                 mv10 / 10, mv10 % 10, cause, (unsigned long)flags16, (unsigned long)wk,
+                 rej ? " ★절전거부/조기기상" : "", usb_now ? " ★USB" : "");
+      } else {
+        ESP_LOGW(TAG, "[LSF] #%lu  단계%u(%s %s)  +%lu초  %d.%dmV  기상=%u  플래그=0x%04lX%s%s",
+                 (unsigned long)(idx - 1), p, fname, pd ? "끔" : "켬", (unsigned long)t_s,
+                 mv10 / 10, mv10 % 10, cause, (unsigned long)flags16,
+                 rej ? " ★절전거부/조기기상" : "", usb_now ? " ★USB" : "");
+      }
+      if (usb_now) stop_usb = true;               /* 다시 꽂혔다 — 그만두고 정상 부팅 */
+      if (i + 1 == n_per || stop_usb) {
+        /* ★2026-10-15 단계마다 LP 폴링 누적 — 단계별로 LP 가 돌았는지(꺼짐 단계에서 멈추지 않았는지) 본다 */
+        snprintf(key, sizeof(key), "lp%u", p);
+        nvs_set_u32(h, key, btn_handler_lp_poll_raw() - lp0);
+        if (fac == 3) {                           /* ★2026-10-16 단계별 절전 횟수 — B 의 실제 깨어남 속도 검증 */
+          snprintf(key, sizeof(key), "wk%u", p);
+          nvs_set_u32(h, key, wk);
+        }
+        if (cc_cal_on) {                          /* C 단계 끝 — 끝까지 IDLE 이었나 확인하고 다시 재운다 */
+          const uint8_t ms = cc1101_read_reg(&g_cc1101, 0x35 | 0xC0) & 0x1F;
+          snprintf(key, sizeof(key), "ce%u", p);
+          nvs_set_u8(h, key, ms);
+          cc1101_idle(&g_cc1101);                 /* SIDLE + SPWD */
+          cc_cal_on = false;
+          ESP_LOGW(TAG, "[LSF] 단계%u(C) 끝: MARCSTATE=0x%02X%s — CC1101 다시 SPWD", p, ms,
+                   ms == 0x01 ? "" : " ★IDLE 이 아니었다");
+        }
+        nvs_commit(h);
+      }
+      if (stop_usb) break;
+    }
+  }
+  if (cc_cal_on) { cc1101_idle(&g_cc1101); cc_cal_on = false; }   /* 안전망 — 어떤 경로로도 IDLE 로 두고 나가지 않는다 */
+
+  /* ★핀 고정을 **먼저** 푼다 — 붙잡힌 채로는 아래 CC1101 탐침의 SPI 가 칩에 닿지 않는다(USB 중단 경로도 여기로 온다). */
+  if (fac == 1) _lsf_hold(false);
+
+  /* ★★2026-10-15 SPI 가 실제로 칩에 닿는지 **값으로** 확인한다. 아래 SNOP 탐침만으로는 안 된다 —
+   *  CSn 이 붙잡혀 칩이 요청을 무시해도 MISO 가 HIGH 로 읽혀 0xFF(= "자고 있었다")가 나오므로
+   *  "핀 고정이 안 풀려 RF 가 죽었다"를 못 가린다. VERSION 레지스터는 0x14/0x04/0x17 이다.
+   *  이 읽기가 칩을 깨우므로(첫 접근의 SNOP 분류가 곧 "측정 중 자고 있었나"의 답이다) 바로 다시 재운다. */
+  uint8_t cc_ver = 0;
+  if (g_rf_ready) {
+    cc_ver = cc1101_read_reg(&g_cc1101, 0x31 | 0xC0);
+    cc1101_idle(&g_cc1101);
+    nvs_set_u8(h, "cc_ver", cc_ver);
+  }
+
+  /* CC1101 이 끝까지 SPWD 였는지 — 깨어 있었다면 1.7mA 가 섞인 것이다 */
+  uint8_t cc_awk = 0xFF;
+  if (g_rf_ready) {
+    uint32_t a1 = 0, w1 = 0;
+    cc1101_probe_sleep(&g_cc1101);
+    cc1101_probe_stats(&a1, &w1, &cc_last);
+    cc_awk = (w1 > cc_w0) ? 1 : 0;
+    nvs_set_u8(h, "cc_awk", cc_awk);
+  }
+  const uint32_t lp_d = btn_handler_lp_poll_raw() - lp0;
+  nvs_set_u32(h, "lp_d", lp_d);
+  nvs_set_u8(h, "run", stop_usb ? LSF_RUN_USB : LSF_RUN_DONE);
+  nvs_commit(h);
+  nvs_close(h);
+  ESP_LOGW(TAG, "[LSF] LP 코어 폴링 증가 %lu회 (0 이면 측정 중 LP 코어가 멈춰 있었다)",
+           (unsigned long)lp_d);
+
+  /* ★ADC 유닛을 NVS 설정대로 되돌린다(기본 = 상주). 이걸 빠뜨리면 유닛 없이 무선이 뜬다. */
+  s_adc_keep = _bat_adc_keep_from_nvs();
+  if (_bat_adc_open()) _bat_adc_close();
+
+  ESP_LOGE(TAG, "════════ [LSF] 측정 %s — 표본 %lu개 ════════",
+           stop_usb ? "중단(USB)" : "완료", (unsigned long)idx);
+  for (unsigned i = 0; i < nph; i++) {
+    if (end_mv10[i] <= 0) continue;
+    if (fac == 3) {
+      const char k = _lsf_kind(fac, i);
+      ESP_LOGE(TAG, "  단계%u(%c%s) 끝 %d.%dmV", i, k,
+               k == 'B' ? " +깨어남" : (k == 'C' ? " +CC1101" : " 바닥"), end_mv10[i] / 10, end_mv10[i] % 10);
+    } else {
+      ESP_LOGE(TAG, "  단계%u(%s %s) 끝 %d.%dmV", i, fname, _lsf_phase_pd(i) ? "끔" : "켬",
+               end_mv10[i] / 10, end_mv10[i] % 10);
+    }
+  }
+  ESP_LOGE(TAG, "  CC1101: %s   VERSION=0x%02X(%s)   ADC 유닛: %s",
+           cc_awk == 0 ? "끝까지 자고 있었다" : (cc_awk == 1 ? "★깨어 있었다" : "확인 못 함"),
+           cc_ver, (cc_ver == 0x14 || cc_ver == 0x04 || cc_ver == 0x17) ? "SPI 정상" : "★SPI 가 칩에 안 닿는다",
+           s_adc_keep ? "상주로 복귀" : "측정할 때만(설정대로)");
+  ESP_LOGE(TAG, "  해석: python sim/tools/lsfloor_decode.py <NVS덤프>   이제 정상 부팅을 이어간다.");
+}
+
+/* 콘솔 `lsfloor` — phase_s<0 조회 / 0 취소 / 그 외 예약(dry=1 이면 지금 바로 모의 실행).
+ *  ★2026-10-15 fac — 0=MODEM, 1=TOP 을 켬/끔 (위 _lsf_phase_pd 아래 주석).
+ *  ★2026-10-16 fac 2=LP 폴링 켬/끔, 3=WAKE(깨어남 비용 + CC1101 IDLE 교정, 5단계 ABACA). */
+void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, int fac)
+{
+  nvs_handle_t h;
+  if (phase_s < 0) {
+    if (nvs_open(LSF_NS, NVS_READONLY, &h) != ESP_OK) {
+      ESP_LOGW(TAG, "[LSF] 기록 없음 — 아직 한 번도 예약하지 않았다.");
+      return;
+    }
+    uint8_t  armed = 0, run = 0, d = 0, oled = 0xFF, rst = 0xFF, cc = 0xFF, fq = 0;
+    uint32_t ps = 0, ss = 0, st = 0;
+    uint16_t n = 0;
+    nvs_get_u8(h, "armed", &armed);   nvs_get_u8(h, "run", &run);     nvs_get_u8(h, "dry", &d);
+    nvs_get_u8(h, "oled_off", &oled); nvs_get_u8(h, "rst", &rst);     nvs_get_u8(h, "cc_awk", &cc);
+    nvs_get_u32(h, "phase_s", &ps);   nvs_get_u32(h, "samp_s", &ss);  nvs_get_u32(h, "settle_s", &st);
+    nvs_get_u16(h, "n", &n);          nvs_get_u8(h, "fac", &fq);
+    static const char *const RN[] = { "아직 시작 안 함", "★측정 중이거나 도중에 죽음", "완료",
+                                      "★도중에 리셋됨", "USB 가 꽂혀 중단" };
+    ESP_LOGW(TAG, "[LSF] 예약=%u  상태=%s  대상=%s  모의=%u  단계 %lu초×%u  표본 %lu초  정착 %lu초  표본 %u개",
+             armed, run <= LSF_RUN_USB ? RN[run] : "?",
+             fq == 1 ? "TOP" : (fq == 2 ? "LP" : (fq == 3 ? "WAKE(깨어남+교정)" : "MODEM")), d,
+             (unsigned long)ps, _lsf_nph(fq), (unsigned long)ss, (unsigned long)st, (unsigned)n);
+    if (rst != 0xFF)  ESP_LOGW(TAG, "[LSF] 도중 리셋 사유 코드 %u", rst);
+    if (oled != 0xFF) ESP_LOGW(TAG, "[LSF] 화면 끔 확인=%u  CC1101 %s", oled,
+                               cc == 0 ? "끝까지 잠" : (cc == 1 ? "★깨어 있었음" : "미확인"));
+    char key[16];
+    for (unsigned i = 0; i < n && i < LSF_MAX_SAMPLES; i++) {
+      uint64_t v = 0;
+      snprintf(key, sizeof(key), "s%02u", i);
+      if (nvs_get_u64(h, key, &v) != ESP_OK) continue;
+      const unsigned mv = (unsigned)((v >> 20) & 0xFFFFu);
+      const unsigned fl = (unsigned)((v >> 45) & 0xFFFFu);
+      ESP_LOGW(TAG, "[LSF] #%02u +%5lu초 단계%u %4u.%umV 기상=%u 플래그=0x%04X%s%s%s",
+               i, (unsigned long)(v & 0xFFFFFu), (unsigned)((v >> 36) & 7u), mv / 10, mv % 10,
+               (unsigned)((v >> 39) & 15u), fl,
+               fl == LSF_FLAGS_NONE ? "" : (((fl >> 2) & 1u) ? " MODEM끔" : " MODEM켬"),
+               fl == LSF_FLAGS_NONE ? "" : ((fl & 1u) ? " TOP끔" : " TOP켬"),
+               ((v >> 43) & 1u) ? " USB" : "");
+    }
+    nvs_close(h);
+    return;
+  }
+  if (phase_s == 0) {
+    if (nvs_open(LSF_NS, NVS_READWRITE, &h) == ESP_OK) {
+      nvs_set_u8(h, "armed", 0);
+      nvs_set_u8(h, "tries", 0);
+      nvs_commit(h);
+      nvs_close(h);
+    }
+    s_lsf_armed = 0;                              /* ★RAM 플래그도 반드시 내린다 */
+    ESP_LOGW(TAG, "[LSF] 예약 취소.");
+    return;
+  }
+  if (s_dsleep_armed) {
+    ESP_LOGE(TAG, "[LSF] 거부 — 깊은잠 대조군(dsleep) 예약이 걸려 있다. `dsleep 0` 먼저.");
+    return;
+  }
+  const int ph_min = dry ? LSF_PHASE_MIN_DRY_S : LSF_PHASE_MIN_S;
+  if (phase_s < ph_min || phase_s > LSF_PHASE_MAX_S || samp_s < LSF_SAMP_MIN_S || samp_s > LSF_SAMP_MAX_S) {
+    ESP_LOGE(TAG, "[LSF] 거부 — 단계 %d초(허용 %d~%d), 표본 %d초(허용 %d~%d).",
+             phase_s, ph_min, LSF_PHASE_MAX_S, samp_s, LSF_SAMP_MIN_S, LSF_SAMP_MAX_S);
+    return;
+  }
+  if (fac < 0 || fac > 3) fac = 0;
+  const int nph   = (int)_lsf_nph((unsigned)fac);   /* ★2026-10-16 fac=3 은 5단계 */
+  const int n_per = phase_s / samp_s;
+  const int per_max = (LSF_MAX_SAMPLES - 1) / nph;   /* 4단계 23개, 5단계 19개 */
+  if (n_per < 2 || n_per > per_max) {
+    ESP_LOGE(TAG, "[LSF] 거부 — 단계당 표본이 %d개다(허용 2~%d). 표본 간격을 조정할 것.",
+             n_per, per_max);
+    return;
+  }
+  if (settle_s < LSF_SETTLE_MIN_S) settle_s = LSF_SETTLE_MIN_S;
+  if (settle_s > LSF_SETTLE_MAX_S) settle_s = LSF_SETTLE_MAX_S;
+  if (nvs_open(LSF_NS, NVS_READWRITE, &h) != ESP_OK) return;
+  {
+    uint8_t armed = 0;
+    nvs_get_u8(h, "armed", &armed);
+    if (armed) {
+      nvs_close(h);
+      ESP_LOGE(TAG, "[LSF] 거부 — 이미 예약돼 있다. (취소: lsfloor 0)");
+      return;
+    }
+  }
+  /* ★옛 표본·결과를 먼저 지운다 — 남겨두면 새 측정이 무효일 때 옛 값이 새 결과처럼 보인다.
+   *  지운 뒤에 빈 칸을 센다(지운 칸이 통계에 반영되려면 커밋이 필요하다). */
+  nvs_erase_all(h);
+  nvs_commit(h);
+  {
+    const size_t need = (size_t)(nph * n_per + 1 + LSF_NVS_MARGIN);
+    nvs_stats_t st;
+    if (nvs_get_stats(NULL, &st) == ESP_OK) {
+      ESP_LOGW(TAG, "[LSF] NVS 빈 칸 %u (필요 %u + 예약 %d)",
+               (unsigned)st.free_entries, (unsigned)need, LSF_NVS_RESERVED);
+      if (st.free_entries < need + LSF_NVS_RESERVED) {
+        nvs_close(h);
+        ESP_LOGE(TAG, "[LSF] 거부 — NVS 에 표본을 적을 자리가 모자란다. 밤새 재고 못 적으면 통째로 날린다.");
+        return;
+      }
+    }
+  }
+  nvs_set_u8 (h, "armed",    1);
+  nvs_set_u8 (h, "tries",    0);
+  nvs_set_u8 (h, "dry",      dry ? 1 : 0);
+  nvs_set_u8 (h, "run",      LSF_RUN_NONE);
+  nvs_set_u8 (h, "nph",      (uint8_t)nph);
+  nvs_set_u8 (h, "fac",      (uint8_t)fac);
+  nvs_set_u32(h, "phase_s",  (uint32_t)phase_s);
+  nvs_set_u32(h, "samp_s",   (uint32_t)samp_s);
+  nvs_set_u32(h, "settle_s", (uint32_t)settle_s);
+  nvs_set_u16(h, "n",        0);
+  nvs_commit(h);
+  nvs_close(h);
+  s_lsf_settle_s = (uint32_t)settle_s;
+  if (dry) {
+    ESP_LOGW(TAG, "[LSF] 모의 실행 — 재부팅해서 %d단계 × %d초를 **절전 없이** 돈다(약 %d초).",
+             nph, phase_s, nph * phase_s);
+    vTaskDelay(pdMS_TO_TICKS(300));
+    esp_restart();
+  }
+  s_lsf_armed = 1;                                /* ★부팅 뒤 예약도 감시가 돌아야 한다 */
+  if (fac == 3) {
+    ESP_LOGW(TAG, "[LSF] 예약 완료 — 깨어남 비용 + CC1101 교정(%s), %d단계 × %d초(총 %.1f시간), 표본 %d초마다.",
+             LSF_PAT_WAKE, nph, phase_s, nph * phase_s / 3600.0, samp_s);
+  } else {
+    ESP_LOGW(TAG, "[LSF] 예약 완료 — %s 를 켬/끔, %d단계 × %d초(총 %.1f시간), 표본 %d초마다.",
+             fac == 1 ? "TOP" : (fac == 2 ? "LP" : "MODEM"), nph, phase_s, nph * phase_s / 3600.0, samp_s);
+  }
+  ESP_LOGW(TAG, "[LSF]   → 전원을 끊으면 %d초(%.0f분) 정착 뒤 화면을 끄고 재부팅해 측정한다.",
+           settle_s, settle_s / 60.0);
+  ESP_LOGW(TAG, "[LSF]   → 측정 중에는 버튼·Matter 제어가 안 된다. 끝나면 저절로 정상 부팅한다. (취소: lsfloor 0)");
+}
+#else  /* !BOARD_HAS_BAT_ADC — 전압을 못 재는 보드엔 이 대조군이 없다 */
+static void _lsf_watch_usb(void) {}
+static bool _lsf_is_armed(void) { return false; }
+void somfy_app_lsfloor_boot_hook(void) {}
+void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, int fac)
+{
+  (void)phase_s; (void)settle_s; (void)samp_s; (void)dry; (void)fac;
+  ESP_LOGW(TAG, "[LSF] 이 보드는 배터리 ADC 가 없어 쓸 수 없다.");
+}
+#endif /* BOARD_HAS_BAT_ADC */
+
 void somfy_app_run(void *arg) {
   (void)arg;
+  s_main_task_h = xTaskGetCurrentTaskHandle();   /* ★2026-10-18 somfy_app_main_kick 대상(F10) */
   boot_diag_stage2(BOOT_S2_RUN_ENTRY);
   app_log_init();   /* 전역 로그 레벨 적용 (esp_log) */
   _crash_breadcrumb_init();
@@ -4559,6 +5632,8 @@ void somfy_app_run(void *arg) {
    *
    *  잃는 것: USB 를 꽂는 순간의 **즉시** 기상. 하지만 메인 루프가 100ms 마다
    *  돌며 `_is_usb_powered()` 를 보므로 0.1초 안에 감지된다 — 체감 차이가 없다.
+   *  ★2026-10-18 정정: 지금은 화면 OFF·배터리면 메인 루프가 1초 주기(F10)이고 꽂기 확인 200ms(F16
+   *  _usb_phys_update)가 더해져 **최대 약 1.2초**다. 여전히 이 웨이크를 다시 걸 이유는 아니다.
    *  ※GNPE(BOARD_CHG_STAT_ACTIVE_HIGH=0)는 충전 IC STAT 핀 직결이라 임피던스가
    *    낮고 이 문제가 없으므로 그대로 둔다. */
 #else
@@ -4584,6 +5659,7 @@ void somfy_app_run(void *arg) {
    *     완료 감지 후 활성화. */
   /* ★2026-08-11: 함수 자체가 "등록 전에는 DFS 만, 등록 후 light sleep" 을 판단하므로
    *  조건 없이 부른다. 등록 완료는 메인 루프의 주기 호출이 감지해 자동 승격한다. */
+  _usb_phys_update(esp_timer_get_time());   /* ★2026-10-18 F16 — 첫 판독을 확정값으로(이후 메인 루프가 회전마다 갱신) */
   _enable_pm_light_sleep();
 
   /* ── 9. 메인 루프 ── */
@@ -4614,6 +5690,9 @@ void somfy_app_run(void *arg) {
     s_bc.last_setup_screen = (uint8_t)s_setup_screen;
     s_bc.last_activity_us = s_last_activity_us;
     esp_task_wdt_reset();
+    /* ★2026-10-18 F16 USB 물리 판정 갱신 — 회전마다 **여기 한 번**. 아래 PM·화면·기록·주기가 모두 이 결과를 쓴다
+     *  (_usb_phys_update 주석). 앱 시작 전(1초 대기 회전)에도 돌려 판정이 끊기지 않게 한다. */
+    _usb_phys_update(esp_timer_get_time());
     /* 앱이 시작된 뒤(단독 또는 커미셔닝 완료) PM(DFS) 활성화.
      *  idempotent — 최초 1회만 적용. */
     if (s_app_started) {
@@ -4633,15 +5712,22 @@ void somfy_app_run(void *arg) {
      *  매초 (UNPAIRED→false 로) 덮어쓰므로, 그것을 엣지 기준으로 쓰면
      *  미페어링+Thread attach 상태에서 매초 거짓 false→true 전이가 생겨
      *  _on_thread_attached() 가 반복 호출(화면 강제 초기화)된다. */
+    /* ★★2026-10-18 F17 — 회전마다 묻지 않는다. CHIP 이벤트(somfy_app_thread_changed)와 첫 회전에만 묻고,
+     *  보험은 7초 Matter 상태·60초 [PWR] 의 OT 락 조회에 얹었다(_thread_attach_sync 주석). 전이 기준 상태는
+     *  여전히 독립 변수(s_thr_attached)라 위 주석의 거짓 전이 문제는 그대로 막힌다. */
+    if (s_thr_chk_req) {
+      s_thr_chk_req = false;
+      _thread_attach_sync(thread_prov_is_attached(), "이벤트");
+    }
+    /* ★2026-10-18 F17 등록 완료 변화 → SNTP 상태 맞춤(플래그 읽기뿐 — 락 없음). 페어링 화면 밖에서 등록이 끝나는
+     *  경우(부팅 유예 중 페어링 등)를 놓치지 않으려고. 페어링 화면 안이면 보호가 켜져 있어 여기선 켜지 않고,
+     *  화면을 나갈 때(_pairing_protect_end) 켠다. */
     {
-      static bool s_thread_was_attached = false;
-      bool thread_ok = thread_prov_is_attached();
-      if (thread_ok != s_thread_was_attached) {
-        oled_ui_set_thread(&s_ui, thread_ok);
-        if (thread_ok) {
-          _on_thread_attached();
-        }
-        s_thread_was_attached = thread_ok;
+      static bool s_cc_seen = false;
+      const bool cc = matter_blinds_is_commissioning_complete();
+      if (cc != s_cc_seen) {
+        s_cc_seen = cc;
+        _sntp_apply(cc ? "등록 상태 확인" : "등록 해제");
       }
     }
 
@@ -4689,7 +5775,9 @@ void somfy_app_run(void *arg) {
            *  parent RSSI 가 INVALID(127) 가 되는데 _rssi_to_level 이 127 을
            *  "링크는 있으나 측정 불가 → 풀바(4)" 로 해석해 **꽉 찬 안테나로 고정**됐다.
            *  → 실제 attach 상태를 함께 보고, detach 면 NO_SIGNAL('-') 로 표시한다. */
-          if (thread_prov_is_attached()) {
+          const bool att7 = thread_prov_is_attached();
+          _thread_attach_sync(att7, "7초 상태");   /* ★2026-10-18 F17 보험 — 이 조회에 얹는다(락 추가 없음) */
+          if (att7) {
             mst  = OLED_MT_CONNECTED;
             rssi = thread_prov_get_parent_rssi();
           } else {
@@ -4758,11 +5846,21 @@ void somfy_app_run(void *arg) {
         s_pair_done_us      = 0;
         s_pair_active_since = 0;
         s_pair_ready        = false;   /* 페어링 화면 이탈 — READY 해제 */
+        s_pair_already      = false;   /* ★2026-10-18 이미 등록됨 표시도 해제 */
         _pairing_protect_end();        /* 보호 원복 (idempotent) */
       } else {
         oled_pair_phase_t ph;
         int64_t pnow = esp_timer_get_time();
-        if (matter_blinds_is_commissioning_complete()) {
+        if (s_pair_already) {
+          /* ★2026-10-18 이미 등록된 기기(MA_PAIR 주석) — SUCCESS 와 같은 5초 보여 주고 메인으로.
+           *  보호·커미셔닝 창은 처음부터 안 켰으므로 되돌릴 것이 없다. */
+          ph = OLED_PAIR_ALREADY;
+          if (s_pair_done_us == 0) {
+            s_pair_done_us = pnow;
+          } else if (pnow - s_pair_done_us >= 5000000) {
+            _setup_exit_to_main("이미 등록됨 (5s 경과)");
+          }
+        } else if (matter_blinds_is_commissioning_complete()) {
           ph = OLED_PAIR_DONE;
           if (s_pair_done_us == 0) {
             s_pair_done_us = pnow;
@@ -4812,7 +5910,7 @@ void somfy_app_run(void *arg) {
 #if TEMP_NO_CHARGE
     bool charging = false;             /* ★임시: 충전 감지 비활성(진단용) */
 #else
-    bool charging = btn_handler_is_charging();
+    bool charging = _usb_phys_on();    /* ★2026-10-18 F16 — 회전 처음에 갱신한 안정화 판정(원시 핀 아님) */
 #endif
     int64_t now_us = esp_timer_get_time();
     static int64_t _dbg_us = -5000000;
@@ -5099,6 +6197,11 @@ void somfy_app_run(void *arg) {
      *  꺼지던 것도 이 때문.
      *  → 사용자가 **직접** 들어간 설정 메뉴(_in_setup_mode)만 화면을 유지한다.
      *    어떤 상태 때문에 걸릴 뻔했는지는 아래 로그로 남겨 추적 가능하게 둔다. */
+    /* ★2026-10-18 주파수 편집 화면 desync 정리 (감사 F15). oled_ui 는 20초 무조작이면 **화면만** NORMAL 로
+     *  되돌리는데 s_setup_screen 은 FREQ_EDIT 로 남아, 설정 모드(화면 OFF 억제·버튼을 주파수 편집으로 해석)가
+     *  보이지 않게 계속됐다. 화면이 돌아갔으면 상태도 같이 돌린다(편집 중이던 값은 취소 — 메뉴의 STOP 과 같다). */
+    if (s_setup_screen == SETUP_FREQ_EDIT && s_ui.state == OLED_STATE_NORMAL)
+      _setup_exit_to_main("주파수 화면 20초 자동 복귀 — 설정 상태도 맞춤");
     bool inhibit = _in_setup_mode();
     {
       static oled_state_t last_auto = OLED_STATE_NORMAL;
@@ -5127,7 +6230,14 @@ void somfy_app_run(void *arg) {
 
     if (inhibit) {
       /* 설정/페어링/충전 화면 — 화면 OFF 보류, 타이머 재시작 */
-      if (idle_us > off_to_us) _mark_activity();
+      /* ★★2026-10-18 배터리에서는 유휴 타이머를 되돌리지 않고, CFG_SETUP_IDLE_EXIT_SEC(60초) 동안 조작이
+       *  없으면 메인으로 나간다(감사 F15, 사용자 지정). 나가면 다음 루프부터 일반 정책이라 이미 10초를
+       *  넘긴 유휴로 곧바로 화면 OFF 된다. USB 는 예전 그대로(되돌려서 계속 켜 둔다). */
+      if (usb_mode) {
+        if (idle_us > off_to_us) _mark_activity();
+      } else if (idle_us >= (int64_t)CFG_SETUP_IDLE_EXIT_SEC * 1000000LL && _setup_idle_exit_ok()) {
+        _setup_exit_to_main("배터리 유휴 시한(CFG_SETUP_IDLE_EXIT_SEC) — 화면 OFF 로");
+      }
     } else if (vibration_active || vibration_holdoff) {
       if (idle_us > off_to_us) {
         static int last_log_s = -1;
@@ -5191,10 +6301,10 @@ void somfy_app_run(void *arg) {
        *  (세션 #22 → #25 → #27 로 실제 분리 횟수보다 많이 증가한 게 증거).
        *  → 연속 USB_DROP_CONFIRM_MS 동안 배터리로 읽혀야 전환으로 인정한다.
        *    실제 분리라면 2초 뒤에 시작해도 무해하다(기준점은 어차피 25초 뒤 확정). */
-#ifndef USB_DROP_CONFIRM_MS
-#define USB_DROP_CONFIRM_MS 2000
-#endif
-      static int64_t usb_low_since_us = 0;
+      /* ★★2026-10-18 F16 — 위 2초 디바운스와 아래 8/16 '첫 판독 보정'은 **_usb_phys_update 로 옮겼다**
+       *  (파일 위 _is_usb_powered 앞). 이제 usb_mode 자체가 같은 2초(USB_DROP_CONFIRM_MS)를 거친 값이고,
+       *  부팅 첫 판독은 그대로 확정된다(배터리 부팅 = 처음부터 배터리 → 세션 이어받기). PM·화면도 같은 값을 써서
+       *  "기록은 배터리인데 PM 은 USB" 같은 어긋남이 없다. 아래 두 주석은 이력으로 남긴다. */
       /* ★★★2026-08-16 **첫 판독 보정** — 이게 기록을 날려온 진짜 원인이다.
        *
        *  아래 `now_usb` 는 "usb_mode 이거나, 배터리로 읽힌 지 2초가 안 됐으면 USB"
@@ -5205,16 +6315,7 @@ void somfy_app_run(void *arg) {
        *  성립해 **"USB 분리"로 오인** → 새 세션 → 기록 삭제.
        *  즉 배터리로 부팅할 때마다 직전 기록이 지워졌다.
        *  → 배터리로 부팅한 경우엔 디바운스 창을 이미 지난 것으로 놓는다. */
-      if (s_bl_first && !usb_mode && usb_low_since_us == 0) {
-        usb_low_since_us = now_us - (int64_t)USB_DROP_CONFIRM_MS * 1000;
-      }
-      if (usb_mode) {
-        usb_low_since_us = 0;
-      } else if (usb_low_since_us == 0) {
-        usb_low_since_us = now_us;
-      }
-      const bool now_usb = usb_mode ||
-          ((now_us - usb_low_since_us) < (int64_t)USB_DROP_CONFIRM_MS * 1000);
+      const bool now_usb = usb_mode;   /* ★2026-10-18 F16 — 디바운스는 _usb_phys_update 가 이미 했다(위 주석) */
       if (s_bl_first) {
         s_bl_first  = false;
         was_usb_pwr = now_usb;                /* ★가짜 전환 방지 */
@@ -5410,16 +6511,19 @@ void somfy_app_run(void *arg) {
          *  **언제 접속해도** 현재값이 보여야 한다(60초 1회라 OT 락 부담 없음). */
         const int _rssi_now = (int)thread_prov_get_parent_rssi();
         s_last_rssi_cache = (int8_t)_rssi_now;   /* ★화면 OFF 구간에서도 갱신 */
+        /* ★2026-10-18 F17 보험 — 화면 OFF 동안 부착 이벤트가 유실돼도 1분 안에 맞춘다(OT 락 1분에 1번 추가) */
+        _thread_attach_sync(thread_prov_is_attached(), "60초 점검");
         /* ★2026-08-20 LP·폴주기 추가 — 깨어남 빈도(≈1000/폴주기)의 지배 요인이라
          *  절전 진단에 매번 필요한데, LP 판정 로그는 부팅 초반에만 나와 USB 재열거가
          *  늦으면 캡처에서 놓친다. 여기 실어 언제든 읽을 수 있게 한다. */
+        /* ★2026-10-18 F16 VBUS = 안정화 판정(PM·화면이 쓰는 값), 괄호 = 이 순간 원시 핀. 둘이 다르면 확인 중. */
         ESP_LOGW(TAG, "[PWR] light_sleep=%s (PM상태 %d)  무선=%s  등록=%d  화면=%s  "
-                      "VBUS=%d  rssi=%d  LP=%s 폴%dms  유휴 %llds",
+                      "VBUS=%d(원시%d)  rssi=%d  LP=%s 폴%dms  유휴 %llds",
                  (g_pm_state_applied >= 2) ? "ON" : "OFF", g_pm_state_applied,
                  matter_blinds_get_radio_enabled() ? "ON" : "OFF",
                  matter_blinds_is_commissioning_complete() ? 1 : 0,
                  oled_ui_is_panel_on() ? "ON" : "OFF",
-                 btn_handler_is_charging() ? 1 : 0, _rssi_now,
+                 _usb_phys_on() ? 1 : 0, btn_handler_is_charging() ? 1 : 0, _rssi_now,
                  btn_handler_lp_active() ? "ON" : "OFF", btn_handler_poll_ms(),
                  (long long)((nu - s_last_activity_us) / 1000000));
         /* ★2026-08-23 배터리 **표시값**을 여기 싣는다.
@@ -5438,7 +6542,10 @@ void somfy_app_run(void *arg) {
                  (s_pct_ceil_mpct < 0) ? -1 : (s_pct_ceil_mpct / 1000),
                  s_nobat ? 1 : 0, s_nobat_judged ? 1 : 0);
         /* ★2026-08-20 LP 깨우기 계측 — 위 btn_handler_lp_counters 주석 참조.
-         *  seq 증가 = LP 가 HP 를 깨운 횟수(정지 상태면 0 이어야 정상). */
+         *  seq 증가 = LP 가 HP 를 깨운 횟수(정지 상태면 0 이어야 정상).
+         *  ★2026-10-18 정정(감사 F18): seq 는 **로터리 디텐트 + PCF 상태 변화** 양쪽에서 오른다
+         *  (lp_core/pcf_poll.c). 실제 CPU 깨움 수와 같지 않다 — HP 가 이미 깨어 있으면 깨움 요청은
+         *  무시되고, 로터리 디텐트는 상태 변화와 겹쳐 두 번 셀 수 있다. 라벨을 "seq 증가"로 바꿨다. */
         {
           static uint32_t s_lp_p0 = 0, s_lp_s0 = 0;
           static int64_t  s_lp_t0 = 0;
@@ -5448,11 +6555,11 @@ void somfy_app_run(void *arg) {
           uint32_t ntf = 0, lat = 0;
           btn_handler_lp_latch_stats(&ntf, &lat);
           if (dt > 0.5)
-            ESP_LOGW(TAG, "[LPWAKE] 폴 %.1f회/초  ★HP 깨우기 %.2f회/초 "
-                          "(seq +%u / %.0f초)  태스크통지 누적 %u  래치 0x%04X",
+            ESP_LOGW(TAG, "[LPWAKE] 폴 %.1f회/초  seq 증가(로터리+상태변화) %.2f회/초 "
+                          "(seq +%u / %.0f초)  태스크통지 누적 %u(절전복귀) + %u(유휴훅)  래치 0x%04X",
                      (pc - s_lp_p0) / dt, (sq - s_lp_s0) / dt,
                      (unsigned)(sq - s_lp_s0), dt,
-                     (unsigned)ntf, (unsigned)lat);
+                     (unsigned)ntf, (unsigned)btn_handler_idle_notify_count(), (unsigned)lat);
           s_lp_p0 = pc; s_lp_s0 = sq; s_lp_t0 = nu;
         }
         /* ★2026-08-13 (②) 버스트 폴링 깨우기 출처 — `~INT` 가 실제로 쓸 만한지 판정.
@@ -5506,6 +6613,22 @@ void somfy_app_run(void *arg) {
     _time_persist_sched(now_us);
     g_wake_iter[WI_MAIN]++;            /* ★깨어남 출처 계측 */
     _dsleep_watch_usb();               /* ★2026-09-11 깊은잠 대조군 — USB 빠짐 감시 */
-    vTaskDelay(pdMS_TO_TICKS(100));
+    _lsf_watch_usb();                  /* ★2026-10-13 얕은잠 바닥 전류 대조군 — 같은 방식 */
+    /* ★★2026-10-18 화면 OFF·배터리·특수 상태 아님 → MAIN_LOOP_SLOW_MS(1초), 그 밖은 100ms 그대로
+     *  (감사 보고서 F10, 사용자 "나머지 진행").
+     *  8/12 에 500ms 로 늦췄다 되돌린 이유는 "화면 켜기를 이 루프가 해서 늦어진다"였다. 지금은
+     *    · 버튼·Matter 로 켜기는 각 콜백이 _exit_sleep 을 직접 부르고(1345·1814행) 그게 이 루프를 깨운다,
+     *    · 진동으로 켜기는 버튼 태스크가 진동을 판정하는 순간 somfy_app_main_kick() 으로 이 루프를 깨운다.
+     *      (★2026-10-18 somfy_app_vibe_kick 경유 — 화면 OFF 면 즉시, 화면 ON 이면 1초 1회)
+     *  그래서 1초 주기에도 켜짐이 늦지 않는다. 남는 지연은 USB 연결 감지(최대 1초)뿐이다.
+     *  1초로 늦추지 않는 경우: 화면 켜짐, USB, 설정 화면, 페어링 보호 중, 측정 예약(lsfloor·dsleep). */
+    /* ★2026-10-18 F16 USB 판정 확인 중(원시값 ≠ 확정값)에도 늦추지 않는다 — 꽂기 확인(200ms)이 1초 주기에
+     *  묶여 2초로 늘지 않게(_usb_phys_update 주석). 평소엔 거짓이라 주기에 영향이 없다. */
+    {
+      const bool slow = s_is_sleeping && !_is_usb_powered() && !_in_setup_mode()
+                        && !s_pair_protect_on && !_lsf_is_armed() && !s_dsleep_armed
+                        && !_usb_phys_settling();
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(slow ? MAIN_LOOP_SLOW_MS : 100));
+    }
   }
 }

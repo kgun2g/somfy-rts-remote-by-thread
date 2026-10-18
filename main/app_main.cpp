@@ -81,6 +81,8 @@ void oled_only_test(void);
 void matter_blinds_invoke_action_cb(uint8_t ep_idx, somfy_command_t cmd,
                                     uint8_t pos_pct, uint8_t oled_action,
                                     uint8_t step_count);
+/* ★2026-10-18 somfy_app.c: Thread 부착 상태가 바뀌었다 — 메인 루프가 다음 회전에 한 번 확인(감사 F17) */
+void somfy_app_thread_changed(void);
 }
 #define s_cc1101     g_cc1101
 #define s_somfy      g_somfy
@@ -312,6 +314,16 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         ESP_LOGI(TAG, "Interface IP Address changed");
         break;
 
+    /* ★2026-10-18 Thread 부착 상태가 **실제로 바뀔 때만** 온다(GenericThreadStackManagerImpl_OpenThread::
+     *  _OnPlatformEvent — role 변화 중 attach 여부가 달라진 경우). 메인 루프가 회전마다 OT 락을 잡고 묻던 것을
+     *  대신한다(somfy_app.c _thread_attach_sync 주석, 감사 F17). CHIP 태스크라 플래그·통지만 한다. */
+    case chip::DeviceLayer::DeviceEventType::kThreadConnectivityChange:
+        ESP_LOGI(TAG, "Thread connectivity %s",
+                 event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Established
+                     ? "established" : "lost/changed");
+        somfy_app_thread_changed();
+        break;
+
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
         g_commissioning_complete = true;   /* somfy_app.c 지연-시작 해제 */
@@ -426,6 +438,9 @@ extern "C" void somfy_app_console_setfreq(int idx, float mhz);
 extern "C" void somfy_app_console_printfreq(void);
 extern "C" void somfy_app_console_dsleep(int minutes, int settle_min);   /* ★2026-09-11 깊은잠 대조군 */
 extern "C" int  somfy_app_early_bat_capture(void);   /* ★2026-09-28 무선 시작 전 저부하 전압 */
+/* ★2026-10-13 얕은잠 바닥 전류 대조군(`lsfloor`) — somfy_app.c 의 긴 주석 참조 */
+extern "C" void somfy_app_lsfloor_boot_hook(void);
+extern "C" void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, int fac);
 extern "C" void somfy_app_batlog_dump(void);
 extern "C" void somfy_app_batlog_clear(void);
 extern "C" void somfy_app_console_usbsim(int off);
@@ -498,6 +513,41 @@ static int scmd_freq(int argc, char **argv){  /* freq [idx mhz] : set(+NVS저장
  *    12시간 예약이 걸리는 사고가 난다. 파괴적 기본값 금지.
  *  12시간인 이유: ADC 차분 잡음 3mV 대비 3-sigma 로 갈리는 최소가 8시간
  *  (sim/tools/dsleep_probe_sim.py). */
+/* ★★2026-10-13 `rtmod` — 얕은잠 중 MODEM·TOP 도메인을 못 끄는 이유를 이름으로 본다.
+ *
+ *  실측(pd* 계측): 얕은잠 중 TOP·HP_PERIPH·MODEM 이 **한 번도** 안 꺼졌다.
+ *  IDF 판정(sleep_modes.c top_domain_pd_allowed / sleep_modem.c modem_domain_pd_allowed):
+ *    MODEM 끔 = 초기화(inited)된 무선 리텐션 모듈이 **전부 생성(created)** 됐을 때
+ *    TOP   끔 = MODEM 끔 가능 AND CPU AND 클럭 AND 주변장치(PM_POWER_DOWN_PERIPHERAL
+ *               켜짐 + 초기화된 모든 주변장치 드라이버가 리텐션 생성) — 하나라도 빠지면 켜둔다.
+ *  즉 "inited 인데 created 아님" 비트가 곧 범인이다. C6 는 모듈 32개라 bitmap[0] 하나.
+ *  ※USB 중엔 얕은잠 설정이 달라 생성 상태가 다를 수 있다 — 최종 판정은 배터리 구동 중
+ *    NVS(pmdump/rt_init·rt_crt) 값으로 한다. */
+#if SOC_PAU_SUPPORTED
+#include "esp_private/sleep_retention.h"
+static const char *const s_rt_names[32] = {
+    "NULL", "CLOCK_SYSTEM", "CLOCK_MODEM", "SYS_PERIPH", "TG0_WDT", "TG1_WDT",
+    "TG0_TIMER0", "TG1_TIMER0", "GDMA_CH0", "GDMA_CH1", "GDMA_CH2", "ADC", "I2C0",
+    "RMT0", "UART0", "UART1", "I2S0", "ETM0", "TEMP_SENSOR", "TWAI0", "TWAI1",
+    "PARLIO0", "GPSPI2", "LEDC", "PCNT0", "MCPWM0", "WIFI_MAC", "WIFI_BB", "BLE_MAC",
+    "BT_BB", "802154_MAC", "(31)" };
+static int scmd_rtmod(int argc, char **argv){
+    (void)argc; (void)argv;
+    const uint32_t ini = sleep_retention_get_inited_modules().bitmap[0];
+    const uint32_t crt = sleep_retention_get_created_modules().bitmap[0];
+    const uint32_t modem_mask = (1u<<26)|(1u<<27)|(1u<<28)|(1u<<29)|(1u<<30);
+    printf("[RTMOD] inited=0x%08lX  created=0x%08lX\n", (unsigned long)ini, (unsigned long)crt);
+    for (int b = 0; b < 32; b++) {
+        const bool i = (ini >> b) & 1, c = (crt >> b) & 1;
+        if (!i && !c) continue;
+        printf("  %2d %-13s inited=%d created=%d%s\n", b, s_rt_names[b], i, c,
+               (i && !c) ? ((modem_mask >> b) & 1 ? "   ★MODEM 차단" : "   ★TOP 차단") : "");
+    }
+    printf("[RTMOD] 끝\n");
+    return 0;
+}
+#endif
+
 /* ★2026-10-07 `ccfix`        상태 + CC1101 수면 탐침 통계
  *             `ccfix 0|1`    절전 중 CSn 풀업 끄기/켜기(재부팅 후 적용, A/B 대조군용)
  *  탐침 해석: bit7=1 "자고 있었음"이 정상. USB 중엔 얕은잠이 없어 CSn 이 뜨지 않으므로
@@ -518,6 +568,60 @@ static int scmd_ccfix(int argc, char **argv){
     cc1101_probe_stats(&a, &w, &last);
     printf("[CCFIX] 설정=%s  탐침: 자고있었음 %lu / 깨어있었음 %lu  마지막 상태 0x%02X\n",
            fix ? "켜짐" : "꺼짐", (unsigned long)a, (unsigned long)w, last);
+    return 0;
+}
+
+/* ★2026-10-13 `adcfix [0|1]` — ADC 유닛 상주(0, 기본) / 측정할 때만 만들기(1, 실험 전용).
+ *  상주하면 IDF 가 MODEM 도메인을 절전 중에도 켜둔다(somfy_app.c 주석). 재부팅 후 적용.
+ *  ★같은 날 실측: 1 로 두면 배터리 진입 28초 뒤 Thread 가 멈추고 절전이 0% 가 된다
+ *    (4.2시간에 90→37%). 그래서 기본값을 1 → 0 으로 되돌렸다. */
+static int scmd_adcfix(int argc, char **argv){
+    nvs_handle_t h;
+    uint8_t fix = 0;
+    if (argc >= 2) {
+        fix = (uint8_t)(atoi(argv[1]) ? 1 : 0);
+        if (nvs_open("diag", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_set_u8(h, "adcfix", fix); nvs_commit(h); nvs_close(h);
+        }
+        printf("[ADCFIX] %s — 재부팅 후 적용\n", fix ? "켜짐(★실험: 측정할 때만 생성)" : "꺼짐(기본, 상주)");
+        return 0;
+    }
+    if (nvs_open("diag", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "adcfix", &fix); nvs_close(h); }
+    printf("[ADCFIX] 설정=%s\n", fix ? "켜짐(★실험: 측정할 때만 생성)" : "꺼짐(기본, 상주)");
+    return 0;
+}
+
+/* ★2026-10-13 `lsfloor` — 얕은잠 바닥 전류 대조군 (somfy_app.c 주석 참조)
+ *    lsfloor                         조회(상태 + 받은 표본)
+ *    lsfloor <단계분> [정착분] [표본초]  예약 — 권장 `lsfloor 60 60 300` (4단계×1시간)
+ *    lsfloor 0                       취소
+ *    lsfloor dry <단계초> <표본초> [top]  USB 꽂힌 채 흐름만 확인(절전 없음, 바로 재부팅)
+ *  ★2026-10-15 `lsfloor top <단계분> [정착분] [표본초]` — MODEM 대신 TOP(주변장치) 도메인을 켬/끔.
+ *    (MODEM 은 10/14 밤 측정으로 무죄: 몫 < 0.6mA)
+ *  ★2026-10-16 `lsfloor lp <단계분> [정착분] [표본초]` — LP 코어 5ms 폴링을 켬/끔(TOP 도 10/15 밤 무죄).
+ *  ★2026-10-16 `lsfloor wake <단계분> [정착분] [표본초]` — 깨어남 비용 + CC1101 IDLE(1.7mA) 현장 교정,
+ *    5단계 A(바닥)-B(+깨어남 31.8회/초)-A-C(+CC1101 IDLE)-A. 권장 `lsfloor wake 60 120 300`.
+ *    모의: `lsfloor dry <단계초> <표본초> wake`. */
+static int scmd_lsfloor(int argc, char **argv){
+    if (argc < 2) { somfy_app_console_lsfloor(-1, 0, 0, 0, 0); return 0; }
+    if (strcmp(argv[1], "dry") == 0) {
+        const int ph = (argc >= 3) ? atoi(argv[2]) : 40;    /* 초 */
+        const int sp = (argc >= 4) ? atoi(argv[3]) : 10;
+        const int fc = (argc >= 5 && strcmp(argv[4], "top")  == 0) ? 1 :
+                       (argc >= 5 && strcmp(argv[4], "lp")   == 0) ? 2 :
+                       (argc >= 5 && strcmp(argv[4], "wake") == 0) ? 3 : 0;
+        somfy_app_console_lsfloor(ph, 60, sp, 1, fc);
+        return 0;
+    }
+    int a = 1, fac = 0;
+    if (strcmp(argv[1], "top") == 0) { fac = 1; a = 2; }
+    else if (strcmp(argv[1], "lp") == 0) { fac = 2; a = 2; }   /* ★2026-10-16 LP 폴링 켬/끔 */
+    else if (strcmp(argv[1], "wake") == 0) { fac = 3; a = 2; } /* ★2026-10-16 깨어남 비용 + 교정 */
+    if (argc <= a) { somfy_app_console_lsfloor(-1, 0, 0, 0, 0); return 0; }
+    const int m  = atoi(argv[a]);                               /* 단계(분). 0 = 취소 */
+    const int st = (argc >= a + 2) ? atoi(argv[a + 1]) : 60;    /* 정착(분) */
+    const int sp = (argc >= a + 3) ? atoi(argv[a + 2]) : 300;   /* 표본 간격(초) */
+    somfy_app_console_lsfloor(m * 60, st * 60, sp, 0, fac);
     return 0;
 }
 
@@ -808,6 +912,22 @@ extern "C" void app_main()
      *  순서·의미는 boards/xiao-c6.h 주석 참조.
      *  ※ 여기(NVS 보다 앞)에 두는 이유: 첫 Thread attach 부터 올바른 안테나로
      *    붙어야 RSSI·재전송이 처음부터 정상이다. */
+    /* ★★2026-10-15 lsfloor TOP 측정이 붙잡는 핀을 **맨 먼저 전부** 푼다.
+     *  TOP 도메인을 끄는 측정은 CC1101 SPI·RMT 핀과 안테나 핀을 측정 내내 gpio_hold 로 붙잡는다
+     *  (somfy_app.c s_lsf_hold_pins). 측정이 끝나면 스스로 풀지만, **도중에 리셋되면 hold 가 리셋을
+     *  넘어 남는다** — 안 풀면 아래 안테나 설정과 cc1101_init 이 패드를 못 바꿔 RF 가 통째로 죽는다.
+     *  걸린 적 없어도 무해하므로 무조건 부른다(CSn 은 원래 아래에서도 푼다 — 깊은잠 대조군 몫). */
+#ifdef BOARD_PIN_CC1101_CS
+    gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_CS);
+    gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_SCK);
+    gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_MOSI);
+    gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_GD0);
+#endif
+#if BOARD_HAS_RF_ANT_SW
+    gpio_hold_dis((gpio_num_t)BOARD_PIN_RF_SW_EN);
+    gpio_hold_dis((gpio_num_t)BOARD_PIN_RF_ANT_SEL);
+#endif
+
 #if BOARD_HAS_RF_ANT_SW
     {
         const gpio_num_t _en  = (gpio_num_t)BOARD_PIN_RF_SW_EN;
@@ -1064,6 +1184,12 @@ extern "C" void app_main()
      *  여기는 CPU 만 도는 결정적 구간이라 두 부팅의 부하가 같다. */
     somfy_app_early_bat_capture();
 
+    /* ★★2026-10-13 얕은잠 바닥 전류 대조군(`lsfloor`) — 예약이 없으면 즉시 돌아온다.
+     *  **무선을 켜기 전**이라야 하는 이유: 같은 날 MODEM 도메인을 꺼 봤더니 28초 뒤
+     *  Thread 가 멈췄다. 여기는 아직 무선이 없어 멈출 것이 없다. 예약된 측정이 있으면
+     *  여기서 몇 시간 머문 뒤 **그대로 아래로 내려가 정상 부팅한다**. */
+    somfy_app_lsfloor_boot_hook();
+
     /* Matter start */
     boot_diag_stage(BOOT_S1_MATTER_START);
     err = esp_matter::start(app_event_cb);
@@ -1124,8 +1250,16 @@ extern "C" void app_main()
       esp_console_cmd_register(&tmc);
       const esp_console_cmd_t dsc={ .command="dsleep", .help="깊은잠 대조군 dsleep <측정분> [정착분] (정착=셀 완화 대기, 기본 1분)", .hint=NULL, .func=&scmd_dsleep, .argtable=NULL };
       esp_console_cmd_register(&dsc);
+      const esp_console_cmd_t lsc={ .command="lsfloor", .help="얕은잠 바닥 전류 대조군 lsfloor [top|lp|wake] <단계분> [정착분] [표본초] / lsfloor dry <단계초> <표본초> [top|lp|wake] / lsfloor 0", .hint=NULL, .func=&scmd_lsfloor, .argtable=NULL };
+      esp_console_cmd_register(&lsc);
       const esp_console_cmd_t ccf={ .command="ccfix", .help="ccfix [0|1] 절전 중 CC1101 CSn 풀업 + 수면 탐침 통계", .hint=NULL, .func=&scmd_ccfix, .argtable=NULL };
       esp_console_cmd_register(&ccf);
+      const esp_console_cmd_t adf={ .command="adcfix", .help="adcfix [0|1] 0=ADC 유닛 상주(기본) 1=측정할 때만 생성(실험 전용 - Thread 멈춤)", .hint=NULL, .func=&scmd_adcfix, .argtable=NULL };
+      esp_console_cmd_register(&adf);
+#if SOC_PAU_SUPPORTED
+      const esp_console_cmd_t rtm={ .command="rtmod", .help="절전 리텐션 모듈 inited/created — MODEM·TOP 을 못 끄는 범인", .hint=NULL, .func=&scmd_rtmod, .argtable=NULL };
+      esp_console_cmd_register(&rtm);
+#endif
       const esp_console_cmd_t bdc={ .command="bd", .help="부팅 진단 조회 (bd / bd clear)", .hint=NULL, .func=&scmd_bd, .argtable=NULL };
       esp_console_cmd_register(&bdc);
       const esp_console_cmd_t blc={ .command="bl", .help="배터리 방전 기록 조회 (bl / bl clear)", .hint=NULL, .func=&scmd_bl, .argtable=NULL };

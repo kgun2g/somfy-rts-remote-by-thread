@@ -208,7 +208,16 @@ SemaphoreHandle_t btn_handler_get_i2c_mutex(void);
 void btn_handler_notify_from_lp(void);
 
 bool btn_handler_lp_active(void);
+/* ★2026-10-18 F05 유휴 훅(HP 가 깨어 있는 동안의 LP 변화) 통지 누적 — LP 경로 없으면 0 */
+uint32_t btn_handler_idle_notify_count(void);
 void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq);
+/* ★2026-10-13 LP 공유 RAM 의 poll_cnt 원값(s_lp_active 무관) — button_handler.c 주석 참조 */
+uint32_t btn_handler_lp_poll_raw(void);
+/* ★2026-10-16 lsfloor LP 켬/끔 측정용 — button_handler.c 주석 참조.
+ *  pause: LP 폴링을 멈추고 I2C 선이 둘 다 HIGH 인지 확인(반환 false = 버스가 쉬지 않은 채 멈춤).
+ *  resume: 이미 적재된 LP 프로그램을 같은 설정으로 다시 돌린다. */
+bool btn_handler_lp_pause(void);
+bool btn_handler_lp_resume(void);
 void btn_handler_int_observe(uint32_t *samples, uint32_t *low, uint32_t *edges);
 void btn_handler_lp_latch_stats(uint32_t *notify_cnt, uint32_t *latch_now);
 int  btn_handler_poll_ms(void);

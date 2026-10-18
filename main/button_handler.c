@@ -6,6 +6,7 @@
 #include "esp_rom_sys.h"       // esp_rom_delay_us — bit-bang timing
 #include "esp_task_wdt.h"      // Task WDT — _btn_task hang 자동 리부트
 #include "esp_system.h"        // esp_restart — SETUP 15초 hold 강제 재부팅
+#include "esp_freertos_hooks.h" // ★2026-10-18 유휴 훅 — LP 변화 통지(감사 F05, _btn_idle_hook)
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -27,6 +28,11 @@
  *  silent hang 시 다음 boot 의 reset_reason=TASK_WDT 와 함께 마지막 tick
  *  타임스탬프를 덤프해 어느 task 가 어디서 멈췄는지 추정 가능. */
 extern void somfy_app_bc_btn_tick(void);
+/* ★2026-10-18 진동을 판정하는 순간 메인 루프(화면 켜기 담당)를 깨운다 — 메인 루프가 화면 OFF·배터리에서
+ *  1초 주기로 돌 수 있게 됐다(감사 F10, somfy_app.c somfy_app_main_kick 주석).
+ *  ★2026-10-18(같은 날 뒤) somfy_app_vibe_kick 으로 바꿨다 — 화면 OFF 면 즉시, 화면 ON 이면 1초에 한 번만
+ *  (사용자 결정, somfy_app.c somfy_app_vibe_kick 주석). 손에 든 동안 30ms 마다 깨우던 것을 막는다. */
+extern void somfy_app_vibe_kick(void);
 
 static const char *TAG = "BTN";
 
@@ -36,6 +42,8 @@ static void IRAM_ATTR _vibe_isr_handler(void *arg);
 /* 진동 ISR 카운터 / disable 플래그 — 정의는 아래 진동 섹션 */
 static volatile uint32_t s_vibe_isr_count;
 static volatile bool     s_vibe_isr_disabled_flag;
+/* ★2026-10-18 ISR 이 스스로 끈 시각(FreeRTOS tick, 1kHz = ms) — 재활성을 반복 횟수가 아니라 시간으로(감사 F09) */
+static volatile TickType_t s_vibe_isr_off_tick;
 /* 진동센서 고장(한쪽 고정) 판정. 정의는 _vibration_track 쪽이지만 ②의 ISR 통지
  * 게이트가 앞서 참조하므로 선언을 여기로 올렸다. */
 static volatile bool     s_vibe_stuck = false;
@@ -100,7 +108,34 @@ static TaskHandle_t      s_btn_task_h = NULL;
  *        폴링은 백업 역할만 하므로 100ms 로 충분하다.
  *  ※체감이 느리면 즉시 25 로. 그때는 ②의 통지가 안 도는 것이니
  *    [LPWAKE] 의 `태스크통지 누적` 과 깨어남 원인의 ULP 건수를 먼저 볼 것. */
-#define BTN_LP_IDLE_POLL_MS 100
+/* ★★★2026-10-18 100 → 1000 (사용자 "대응 가능한 것 진행" — 감사 F05 해결 뒤).
+ *  100ms 는 **통지가 유실될 때의 반응 상한**이라 못 늘렸다(HP 가 깨어 있으면 LP 깨움 요청이 사라짐).
+ *  이제 유휴 훅(_btn_idle_hook)이 그 경우를 잡으므로 이 타임아웃은 순수한 안전망이다:
+ *  누름·뗌·로터리는 통지로 즉시, 진동은 GPIO 웨이크 통지(somfy_app _ls_exit_cb)로 즉시 처리한다.
+ *  타임아웃에 기대던 것들은 시간 기준으로 바꿨다 — LP 정지 판정(LP_STALE_MIN_MS),
+ *  진동 ISR 재활성·고장 판정(VIBE_*_MS), 디바운스·로터리 잔량(대기 시한).
+ *  검증: sim/tools/btn_lp_wait_sim.py(유휴 깨어남 10 → 1회/초, 탭 100%) · vibe_time_sim.py. */
+#define BTN_LP_IDLE_POLL_MS 1000
+/* ★★2026-10-18 LP 경로 **단일 대기** (감사 보고서 POWER_SAVING_FULL_CODE_AUDIT_2026-10-16 F04·F03).
+ *  그동안 LP 경로는 통지 대기(유휴 100 / 눌림 10ms) 뒤에 HP 폴링용 공통 vTaskDelay(10ms) 를
+ *  **한 번 더** 했다 → 유휴 110ms 마다 두 번 깨어났다(18.2회/초). batlog 해석기의 "남의 몫(스택)
+ *  8.4회/초" 대부분이 이 두 번째 깨어남이었다. 또 첫 변화를 본 뒤(디바운스 미확정)에도 any_held 가
+ *  확정 상태만 봐서 100ms 를 또 기다려 누름 확정이 ~120ms 늦었다.
+ *  → 통지 대기 한 곳에서, 타임아웃 = min(유휴 100 / 눌림 10, 미확정 디바운스의 남은 시간 + 1).
+ *  검증(sim/tools/btn_lp_wait_sim.py): 유휴 깨어남 18.2 → 10.0회/초, 누름 확정 중앙 ~120 → 23ms,
+ *  10~300ms 탭 검출 100%(기존 20~100ms 탭 92~99.5%), 연타 놓침 42 → 0/1000, 글리치·채터링 0.
+ *  깨어남 1회 ≈ 50µC(lsfloor wake 10/18 실측) → 약 0.4mA 절약. */
+#define BTN_LP_MIN_WAIT_MS   2    /* 디바운스 시한 대기의 하한(바쁜 반복 방지) */
+/* ★★2026-10-18 진동 처리 시간 기준 (감사 F09) — 예전엔 폴 **횟수**로 셌다(10ms 폴링 전제):
+ *  ISR 재활성 3폴=30ms · HIGH 창 30폴=300ms · 고장 판정 200폴=2초. 폴 간격이 유휴 110ms 가 되며
+ *  이미 0.33/3.3/22초로 늘어 있었고, 1000ms 면 3/30/200초가 된다. 원래 뜻한 시간으로 고정한다. */
+#define VIBE_REARM_MS        30   /* ISR 이 스스로 끈 뒤 다시 켜기까지 */
+#define VIBE_DUTY_WIN_MS    300   /* HIGH 표본 2개가 이 안에 오면 진동 */
+#define VIBE_STUCK_MS      2000   /* 마지막 LOW 뒤 이만큼 HIGH 만 보이면 고장(HIGH 고정) */
+#define VIBE_STUCK_MIN_N      5   /* …그리고 그동안 HIGH 표본이 이만큼 이상 */
+/* ★2026-10-18 고장 판정 뒤에도 이만큼은 엣지를 진동으로 인정 — 손에 들고 흔드는 동안 고장으로 오판돼 화면이
+ *  꺼지지 않게(사용자 결정 60초, _vibration_track 의 고장 분기 주석). 웨이크 차단은 그대로 판정 즉시. */
+#define VIBE_STUCK_RECOG_MS 60000
 #define BTN_IDLE_POLL_MS    50    /* 유휴 안전망. ~INT 가 죽어도 이 주기로는 반응 */
 #define BTN_ACTIVE_HOLD_MS 300    /* 마지막 활동 후 이 시간 조용하면 유휴로 */
 
@@ -204,6 +239,7 @@ static SemaphoreHandle_t s_i2c_mutex = NULL;
 #  include "lp_core_i2c.h"
 #  include "lp_core_main.h"   /* ulp_embed_binary 자동 생성 (ulp_pcf_state 등) */
 #  include "lp_core/pcf_lp_config.h"   /* LP 와 공유하는 읽기 폭/비트 위치 */
+#  include "driver/rtc_io.h"           /* ★2026-10-16 rtc_gpio_get_level — LP_I2C 선 상태(btn_handler_lp_pause) */
 /* ★양쪽이 어긋나면 런타임에 조용히 틀린다(좌/우 버튼 실종). 빌드에서 잡는다. */
 _Static_assert(LP_PCF_NBYTES == PCF_NBYTES,
                "LP/HP PCF read width mismatch (pcf_lp_config.h vs button_handler.h)");
@@ -226,6 +262,31 @@ extern const uint8_t lp_core_main_bin_end[]   asm("_binary_lp_core_main_bin_end"
 
 /* LP 경로가 실제로 가동 중인가 — 런타임 확정값. 0 이면 전부 현행 폴링. */
 static volatile bool s_lp_active = false;
+
+#if SOMFY_LP_CORE_PATH
+/* ★★2026-10-18 HP 가 **깨어 있는 동안** LP 가 본 변화도 버튼 태스크에 알린다 (감사 보고서 F05).
+ *  LP 는 변화를 보면 ulp_lp_core_wakeup_main_processor() 로 HP 를 깨우고, 절전 복귀 콜백이 ULP 원인을
+ *  보고 태스크에 통지한다. 그런데 HP 가 이미 깨어 있으면(다른 일·절전 진입 중) 깨움 요청은 그냥 사라지고
+ *  콜백도 안 돈다 → 태스크는 유휴 타임아웃까지 몰랐다. 그래서 유휴 대기를 100ms 보다 늘릴 수 없었다.
+ *  → FreeRTOS **유휴 훅**에서 LP 의 seq(로터리 디텐트·상태 변화마다 +1)를 본다. 유휴 훅은 HP 가 할 일을
+ *    마치고 잠들기 직전마다 돌므로, 깨어 있는 동안 생긴 변화는 다음 유휴 순간에 반드시 잡힌다.
+ *    잠든 뒤의 변화는 기존 절전 복귀 콜백이, 잠드는 도중의 변화는 절전이 거부되거나 즉시 깨어나
+ *    둘 중 하나가 잡는다. 비용: 유휴마다 LP RAM 한 단어를 읽어 비교한다.
+ *  s_seq_seen 은 태스크가 PCF 를 읽을 때도 갱신한다(_pcf8574_read — 상태보다 먼저). */
+static volatile uint32_t s_seq_seen = 0;
+volatile uint32_t g_btn_idle_notify_cnt = 0;      /* 계측: 유휴 훅이 통지한 횟수 */
+static bool _btn_idle_hook(void) {
+  if (s_lp_active && s_btn_task_h) {
+    const uint32_t sq = ulp_seq;
+    if (sq != s_seq_seen) {
+      s_seq_seen = sq;
+      g_btn_idle_notify_cnt++;
+      xTaskNotifyGive(s_btn_task_h);
+    }
+  }
+  return true;                                      /* 유휴 진행(절전 판단)을 막지 않는다 */
+}
+#endif
 
 enum { PCF_BUS_LP = 0, PCF_BUS_SHARED = 1 };
 static volatile uint8_t s_pcf_bus = PCF_BUS_LP;   /* btn_handler_init 의 프로브로 확정 */
@@ -273,8 +334,31 @@ static btn_state_t s_btns[] = {
 };
 #define BTN_COUNT (sizeof(s_btns) / sizeof(s_btns[0]))
 
+/* ★★2026-10-18 래치로 본 누름을 **디바운스 확정까지** 붙잡는다 (감사 F06 일부).
+ *  기존: _pcf8574_read 가 LP 래치를 읽는 순간 지웠다. 그런데 디바운스는 20ms 뒤 한 번 더 읽어
+ *  같아야 확정하므로, 그 사이 손을 떼면 누름이 확정되지 않고 사라졌다. HP 가 막 깨어 있는 창에
+ *  누름이 오면 LP 통지가 유실되는데(F05), 그때 특히 그렇다 — 기존 구조도 20~50ms 탭의 3~8%,
+ *  15ms 이하 탭은 전부 놓쳤다(sim/tools/btn_lp_wait_sim.py).
+ *  → 아직 확정되지 않은 버튼의 래치 비트는 여기 모아 두고 확정(눌림 이벤트) 때 푼다.
+ *    이미 눌림으로 확정된 버튼에는 붙잡지 않는다(안 그러면 뗌을 영영 못 본다).
+ *    로터리 버튼은 디바운스 없이 즉시 처리하므로(아래 rot_pressed) 붙잡지 않는다.
+ *  ★글리치 방어는 그대로다 — LP 래치는 5ms 간격 **2연속** 눌림만 세므로 한 번짜리 오독은 안 걸린다. */
+static uint32_t s_lat_hold = 0;      /* HP 폴링 경로(H2 등)에서는 늘 0 — 해제 코드만 공통으로 돈다 */
+
+#if SOMFY_LP_CORE_PATH
+static uint32_t _btn_unconfirmed_mask(void) {
+  uint32_t m = 0;
+  for (size_t i = 0; i < BTN_COUNT; i++)
+    if (s_btns[i].last_state) m |= (1u << s_btns[i].bit);   /* 아직 뗌(확정 눌림 아님) */
+  return m;
+}
+#endif
+
 /* ─── 로터리 엔코더 상태 (PCF8574 P0/P1/P2) ───── */
 static uint32_t s_rot_last_ms = 0;
+/* ★2026-10-18 LP 경로 로터리 잔량(+CW / −CCW) — 30ms 마다 1칸씩 내보낸다(감사 F07, 사용 지점 주석) */
+#define ROT_PEND_MAX 8
+static int32_t  s_rot_pend = 0;
 static uint32_t s_rot_btn_press_ms = 0;
 static bool s_rot_btn_state = true;
 static bool s_rot_btn_long_fired = false;
@@ -592,13 +676,30 @@ static pcf_state_t _pcf8574_read(void) {
 #ifndef LP_STALE_POLLS
 #define LP_STALE_POLLS 8
 #endif
+/* ★★2026-10-18 판정을 **시간 위주**로 바꿨다(같은 날 두 번 손봄).
+ *  ① 단일 대기로 읽기가 디바운스 시한(최소 2ms)까지 몰릴 수 있다 — 5ms 안에 "8회 연속 그대로"가
+ *     거짓으로 찬다. ② 유휴 대기를 1000ms 로 늘려(감사 F05 해결 뒤) "8회"는 8초가 된다.
+ *  LP 는 5ms 마다 poll_cnt 를 올리므로 500ms(LP 폴 100회분) 동안 그대로면 확실히 멈춘 것이다.
+ *  정지 판정은 **되돌릴 수 없으니**(HP 10ms 폴링으로 영구 전환 → 깨어남 폭증) 연속 2회 읽기도
+ *  같이 요구한다 → 유휴(1초 간격)면 약 2초, 눌림 중(10ms 간격)이면 0.5초에 잡는다(sim ⑦). */
+#ifndef LP_STALE_MIN_MS
+#define LP_STALE_MIN_MS    500
+#endif
+#ifndef LP_STALE_MIN_READS
+#define LP_STALE_MIN_READS 2
+#endif
     static uint32_t s_lp_cnt_prev = 0;
     static uint32_t s_lp_stale    = 0;
+    static uint32_t s_lp_chg_ms   = 0;
+    /* ★2026-10-18 F05: 상태보다 **먼저** seq 를 적는다 — 반대 순서면 상태를 읽은 직후의 변화가
+     *  "이미 본 것"으로 적혀 유휴 훅(_btn_idle_hook)이 놓친다. 순서가 이러면 최악이 헛통지 1번이다. */
+    s_seq_seen = ulp_seq;
     const uint32_t lp_cnt = ulp_poll_cnt;
-    if (lp_cnt != s_lp_cnt_prev) { s_lp_cnt_prev = lp_cnt; s_lp_stale = 0; }
+    const uint32_t t_rd   = _ms_now();
+    if (lp_cnt != s_lp_cnt_prev) { s_lp_cnt_prev = lp_cnt; s_lp_stale = 0; s_lp_chg_ms = t_rd; }
     else if (s_lp_stale < LP_STALE_POLLS) { s_lp_stale++; }
 
-    if (s_lp_stale < LP_STALE_POLLS) {
+    if (s_lp_stale < LP_STALE_MIN_READS || (uint32_t)(t_rd - s_lp_chg_ms) < LP_STALE_MIN_MS) {
       /* ★PCF8575(2바이트) 는 좌/우 버튼이 상위 바이트(P10=bit8, P11=bit9)에 있다.
        *  여기서 0xFF 로 자르면 좌/우가 통째로 사라진다(실사용 신고로 드러난 버그). */
       uint32_t st = ulp_pcf_state;
@@ -616,9 +717,15 @@ static pcf_state_t _pcf8574_read(void) {
       const uint32_t rot_mask = (1u << PCF8574_BIT_ROT_A) | (1u << PCF8574_BIT_ROT_B);
       uint32_t lat = ulp_press_latch & ~rot_mask;
       if (lat) {
+        /* ★2026-10-18 (감사 F08) 이 `&=` 는 읽고-고쳐-쓰기라, 그 몇 명령(수십 ns) 사이에 LP 가 **다른** 버튼
+         *  비트를 OR 하면 그 비트가 사라질 수 있다. LP 는 5ms 마다 한 번 쓰므로 확률은 10만 분의 1 수준이고,
+         *  사라져도 그 버튼이 다음 LP 폴까지 눌려 있으면 다시 래치된다. 막으려면 LP 프로그램까지 바꾸는
+         *  세대 번호 규약이 필요해, 위험 대비 이득이 작아 두었다(로터리는 위처럼 HP 쪽만으로 해결). */
         ulp_press_latch &= ~lat;   /* 본 것만 차감 */
         st &= ~lat;                /* 래치된 비트를 눌림(0)으로 */
+        s_lat_hold |= lat & _btn_unconfirmed_mask();   /* ★2026-10-18 확정까지 붙잡기(위 s_lat_hold) */
       }
+      st &= ~s_lat_hold;
       return (pcf_state_t)st;
     }
     /* LP 정지 확정 — 두 번 다시 이 값을 믿지 않는다. LP 를 세우고 HP 폴링으로 전환. */
@@ -627,6 +734,7 @@ static pcf_state_t _pcf8574_read(void) {
       s_lp_dead_logged = true;
       ulp_enabled  = 0;        /* LP 가 깨어나 I2C 를 다시 만지지 않게 */
       s_lp_active  = false;    /* 이후 폴은 HP 직접 읽기 */
+      s_lat_hold   = 0;        /* ★2026-10-18 얼어붙은 래치를 HP 폴링 경로로 끌고 가지 않는다 */
       ESP_LOGE(TAG, "★LP 코어 정지 감지(poll_cnt 고정 %u) — 공유 RAM 값 폐기, "
                     "HP 직접 폴링으로 전환", (unsigned)lp_cnt);
     }
@@ -787,6 +895,7 @@ static void _btn_task(void *pvParam) {
           btn->press_time_ms = now;
           btn->long_fired = false;
           btn->last_state = false;
+          s_lat_hold &= ~(1u << btn->bit);   /* ★2026-10-18 확정 — 래치 붙잡기 해제 */
           if (btn->press_evt != BTN_EVT_NONE) {
             _send_event(btn->press_evt, 0);
           }
@@ -835,11 +944,17 @@ static void _btn_task(void *pvParam) {
      *  HP 가 다시 디코딩하면 안 된다: 폴링 주기가 느려 전이를 놓치므로 오히려 틀린다.
      *  극성(_ROT_CW_ON_AB1)은 기존과 같은 규칙을 그대로 적용한다. */
     if (s_lp_active) {
-      int32_t d = ulp_rot_delta;
+      /* ★2026-10-18 HP 는 공유값을 **쓰지 않는다** (감사 F08). 예전 `ulp_rot_delta -= d` 는 읽고-고쳐-쓰기라
+       *  그 몇 명령 사이에 LP 가 디텐트를 더하면 하나가 사라질 수 있었다(두 코어는 서로 막지 못한다).
+       *  rot_delta 는 LP 만 더하고 빼는 **누적값**이므로, HP 는 자기가 이미 가져간 양(s_rot_taken)만
+       *  따로 세고 차이를 쓴다 → 쓰는 쪽이 LP 하나뿐이라 경쟁이 없다. (래치 쪽 &= 는 그대로 — 아래 주석) */
+      static int32_t s_rot_taken = 0;
+      static bool    s_rot_sync  = false;
+      if (!s_rot_sync) { s_rot_sync = true; s_rot_taken = ulp_rot_delta; }   /* 시작 시점 기준선(옛 잔량을 쏟지 않게) */
+      int32_t d = (int32_t)(ulp_rot_delta - s_rot_taken);
       if (d) {
-        ulp_rot_delta -= d;                     /* 소비 — LP 가 그 사이 더 넣어도 안전 */
+        s_rot_taken += d;                       /* 소비 — 공유값은 건드리지 않는다 */
         int32_t n = (d < 0) ? -d : d;
-        if (n > 8) n = 8;                       /* 폭주 방어(한 번에 8디텐트까지) */
         bool neg = (d < 0);
         bool cw  = (neg == (_ROT_CW_ON_AB1 != 0));
 #if BOARD_ROT_AB_SWAP
@@ -850,12 +965,21 @@ static void _btn_task(void *pvParam) {
          *    값이라 별도 보정이 필요 없다 — 이중 반전 주의. */
         cw = !cw;
 #endif
-        for (int32_t k = 0; k < n; k++) {
-          if ((now - s_rot_last_ms) >= ROT_MIN_INTERVAL_MS) {
-            s_rot_last_ms = now;
-            _send_event(cw ? BTN_EVT_ROT_CW : BTN_EVT_ROT_CCW, 0);
-          }
-        }
+        /* ★★2026-10-18 버리지 않고 **남겨 둔다** (감사 보고서 F07).
+         *  기존: 여기서 n 번 돌며 보냈지만 루프 안의 now 가 같아서 첫 1개만 30ms 제한을 통과했다
+         *  — 빠르게 돌린 여러 칸이 1칸으로 줄었다(sim: 8ms 간격 5칸 → 1~2칸 전달).
+         *  → 방향을 붙인 잔량 s_rot_pend 에 더하고, 아래에서 30ms 마다 1칸씩 내보낸다.
+         *    잔량 상한 ROT_PEND_MAX 는 기존 "한 번에 8디텐트" 폭주 방어와 같은 값.
+         *    반대 방향은 잔량에서 상쇄된다(순이동만 남는다). 대기 시한은 아래 단일 대기가 본다. */
+        s_rot_pend += cw ? n : -n;
+        if (s_rot_pend >  ROT_PEND_MAX) s_rot_pend =  ROT_PEND_MAX;
+        if (s_rot_pend < -ROT_PEND_MAX) s_rot_pend = -ROT_PEND_MAX;
+      }
+      if (s_rot_pend != 0 && (now - s_rot_last_ms) >= ROT_MIN_INTERVAL_MS) {
+        const bool cw1 = (s_rot_pend > 0);
+        s_rot_pend += cw1 ? -1 : 1;
+        s_rot_last_ms = now;
+        _send_event(cw1 ? BTN_EVT_ROT_CW : BTN_EVT_ROT_CCW, 0);
       }
       s_rot_ab_raw = ab;                        /* HP 디코더 상태는 동기만 맞춰둔다 */
     } else
@@ -942,7 +1066,6 @@ static void _btn_task(void *pvParam) {
        *  기록**한다(2026-08-19 진동센서 원인도 이 vibelog 로 찾았다).
        *  다시 보려면 아래를 1 로. */
 #define VIBE_STAT_LOG_ENABLE 0
-      static uint8_t  s_vibe_reenable_cd = 0;
 #if VIBE_STAT_LOG_ENABLE
       static uint32_t s_vibe_isr_seen = 0;
       static int      s_vibe_high_cnt = 0;
@@ -960,14 +1083,13 @@ static void _btn_task(void *pvParam) {
       }
 #endif
 
-      /* ISR 재활성(chatter 폭주 cap) */
-      if (s_vibe_isr_disabled_flag) {
-        if (s_vibe_reenable_cd == 0) s_vibe_reenable_cd = 3;
-        s_vibe_reenable_cd--;
-        if (s_vibe_reenable_cd == 0) {
-          s_vibe_isr_disabled_flag = false;
-          gpio_intr_enable(VIBE_PIN);
-        }
+      /* ISR 재활성(chatter 폭주 cap) — ★2026-10-18 **시간 기준**(감사 F09): 끈 뒤 VIBE_REARM_MS 가
+       *  지나면 켠다. 예전엔 "3폴 뒤"였는데 폴 간격이 10ms 를 전제했다 — 유휴 1000ms 에서는 3초가 된다.
+       *  이 시각은 아래 단일 대기가 시한으로 잡아 깨운다. */
+      if (s_vibe_isr_disabled_flag &&
+          (uint32_t)((xTaskGetTickCount() - s_vibe_isr_off_tick) * portTICK_PERIOD_MS) >= VIBE_REARM_MS) {
+        s_vibe_isr_disabled_flag = false;
+        gpio_intr_enable(VIBE_PIN);
       }
     }
 
@@ -1021,8 +1143,31 @@ static void _btn_task(void *pvParam) {
        *  아무리 통지해도 태스크는 주기를 다 잔다. 통지 기반으로 바꿔야 ②가
        *  실제로 동작하고, 그래야 100ms 주기에서도 반응이 3~5ms 로 유지된다.
        *  타임아웃은 백업(통지가 유실되거나 HP 가 깨어 있어 ULP 경로가 안 도는 경우). */
-      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(any_held ? BTN_ACTIVE_POLL_MS
-                                                      : BTN_LP_IDLE_POLL_MS));
+      /* ★★2026-10-18 단일 대기 — 미확정 디바운스가 있으면 그 시한까지만 잔다(BTN_LP_MIN_WAIT_MS 주석).
+       *  그리고 아래 HP 폴링용 공통 10ms 지연을 **건너뛴다**(continue) — 그게 이중 대기였다. */
+      uint32_t tmo = any_held ? BTN_ACTIVE_POLL_MS : BTN_LP_IDLE_POLL_MS;
+      const uint32_t t_w = _ms_now();
+      for (size_t i = 0; i < BTN_COUNT; i++) {
+        const btn_state_t *b = &s_btns[i];
+        if (b->raw_state != b->last_state) {
+          const uint32_t el   = t_w - b->debounce_ms;
+          const uint32_t left = (el < DEBOUNCE_MS) ? (uint32_t)(DEBOUNCE_MS - el) : 0u;
+          if (left + 1u < tmo) tmo = left + 1u;
+        }
+      }
+      if (s_rot_pend != 0) {                    /* ★로터리 잔량 — 다음 30ms 창까지만(F07) */
+        const uint32_t el   = t_w - s_rot_last_ms;
+        const uint32_t left = (el < ROT_MIN_INTERVAL_MS) ? (uint32_t)(ROT_MIN_INTERVAL_MS - el) : 0u;
+        if (left + 1u < tmo) tmo = left + 1u;
+      }
+      if (s_vibe_isr_disabled_flag) {           /* ★진동 ISR 재활성 시한(F09) — 유휴 1000ms 를 기다리지 않는다 */
+        const uint32_t el   = (uint32_t)((xTaskGetTickCount() - s_vibe_isr_off_tick) * portTICK_PERIOD_MS);
+        const uint32_t left = (el < VIBE_REARM_MS) ? (uint32_t)(VIBE_REARM_MS - el) : 0u;
+        if (left + 1u < tmo) tmo = left + 1u;
+      }
+      if (tmo < BTN_LP_MIN_WAIT_MS) tmo = BTN_LP_MIN_WAIT_MS;
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(tmo));
+      continue;
     } else
 #endif
     /* ★★2026-08-25 `~INT` **수동 관찰** — ISR 은 걸지 않는다(폭주·WDT 위험 없음).
@@ -1086,6 +1231,14 @@ void btn_handler_wake_stats(uint32_t *int_cnt, uint32_t *vibe_cnt,
 static void _lp_core_try_start(void)
 {
 #if SOMFY_LP_CORE_PATH
+  /* ★★2026-10-15 다시 올리기 **전에 먼저 멈춘다**. 소프트 재부팅은 LP 코어를 안 멈추므로
+   *  (btn_handler_lp_poll_raw 주석) 지난 부팅의 LP 프로그램이 그대로 돌고 있거나, LP_I2C 전원이
+   *  나갔다 돌아와 **I2C 대기 중에 멈춰** 있을 수 있다. 실제로 lsfloor TOP 리허설 뒤 그 상태에서
+   *  아래 적재·기동이 먹히지 않아 "폴링이 안 돈다 — HP 폴링 유지"로 떨어졌고, 깨어남이
+   *  32 → 106회/초가 됐다(전원을 다시 넣기 전까지 계속). 멈춘 뒤 적재하면 어떤 상태에서도 새로 시작한다.
+   *  ※전원 인가 직후처럼 LP 가 안 돌고 있어도 무해하다(깨움 소스 해제 + 수면 요청뿐). */
+  ulp_lp_core_stop();
+  vTaskDelay(pdMS_TO_TICKS(10));
   /* 1) LP_I2C 페리페럴 초기화 — LP 코어가 쓰기 전에 HP 가 설정해줘야 한다.
    *    C6 는 SDA=GPIO6/SCL=GPIO7 고정이라 별도 핀 지정이 없다. */
   const lp_core_i2c_cfg_t i2c_cfg = LP_CORE_I2C_DEFAULT_CONFIG();
@@ -1363,6 +1516,11 @@ void btn_handler_init(btn_event_cb_t cb, void *user_data) {
 
 void btn_handler_start_task(void) {
   xTaskCreate(_btn_task, "btn_handler", 3072, NULL, 10, &s_btn_task_h);   /* composed 로 free 확보 → 전 보드 3072 통일 */
+#if SOMFY_LP_CORE_PATH
+  /* ★2026-10-18 F05 — HP 가 깨어 있는 동안의 LP 변화를 유휴 순간에 통지(_btn_idle_hook 주석) */
+  const esp_err_t he = esp_register_freertos_idle_hook_for_cpu(_btn_idle_hook, 0);
+  ESP_LOGI(TAG, "[LP] 유휴 훅(깨어 있는 동안의 LP 변화 통지) 등록: %s", esp_err_to_name(he));
+#endif
 }
 
 bool btn_is_pressed(btn_key_t key) {
@@ -1412,6 +1570,7 @@ static void IRAM_ATTR _vibe_isr_handler(void *arg) {
      *  (HAL 레이어, 항상 IRAM-safe). 폴링 태스크의 gpio_intr_enable 은 task
      *  context 라 flash 접근 OK — 그대로 둔다. */
     gpio_ll_intr_disable(&GPIO, VIBE_PIN);
+    s_vibe_isr_off_tick = xTaskGetTickCountFromISR();   /* ★2026-10-18 재활성 시한 기준(F09) */
     /* ★★2026-08-12 통지를 넣었다 뺐던 이력:
      *  C6 의 VIBE 핀은 고장 상태인데도 ISR 이 **초당 33회** 발사된다(실측
      *  [VIBE-stat] 3초당 +100). 통지를 걸면 버튼 태스크가 그만큼 깨어나
@@ -1456,7 +1615,7 @@ int      btn_handler_vibe_level(void) { return gpio_get_level(VIBE_PIN); }
  *  정상 진동은 접점이 떨렸다 붙었다 하므로 HIGH/LOW 가 **섞여야** 한다.
  *  → 최근 윈도우가 전부 HIGH(또는 전부 LOW)로 고정되면 배선/스위치 고장으로 보고
  *    진동 이벤트를 무시한다. 섞인 패턴이 돌아오면 자동으로 다시 인정한다. */
-#define VIBE_STUCK_WIN   200          /* 고장 판정 관찰 샘플 수 */
+/* (2026-10-18 VIBE_STUCK_WIN(200표본) 폐지 → VIBE_STUCK_MS·VIBE_STUCK_MIN_N 시간 기준, 파일 위 정의) */
 /* ★2026-08-19 any-edge ISR 트리거 임계(폴 1회당 엣지 수).
  *  실측 정지 상태 엣지율 0.00회/초(COM3 H2, 90초 관찰)라 1 이면 오검출이
  *  없고 탭 1회에 바로 반응한다. 잡음 있는 개체가 나오면 2 로 올릴 것. */
@@ -1499,16 +1658,28 @@ bool btn_handler_vibe_stuck(void) { return s_vibe_stuck; }
  *      · 실측 vibelog 교정 — HIGH 경로 17/20 창, ISR 경로 20/20 창
  *      · 헛깨움 — 정지 0회 / LOW고정 0회 / C6 HIGH고정은 판정 후 0회 */
 static void _vibration_track(bool high_now) {
-  static int s_win_cnt = 0;
-  static int s_win_high = 0;
   static uint32_t s_isr_prev = 0;
-  /* ── 고장(stuck) 감지: 최근 VIBE_STUCK_WIN 샘플이 **전부 HIGH** 인가 ── */
+  /* ★2026-10-18 HIGH duty 창을 시간으로(F09) — 앞 HIGH 표본의 시각. 예전 s_win_cnt/s_win_high(30폴). */
+  static bool     s_hi1    = false;
+  static uint32_t s_hi1_ms = 0;
+  static uint32_t s_stuck_since_ms = 0;   /* ★2026-10-18 고장 판정 시각 — 아래 고장 분기의 60초 인정 창 */
+  /* ── 고장(stuck) 감지 ── ★2026-10-18 **시간 기준**(감사 F09).
+   *  예전: VIBE_STUCK_WIN(200) 표본 창이 전부 HIGH 면 고장 — 10ms 폴링을 전제한 2초였는데 폴 간격이
+   *  유휴 1000ms 가 되면 200초가 된다. 이제: 마지막 LOW 표본 뒤 VIBE_STUCK_MS 동안 HIGH 만, 그리고
+   *  HIGH 표본이 VIBE_STUCK_MIN_N 개 이상이면 고장. LOW 가 한 번이라도 보이면 바로 정상 복귀.
+   *  ★HIGH 고정 센서는 레벨 웨이크를 계속 일으키고, 그 웨이크가 이제 이 태스크를 깨우므로
+   *    (somfy_app.c _ls_exit_cb 의 GPIO 원인 통지) 표본이 빨리 쌓여 약 2초에 잡힌다. */
   {
-    static int st_cnt = 0, st_high = 0;
-    st_cnt++;
-    if (high_now) st_high++;
-    if (st_cnt >= VIBE_STUCK_WIN) {
-      bool stuck = (st_high == st_cnt);   /* ★전부 HIGH 만 고장(all-LOW 는 정상 대기) */
+    static uint32_t s_low_ms = 0;
+    static uint32_t s_high_n = 0;
+    static bool     s_init   = false;
+    const uint32_t  t_ms     = _ms_now();
+    if (!s_init) { s_init = true; s_low_ms = t_ms; }
+    if (!high_now) { s_low_ms = t_ms; s_high_n = 0; }
+    else if (s_high_n < 0xFFFFu) { s_high_n++; }
+    {
+      const bool stuck = high_now && (uint32_t)(t_ms - s_low_ms) >= VIBE_STUCK_MS
+                                  && s_high_n >= VIBE_STUCK_MIN_N;   /* ★전부 HIGH 만 고장(all-LOW 는 정상 대기) */
       if (stuck != s_vibe_stuck) {
         s_vibe_stuck = stuck;
         /* ★★★2026-09-02 고장 판정 시 **light sleep 웨이크도 같이 끊는다.**
@@ -1524,12 +1695,12 @@ static void _vibration_track(bool high_now) {
          *  ※복귀하면 다시 건다 — 진동으로 깨우는 기능은 그대로 살린다. */
         if (stuck) gpio_wakeup_disable(VIBE_PIN);
         else       gpio_wakeup_enable(VIBE_PIN, GPIO_INTR_HIGH_LEVEL);
-        ESP_LOGW(TAG, "[VIBE] %s (최근 %d샘플 HIGH=%d) — 진동 %s, 웨이크 %s",
+        if (stuck) s_stuck_since_ms = t_ms;   /* ★2026-10-18 60초 인정 창 시작(아래 고장 분기) */
+        ESP_LOGW(TAG, "[VIBE] %s (마지막 LOW 뒤 %lums, HIGH 표본 %lu개) — 진동 %s, 웨이크 %s",
                  stuck ? "센서 고장 판정(핀 HIGH 고정)" : "정상 복귀",
-                 st_cnt, st_high, stuck ? "무시함" : "다시 인정",
-                 stuck ? "해제" : "재등록");
+                 (unsigned long)(t_ms - s_low_ms), (unsigned long)s_high_n,
+                 stuck ? "엣지만 60초 인정" : "다시 인정", stuck ? "해제" : "재등록");
       }
-      st_cnt = 0; st_high = 0;
     }
   }
 
@@ -1539,27 +1710,50 @@ static void _vibration_track(bool high_now) {
   const uint32_t isr_delta = isr_now - s_isr_prev;
   s_isr_prev = isr_now;
 
-  if (s_vibe_stuck) return;           /* 고장 상태 — 진동으로 인정하지 않음 */
+  /* 고장 상태 — 진동으로 인정하지 않음.
+   * ★★2026-10-18 단, 판정 뒤 VIBE_STUCK_RECOG_MS(60초, 사용자 결정) 동안은 **엣지만** 진동으로 인정한다
+   *  (사용자 조건 "화면이 켜져 있어도 움직일때 화면이 꺼지지 않아야함").
+   *  왜: 3차(F09)에서 고장 판정이 "2초 HIGH 만"이 되며, 손에 들고 흔드는 동안에도 걸렸다 — X160 은 흔드는 동안
+   *    대부분 열려(HIGH) 있고 닫히는 순간이 짧아 표본에 LOW 가 2초 넘게 안 잡힐 수 있다. 실기(COM7 10/18 22:1x):
+   *    "고장 판정 … HIGH 표본 34개" → 26초 뒤 정상 복귀. 그동안 진동을 버려 배터리면 움직이는 중에도 화면이 꺼진다.
+   *  왜 "엣지가 있으면 고장 아님"으로 안 했나: 위 07-24 주석의 고장 개체는 **HIGH 고정 + 잡음 엣지 33회/초**였다.
+   *    엣지로 가르면 그 고장을 영영 못 잡아 웨이크 폭주(09-02 340회/초)·화면 상시 켜짐이 돌아온다.
+   *  그래서 둘을 나눴다: 웨이크는 판정 즉시 끊고(전력 보호 그대로), 화면을 살리는 '진동 인정'만 60초 더 준다.
+   *    진짜 고장이면 60초 뒤부터 예전처럼 무시 → 화면은 그 뒤 유휴 시간에 꺼진다.
+   *  HIGH duty 경로(②)는 고장 중엔 쓰지 않는다 — 핀이 HIGH 로 붙어 있으면 의미가 없다.
+   *  시뮬(sim/tools/vibe_stuck_edge_sim.py, 1시간): 움직이는데 화면 꺼짐 옛 19~51회 → 0회(실측형 구간),
+   *    깨끗한 고장·잡음 고장 판정 2.0초·웨이크 폭주 2초 그대로, 잡음 고장 뒤 화면 켜짐 10 → 70초(60초+유휴). */
+  if (s_vibe_stuck) {
+    if ((uint32_t)(_ms_now() - s_stuck_since_ms) < VIBE_STUCK_RECOG_MS && isr_delta >= VIBE_ISR_TRIGGER) {
+      s_last_vibration_us = esp_timer_get_time();
+      s_hi1 = false;
+      somfy_app_vibe_kick();
+    }
+    return;
+  }
 
   /* ★① any-edge ISR — 접점 폭과 무관. 정지 시 0.00회/초라 1개면 충분하다. */
   if (isr_delta >= VIBE_ISR_TRIGGER) {
     s_last_vibration_us = esp_timer_get_time();
-    s_win_cnt = 0;
-    s_win_high = 0;
+    s_hi1 = false;
+    somfy_app_vibe_kick();            /* ★2026-10-18 화면 켜기를 기다리지 않게(F10) — 화면 ON 이면 1초 1회(위 extern 주석) */
     return;
   }
 
   /* ★② 기존 HIGH duty-cycle 경로도 남긴다 — 폭이 긴 접점에서 보조로 동작하고,
-   *  ISR 등록이 실패한 개체에서도 최소 동작이 유지된다. */
-  s_win_cnt++;
-  if (high_now) s_win_high++;
-  if (s_win_high >= 2) {              /* 임계값 도달 — 즉시 timestamp 갱신 */
-    s_last_vibration_us = esp_timer_get_time();
-    s_win_cnt = 0;
-    s_win_high = 0;
-  } else if (s_win_cnt >= 30) {       /* 윈도우 만료 (임계값 미달) — 리셋 */
-    s_win_cnt = 0;
-    s_win_high = 0;
+   *  ISR 등록이 실패한 개체에서도 최소 동작이 유지된다.
+   *  ★2026-10-18 창을 시간으로(F09): HIGH 표본 2개가 VIBE_DUTY_WIN_MS 안에 오면 진동.
+   *  (예전: 30폴 창 안에 HIGH 2개 — 10ms 폴링 전제의 300ms) */
+  if (high_now) {
+    const uint32_t t_ms = _ms_now();
+    if (s_hi1 && (uint32_t)(t_ms - s_hi1_ms) <= VIBE_DUTY_WIN_MS) {
+      s_last_vibration_us = esp_timer_get_time();   /* 임계값 도달 — 즉시 timestamp 갱신 */
+      s_hi1 = false;
+      somfy_app_vibe_kick();                         /* ★2026-10-18 F10 (위와 같음) */
+    } else {
+      s_hi1 = true;
+      s_hi1_ms = t_ms;
+    }
   }
 }
 
@@ -1607,6 +1801,59 @@ void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq) {
   if (seq)      *seq      = 0;
 }
 
+/* ★2026-10-13 LP 공유 RAM 의 poll_cnt 를 **있는 그대로** 읽는다(s_lp_active 와 무관).
+ *  소프트 재부팅은 LP 코어를 멈추지 않는다 — IDF(esp_system/port/soc/esp32c6/clk.c)는
+ *  전원 인가·브라운아웃·WDT 리셋일 때만 LP 코어 클럭을 끈다. 그래서 btn_handler_init
+ *  이전(무선 시작 전)에도 지난 부팅이 올려 둔 LP 프로그램이 계속 PCF 를 폴링한다.
+ *  lsfloor(얕은잠 바닥 전류 대조군)가 "측정 중 LP 코어가 돌고 있었나"를 남기는 데 쓴다.
+ *  한 번도 올린 적 없으면 쓰레기 값이지만 읽기만 하므로 무해하다. LP 경로가 없으면 0. */
+uint32_t btn_handler_lp_poll_raw(void) {
+#if SOMFY_LP_CORE_PATH
+  return ulp_poll_cnt;
+#else
+  return 0;
+#endif
+}
+
+/* ★★2026-10-16 lsfloor LP 켬/끔 측정용 — LP 코어 폴링을 잠시 멈추고 다시 돌린다.
+ *  (얕은잠 바닥이 평소의 70~80% 인데 MODEM·TOP 은 무죄였다. 잠자는 동안 계속 도는 유일한 일이
+ *   LP 코어의 5ms PCF 폴링(초당 ~191회)이라 그 몫을 잰다 — somfy_app.c lsfloor 주석.)
+ *  ★멈출 때 I2C 전송 **한가운데서** 끊기면 SDA/SCL 이 LOW 로 남아 풀업으로 선마다 ~0.7mA 가 흐르고
+ *   PCF 가 SDA 를 붙잡을 수도 있다 — 그러면 "끈 단계가 오히려 더 먹는" 거짓 결과가 된다.
+ *   그래서 멈춘 뒤 두 선이 HIGH 인지 확인하고, 아니면 다시 돌렸다 다시 멈춘다(최대 5회).
+ *   LP 는 폴 1회(~0.25ms) 뒤 5ms 를 쉬므로 한 번에 성공할 확률이 ~95% 다.
+ *  C6 의 LP_I2C 는 SDA=GPIO6 / SCL=GPIO7 고정(_lp_core_try_start 주석). 반환: 버스가 쉬는 상태로 멈췄나. */
+bool btn_handler_lp_resume(void) {
+#if SOMFY_LP_CORE_PATH
+#if SOMFY_LP_HALT
+  ulp_lp_core_cfg_t cfg = {
+      .wakeup_source              = ULP_LP_CORE_WAKEUP_SOURCE_LP_TIMER,
+      .lp_timer_sleep_duration_us = LP_POLL_US,
+  };
+#else
+  ulp_lp_core_cfg_t cfg = { .wakeup_source = ULP_LP_CORE_WAKEUP_SOURCE_HP_CPU };
+#endif
+  return ulp_lp_core_run(&cfg) == ESP_OK;   /* 프로그램은 LP RAM 에 그대로 있다 — 다시 적재하지 않는다 */
+#else
+  return true;
+#endif
+}
+
+bool btn_handler_lp_pause(void) {
+#if SOMFY_LP_CORE_PATH
+  for (int i = 0; i < 5; i++) {
+    ulp_lp_core_stop();
+    esp_rom_delay_us(2000);                 /* 진행 중이던 폴 1회가 끝날 시간 */
+    if (rtc_gpio_get_level(GPIO_NUM_6) && rtc_gpio_get_level(GPIO_NUM_7)) return true;
+    btn_handler_lp_resume();                /* 선이 LOW — 전송을 끝까지 돌려 버스를 풀게 한다 */
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+  return false;
+#else
+  return true;
+#endif
+}
+
 /* ★★★2026-08-23 LP 가 HP 를 깨웠을 때 **버튼 태스크까지** 깨운다.
  *
  *  문제: LP 는 PCF 가 바뀌면 `ulp_lp_core_wakeup_main_processor()` 로 HP **CPU** 를
@@ -1631,6 +1878,16 @@ void IRAM_ATTR btn_handler_notify_from_lp(void) {
   if (hpw) portYIELD_FROM_ISR();
 }
 
+/* ★2026-10-18 F05 유휴 훅이 통지한 누적 횟수(LP 경로가 없으면 0) — [LPWAKE] 줄에 싣는다.
+ *  USB 에서는 얕은잠이 없어 버튼 통지가 **전부** 이 경로로 가므로, 버튼을 누르는데 이 수가 안 늘면 훅이 죽은 것이다. */
+uint32_t btn_handler_idle_notify_count(void) {
+#if SOMFY_LP_CORE_PATH
+  return g_btn_idle_notify_cnt;
+#else
+  return 0;
+#endif
+}
+
 bool btn_handler_lp_active(void) {
 #if SOMFY_LP_CORE_PATH
   return s_lp_active;
@@ -1639,10 +1896,12 @@ bool btn_handler_lp_active(void) {
 #endif
 }
 
-/* 현재 유휴 폴링 주기(ms) — 깨어남 빈도의 실제 지배 요인이다. */
+/* 현재 유휴 폴링 주기(ms) — 깨어남 빈도의 실제 지배 요인이다.
+ *  ★2026-10-18 LP 경로는 25 가 아니라 실제 유휴 타임아웃(BTN_LP_IDLE_POLL_MS)을 돌려준다
+ *  (감사 F18 — 8/23 에 100 으로 바꾼 뒤에도 25 를 돌려줘 [PWR]·batlog 가 틀린 값을 보였다). */
 int btn_handler_poll_ms(void) {
 #if SOMFY_LP_CORE_PATH
-  if (s_lp_active) return 25;
+  if (s_lp_active) return BTN_LP_IDLE_POLL_MS;
 #endif
   return BTN_ACTIVE_POLL_MS;
 }

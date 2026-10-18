@@ -144,6 +144,46 @@ def cc_report(slp, awk, last, fix=None):
         print('  → 가끔 깨어 있었다 — CSn 이 간헐적으로 LOW 로 흐른다.')
 
 
+# C6 절전 리텐션 모듈 번호 (esp-idf soc/esp32c6/include/soc/retention_periph_defs.h)
+RT_NAMES = [
+    'NULL', 'CLOCK_SYSTEM', 'CLOCK_MODEM', 'SYS_PERIPH', 'TG0_WDT', 'TG1_WDT',
+    'TG0_TIMER0', 'TG1_TIMER0', 'GDMA_CH0', 'GDMA_CH1', 'GDMA_CH2', 'ADC', 'I2C0',
+    'RMT0', 'UART0', 'UART1', 'I2S0', 'ETM0', 'TEMP_SENSOR', 'TWAI0', 'TWAI1',
+    'PARLIO0', 'GPSPI2', 'LEDC', 'PCNT0', 'MCPWM0', 'WIFI_MAC', 'WIFI_BB', 'BLE_MAC',
+    'BT_BB', '802154_MAC', '(31)']
+RT_MODEM = (1 << 26) | (1 << 27) | (1 << 28) | (1 << 29) | (1 << 30)
+# peripheral_domain_pd_allowed() 의 마스크 (C6 에 해당하는 것만)
+RT_PERIPH = sum(1 << b for b in (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+                                   18, 19, 20, 21, 22, 23, 24, 25))
+
+
+def rt_blockers(ini, crt):
+    """(MODEM 차단 모듈, TOP-주변장치 차단 모듈) — inited 인데 created 아닌 것."""
+    miss = ini & ~crt
+    return ([RT_NAMES[b] for b in range(32) if (miss & RT_MODEM) >> b & 1],
+            [RT_NAMES[b] for b in range(32) if (miss & RT_PERIPH) >> b & 1])
+
+
+def rt_report(ini, crt):
+    print('=== 절전 리텐션 모듈 — MODEM·TOP 을 못 끄는 범인 ===')
+    if ini is None or crt is None:
+        print('  rt_init/rt_crt 가 없다 — 이 계측이 들어간 펌웨어로 배터리 구동한 적이 없다.')
+        return
+    print('  inited=0x%08X  created=0x%08X' % (ini, crt))
+    for b in range(32):
+        i, c = (ini >> b) & 1, (crt >> b) & 1
+        if i or c:
+            tag = ''
+            if i and not c:
+                tag = '   ★MODEM 차단' if (RT_MODEM >> b) & 1 else '   ★TOP 차단'
+            print('    %2d %-13s inited=%d created=%d%s' % (b, RT_NAMES[b], i, c, tag))
+    mb, pb = rt_blockers(ini, crt)
+    print()
+    print('  MODEM 을 못 끄게 막는 모듈: %s' % (', '.join(mb) if mb else '없음'))
+    print('  TOP(주변장치)을 못 끄게 막는 모듈: %s' % (', '.join(pb) if pb else '없음')
+          + '   ※PM_POWER_DOWN_PERIPHERAL 이 꺼져 있으면 이것과 무관하게 TOP 은 켜둔다')
+
+
 def _selftest():
     TOP, VDDSDIO, MODEM, CPU, XTAL, RC_FAST = 1, 2, 4, 16, 1 << 10, 1 << 11
     # ① 플래시는 가끔만 끄고(짧은 절전), 모뎀·XTAL 은 한 번도 안 끔
@@ -177,6 +217,16 @@ def _selftest():
     print()
     cc_report(0, 47, 0x0F)                   # 가설이 맞을 때의 모양
     cc_report(52, 0, 0xFF)                   # 고친 뒤의 모양
+    # ⑦ 리텐션 모듈 — 802.15.4 는 생성됐는데 BLE 는 초기화만 된 경우 → MODEM 차단 = BLE_MAC
+    ini = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 12) | (1 << 22) | (1 << 28) | (1 << 29) | (1 << 30)
+    crt = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 29) | (1 << 30)
+    mb, pb = rt_blockers(ini, crt)
+    assert mb == ['BLE_MAC'], mb
+    assert pb == ['I2C0', 'GPSPI2'], pb
+    # ⑧ 다 생성됐으면 차단 없음
+    assert rt_blockers(ini, ini) == ([], [])
+    print()
+    rt_report(ini, crt)
     print('\nselftest 통과')
 
 

@@ -214,3 +214,11 @@
 #ifndef CFG_SCREEN_OFF_USB_SEC
 #define CFG_SCREEN_OFF_USB_SEC  300   /* 초. USB 연결 시 5분 */
 #endif
+/* ★2026-10-18 설정 화면 **배터리** 유휴 종료 (감사 보고서 F15, 사용자 지정 "60초").
+ *  설정 메뉴에서는 화면 OFF 를 막는데, 켜 둔 채 두면 배터리에서 화면이 영영 안 꺼졌다.
+ *  배터리에서 이 시간 동안 조작이 없으면 메인 화면으로 나간다(편집 중인 값은 저장 안 함 = 취소).
+ *  그러면 일반 화면 OFF(CFG_SCREEN_OFF_SEC)가 바로 이어진다. USB 에서는 예전처럼 화면을 유지한다.
+ *  예외: 페어링 진행 중(실패 표시 전)·OTA 질의/다운로드/적용 중 — somfy_app.c _setup_idle_exit_ok. */
+#ifndef CFG_SETUP_IDLE_EXIT_SEC
+#define CFG_SETUP_IDLE_EXIT_SEC  60
+#endif

@@ -1,0 +1,1643 @@
+{
+  "scope": "All first-party firmware implementation, headers and board/build configuration; dependency paths reviewed where invoked. Third-party SDK is not claimed to be fully audited. Device operation not performed.",
+  "source_snapshot": [
+    {
+      "file": "main/app_driver.cpp",
+      "sha256": "eb22de9ea0f242c5c3f7fcfe602418af2dbc47e86413a6963658ff1a64d003df",
+      "lines": 183,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/app_log.h",
+      "sha256": "b76db315d50c22f970f4eeac4d472bb093195baa31cb7128b96dff63e51f2b1c",
+      "lines": 39,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "sha256": "4f5c0a54bd37058a7ca53e7760741481bd330589927b0595967684b294ed1e7e",
+      "lines": 1278,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/app_priv.h",
+      "sha256": "1e1087a05857708f92d38479f2c2348603b0dbba0d8019774dd77d5acb1fd426",
+      "lines": 96,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/blind_manager.c",
+      "sha256": "cdbdb37bd5c1b2f1a9afdf755963c48c1dc62cc30f75a37205cefdf9ebbfbdb8",
+      "lines": 420,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/blind_manager.h",
+      "sha256": "9a53e65dccf7282ff9f8e91ef1251170c48c809625686ae6273bdc7d970ff1b2",
+      "lines": 104,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/boards/board_select.h",
+      "sha256": "7a8214f0038c97ab7abd8fb3270e6fc83216ba936a8c4ad7534c782cabedb39b",
+      "lines": 491,
+      "category": "board-selection-and-overrides"
+    },
+    {
+      "file": "main/boards/esp32-c6.h",
+      "sha256": "4b8fc627956e0ae48a0790b5b300ad3b478e2d5196d33949caee2d5a359b829a",
+      "lines": 11,
+      "category": "board-selection-and-overrides"
+    },
+    {
+      "file": "main/boards/esp32-h2.h",
+      "sha256": "de46612f08e9b7afb5ab9550c5c963bbc6d6cf1260a421bf3d1741bfc6890b8f",
+      "lines": 273,
+      "category": "board-selection-and-overrides"
+    },
+    {
+      "file": "main/boards/gnpe-c6.h",
+      "sha256": "04b3b59ed1789da589ee8877ec0f4648d31023f07df3b00fbaf1dff6c40f7395",
+      "lines": 71,
+      "category": "board-selection-and-overrides"
+    },
+    {
+      "file": "main/boards/xiao-c6-test.h",
+      "sha256": "310a6b1929d37dde5b6b99e5b916f7456bb21592b73207de4fb93203b961dad2",
+      "lines": 93,
+      "category": "board-selection-and-overrides"
+    },
+    {
+      "file": "main/boards/xiao-c6.h",
+      "sha256": "f95e5ee4a8318387b9aee00f9d3ce353f72d94a6d5538dd5962e251bacd6adf8",
+      "lines": 200,
+      "category": "board-selection-and-overrides"
+    },
+    {
+      "file": "main/boot_diag.c",
+      "sha256": "77fae1f8b8e6be826a37f85660297474eb01cd85081030bda8606c0edb40d6cd",
+      "lines": 279,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/boot_diag.h",
+      "sha256": "2295a75092760bff8195621a6f011f2e7de36e69c84b8dfcecbc8c86f0462891",
+      "lines": 98,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/button_handler.c",
+      "sha256": "527bfd7c60b0abbd10d3676b9ed57d9e94d7292e530ee13f8be08de272286fa8",
+      "lines": 1713,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/button_handler.h",
+      "sha256": "520dd9ec52820b41eda47ffb52f50be6ada4e19368c4a49a3c509dd847af05b4",
+      "lines": 247,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/cc1101.c",
+      "sha256": "dd45a9bdbc9c51be06ba5480033fc4a3d4b55b5d1033bc7d447d8b67c89e5f34",
+      "lines": 567,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/cc1101.h",
+      "sha256": "6828f0d0c4d8caaa29cb04225fd0083ddd0b21af525f4f4aa597b4694e60ca4e",
+      "lines": 212,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/CHIPProjectConfig.h",
+      "sha256": "c079b7493d5b08bb9ce303b1620d0e88b3f84c73bae09807832b5bac595f7b03",
+      "lines": 70,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/CMakeLists.txt",
+      "sha256": "10a4e5bf5a9276d9584196cdd393a575957c1c31b35ad1ffa5bca33ac6c28d91",
+      "lines": 183,
+      "category": "build-configuration"
+    },
+    {
+      "file": "main/common_macros.h",
+      "sha256": "8b7b65b9cbfac5cc6f3931e4abb8c9c94f3c415e618c13c432fcc512f708dd1a",
+      "lines": 44,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/efuse_commissionable.cpp",
+      "sha256": "13ec8346621e74a49c49e4d28977c7a8da7944954921bacb7b62a3bce07bfb4e",
+      "lines": 99,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/efuse_commissionable.h",
+      "sha256": "587c3718a23c85d77c3a9ce5750c8d0368a59bf98573cb22afd4eb2e31c162b1",
+      "lines": 39,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/font5x7_basic.h",
+      "sha256": "558149c4e9da8e399759b33de865686316dc58bde2e4540c5b68580561044c36",
+      "lines": 108,
+      "category": "static-glyph-data"
+    },
+    {
+      "file": "main/font8x8_basic.h",
+      "sha256": "f5051d9a4259978ee532340de3b39c96f957798e3f3fccbac025b05373487187",
+      "lines": 109,
+      "category": "static-glyph-data"
+    },
+    {
+      "file": "main/idf_component.yml",
+      "sha256": "3b18539a6dec93a832dcfa81cb85137282e1b709b0ec19b976715096216cb918",
+      "lines": 10,
+      "category": "build-configuration"
+    },
+    {
+      "file": "main/Kconfig.projbuild",
+      "sha256": "3efa78d9084a0a154eea9900c6b2ac754b7c9816271936293255f25c825c3f5e",
+      "lines": 10,
+      "category": "build-configuration"
+    },
+    {
+      "file": "main/log_heap_numbers.h",
+      "sha256": "98619c338b9486eaa9dcf78578243e61492032988be73a47a2e98e2d9cfdab2f",
+      "lines": 22,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/lp_core/pcf_lp_config.h",
+      "sha256": "e6660487912ece4bb7c4237cd947ecb207ee7cd3928e5c8ea19b395a792ce9b0",
+      "lines": 92,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/lp_core/pcf_poll.c",
+      "sha256": "ee1344bd55a77e6a46574d067a4d9a8fe80d838ea6081d7bc0c14305cab10b1f",
+      "lines": 194,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/matter_blinds.h",
+      "sha256": "d303194a28dd89d398f14c3623d99f589e45d798667c3cb16b86a028eee9bc46",
+      "lines": 153,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/matter_blinds_shim.cpp",
+      "sha256": "daca17b621ede379f53c35c8270836259f9e0d6fa41a29b492fbeb61ded62328",
+      "lines": 289,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "sha256": "57b5211acb5b8070147482ab83ef9825d1c090ee32031a1619d54a381bf4e837",
+      "lines": 3455,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/oled_ui.h",
+      "sha256": "197a32e9ef8b9584d3708c2e94fd99dc9908b482caa74dfcaadda5b07030ea95",
+      "lines": 446,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "sha256": "02dde0dc50fb04683afaeda186156383ca8473e0fb23db38ae0aadd4cedb07c4",
+      "lines": 6315,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/somfy_config.h",
+      "sha256": "a6574c6656f9531a92d724d56b24ba43b8e95b324824da0a9070ee5897f9c7a2",
+      "lines": 217,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "sha256": "9c32e6caac049df926e16649fb797bd58cd8e33b6168ae89e3149314885827b5",
+      "lines": 580,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/somfy_rts.h",
+      "sha256": "dbd376c2827fb9eb2c47c17a098c9e82688fc2c2af1d55fcb791ae16a5fa0a2e",
+      "lines": 196,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/thread_provision.c",
+      "sha256": "659c100f5bdb98524025f395edde17e44a09210f48adfac5141b76e9985a0aa5",
+      "lines": 216,
+      "category": "implementation-full-control-flow-review"
+    },
+    {
+      "file": "main/thread_provision.h",
+      "sha256": "7188ed9502a89ad0b073e84ed05494938bfae938371e39300d414fe7d054dc9d",
+      "lines": 112,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/wake_diag.h",
+      "sha256": "30e3d5cf92d1cf0b7ce18f2bfb5c626aedf068638682e66d6c8b26c0f6f7236d",
+      "lines": 28,
+      "category": "public-api-state-and-constants"
+    },
+    {
+      "file": "main/gen_build_epoch.cmake",
+      "sha256": "bcb01323aa651cf6ffa7580107613f2eee058534268bd5a1c6a610e3e60f752b",
+      "lines": 18,
+      "category": "build-configuration"
+    }
+  ],
+  "peripheral_control_points": [
+    {
+      "file": "main/app_main.cpp",
+      "line": 169,
+      "code": "int64_t now = esp_timer_get_time();"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 232,
+      "code": "int64_t now = esp_timer_get_time();"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 263,
+      "code": "int64_t since = esp_timer_get_time() - s_lastMoveUs;"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 548,
+      "code": "nvs_set_u8(h, \"ccfix\", v); nvs_commit(h); nvs_close(h);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 572,
+      "code": "nvs_set_u8(h, \"adcfix\", fix); nvs_commit(h); nvs_close(h);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 651,
+      "code": "esp_err_t e = esp_timer_dump(stdout);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 685,
+      "code": "esp_pm_dump_locks(stdout);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 909,
+      "code": "gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_CS);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 910,
+      "code": "gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_SCK);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 911,
+      "code": "gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_MOSI);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 912,
+      "code": "gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_GD0);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 915,
+      "code": "gpio_hold_dis((gpio_num_t)BOARD_PIN_RF_SW_EN);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 916,
+      "code": "gpio_hold_dis((gpio_num_t)BOARD_PIN_RF_ANT_SEL);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 931,
+      "code": "gpio_set_level(_en, 0);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 932,
+      "code": "vTaskDelay(pdMS_TO_TICKS(100));"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 933,
+      "code": "gpio_set_level(_sel, BOARD_RF_EXT_ANT ? 1 : 0);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 959,
+      "code": "gpio_hold_dis((gpio_num_t)BOARD_PIN_CC1101_CS);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 1107,
+      "code": "bool cc_ok  = cc1101_init(&s_cc1101);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 1122,
+      "code": "if (fix) cc1101_sleep_pins_fix();"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 1199,
+      "code": "xTaskCreate(somfy_app_run, \"somfy_app\", 8192, NULL, 4, NULL);"
+    },
+    {
+      "file": "main/app_main.cpp",
+      "line": 1275,
+      "code": "vTaskDelay(10000 / portTICK_PERIOD_MS);"
+    },
+    {
+      "file": "main/blind_manager.c",
+      "line": 192,
+      "code": "if (nvs_set_blob(h, ROLLCODE_KEY, &b, sizeof(b)) == ESP_OK) nvs_commit(h);"
+    },
+    {
+      "file": "main/blind_manager.c",
+      "line": 275,
+      "code": "nvs_commit(handle);"
+    },
+    {
+      "file": "main/boot_diag.c",
+      "line": 111,
+      "code": "s_cur.uptime_ms = (uint32_t)(esp_timer_get_time() / 1000);"
+    },
+    {
+      "file": "main/boot_diag.c",
+      "line": 112,
+      "code": "if (nvs_set_blob(h, KEY_REC, &s_cur, sizeof(s_cur)) == ESP_OK) nvs_commit(h);"
+    },
+    {
+      "file": "main/boot_diag.c",
+      "line": 145,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/boot_diag.c",
+      "line": 272,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 138,
+      "code": "vTaskNotifyGiveFromISR(s_btn_task_h, &hpw);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 306,
+      "code": "return (uint32_t)(esp_timer_get_time() / 1000);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 331,
+      "code": "gpio_set_level(PCF_BB_SDA, 0);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 339,
+      "code": "gpio_set_level(PCF_BB_SCL, 0);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 690,
+      "code": "const int64_t t_end = esp_timer_get_time() + (int64_t)dur_ms * 1000;"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 691,
+      "code": "int64_t next_poll = esp_timer_get_time();"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 692,
+      "code": "while (esp_timer_get_time() < t_end) {"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 693,
+      "code": "if (poll && esp_timer_get_time() >= next_poll) {"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 724,
+      "code": "vTaskDelay(pdMS_TO_TICKS(20));"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 970,
+      "code": "gpio_intr_enable(VIBE_PIN);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1025,
+      "code": "ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(any_held ? BTN_ACTIVE_POLL_MS"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1052,
+      "code": "gpio_intr_enable(PCF8574_INT_PIN);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1063,
+      "code": "if (any_held) vTaskDelay(pdMS_TO_TICKS(BTN_ACTIVE_POLL_MS));"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1064,
+      "code": "else if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(BTN_IDLE_POLL_MS)) == 0)"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1068,
+      "code": "vTaskDelay(pdMS_TO_TICKS(BTN_ACTIVE_POLL_MS));"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1097,
+      "code": "vTaskDelay(pdMS_TO_TICKS(10));"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1140,
+      "code": "vTaskDelay(pdMS_TO_TICKS(50));"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1153,
+      "code": "esp_err_t we = esp_sleep_enable_ulp_wakeup();"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1182,
+      "code": "gpio_set_level(PCF_BB_SDA, 1);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1183,
+      "code": "gpio_set_level(PCF_BB_SCL, 1);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1218,
+      "code": "gpio_set_level(PCF_BB_SDA, 1);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1219,
+      "code": "gpio_set_level(PCF_BB_SCL, 1);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1374,
+      "code": "xTaskCreate(_btn_task, \"btn_handler\", 3072, NULL, 10, &s_btn_task_h);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1444,
+      "code": "int64_t since = esp_timer_get_time() - s_last_vibration_us;"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1534,
+      "code": "if (stuck) gpio_wakeup_disable(VIBE_PIN);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1535,
+      "code": "else       gpio_wakeup_enable(VIBE_PIN, GPIO_INTR_HIGH_LEVEL);"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1555,
+      "code": "s_last_vibration_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1566,
+      "code": "s_last_vibration_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1664,
+      "code": "vTaskDelay(pdMS_TO_TICKS(20));"
+    },
+    {
+      "file": "main/button_handler.c",
+      "line": 1692,
+      "code": "vTaskNotifyGiveFromISR(s_btn_task_h, &hpw);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 41,
+      "code": "gpio_set_level(SCK, 0);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 42,
+      "code": "gpio_set_level(MOSI, 0);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 43,
+      "code": "gpio_set_level(CS, 1);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 47,
+      "code": "gpio_set_level(CS, 0);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 49,
+      "code": "gpio_set_level(CS, 1);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 53,
+      "code": "gpio_set_level(CS, 0);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 60,
+      "code": "gpio_set_level(CS, 1);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 69,
+      "code": "gpio_set_level(MOSI, (cmd >> i) & 1);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 71,
+      "code": "gpio_set_level(SCK, 1);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 73,
+      "code": "gpio_set_level(SCK, 0);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 93,
+      "code": "gpio_set_level(SCK, 0);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 97,
+      "code": "gpio_set_level(MOSI, (bb[r] >> i) & 1);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 99,
+      "code": "gpio_set_level(SCK, 1);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 101,
+      "code": "gpio_set_level(SCK, 0);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 107,
+      "code": "gpio_set_level(SCK, 1);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 110,
+      "code": "gpio_set_level(SCK, 0);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 115,
+      "code": "gpio_set_level(CS, 1);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 229,
+      "code": "cc1101_idle(dev);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 246,
+      "code": "void cc1101_sleep_pins_fix(void)"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 346,
+      "code": "bool cc1101_init(cc1101_t *dev)"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 420,
+      "code": "gpio_set_level(CC1101_PIN_GD0, 0);"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 424,
+      "code": "vTaskDelay(pdMS_TO_TICKS(10));"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 520,
+      "code": "void cc1101_idle(cc1101_t *dev)"
+    },
+    {
+      "file": "main/cc1101.c",
+      "line": 523,
+      "code": "gpio_set_level(CC1101_PIN_GD0, 0);"
+    },
+    {
+      "file": "main/cc1101.h",
+      "line": 156,
+      "code": "bool cc1101_init(cc1101_t *dev);"
+    },
+    {
+      "file": "main/cc1101.h",
+      "line": 177,
+      "code": "void cc1101_idle(cc1101_t *dev);"
+    },
+    {
+      "file": "main/cc1101.h",
+      "line": 182,
+      "code": "void cc1101_sleep_pins_fix(void);"
+    },
+    {
+      "file": "main/common_macros.h",
+      "line": 40,
+      "code": "vTaskDelay(5000 / portTICK_PERIOD_MS);  \\"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 234,
+      "code": "int64_t now = esp_timer_get_time();"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 292,
+      "code": "return (uint32_t)(esp_timer_get_time() / 1000);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 812,
+      "code": "static void _oled_bb_scl(int v) { gpio_set_level(BOARD_PIN_OLED_SCL, v); esp_rom_delay_us(OLED_BB_DLY_US); }"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 813,
+      "code": "static void _oled_bb_sda(int v) { gpio_set_level(BOARD_PIN_OLED_SDA, v); esp_rom_delay_us(OLED_BB_DLY_US); }"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 839,
+      "code": "esp_err_t h1 = gpio_hold_dis(BOARD_PIN_OLED_SCL);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 840,
+      "code": "esp_err_t h2 = gpio_hold_dis(BOARD_PIN_OLED_SDA);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 901,
+      "code": "gpio_set_level(BOARD_PIN_OLED_SCL, 0); esp_rom_delay_us(20);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 903,
+      "code": "gpio_set_level(BOARD_PIN_OLED_SCL, 1); esp_rom_delay_us(20);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 993,
+      "code": "gpio_set_level(BOARD_PIN_OLED_SDA, 1);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 995,
+      "code": "gpio_set_level(BOARD_PIN_OLED_SCL, 0); esp_rom_delay_us(5);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 996,
+      "code": "gpio_set_level(BOARD_PIN_OLED_SCL, 1); esp_rom_delay_us(5);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 999,
+      "code": "gpio_set_level(BOARD_PIN_OLED_SDA, 0); esp_rom_delay_us(5);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 1000,
+      "code": "gpio_set_level(BOARD_PIN_OLED_SCL, 1); esp_rom_delay_us(5);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 1001,
+      "code": "gpio_set_level(BOARD_PIN_OLED_SDA, 1); esp_rom_delay_us(5);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 1060,
+      "code": "if (!addr) vTaskDelay(pdMS_TO_TICKS(10));"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 1089,
+      "code": "vTaskDelay(pdMS_TO_TICKS(200));"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 2917,
+      "code": "vTaskDelay(pdMS_TO_TICKS(s_panel_on ? OLED_TASK_INTERVAL_MS"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 3140,
+      "code": "vTaskDelay(pdMS_TO_TICKS(250));"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 3250,
+      "code": "xTaskCreate(_ui_task, \"oled_ui\", 4096, ctx, 3, NULL);"
+    },
+    {
+      "file": "main/oled_ui.c",
+      "line": 3388,
+      "code": "ctx->last_activity_ms = (uint32_t)(esp_timer_get_time() / 1000);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 305,
+      "code": "vTaskDelay(pdMS_TO_TICKS(300));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 384,
+      "code": "vTaskDelay(pdMS_TO_TICKS(1500));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 422,
+      "code": "err = nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 626,
+      "code": "s_last_activity_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 663,
+      "code": "int64_t ago = esp_timer_get_time() - s_last_chg_active_us;"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 688,
+      "code": "gpio_wakeup_enable(pin, lvl);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 787,
+      "code": "s_rf_btn_until_us = esp_timer_get_time() + (int64_t)CFG_CH_LOCK_MS * 1000;"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 823,
+      "code": "int64_t until = esp_timer_get_time() + (int64_t)OLED_ACTION_DISPLAY_MS * 1000;"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 838,
+      "code": "return esp_timer_get_time() < s_rf_btn_until_us;"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 957,
+      "code": "if (xQueueReceive(s_rf_queue, &job, pdMS_TO_TICKS(60000)) == pdTRUE) {"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 983,
+      "code": "if (xQueueSend(s_rf_queue, &job, 0) != pdTRUE) {"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 985,
+      "code": "xQueueReceive(s_rf_queue, &drop, 0);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 986,
+      "code": "xQueueSend(s_rf_queue, &job, 0);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1086,
+      "code": "&& (esp_timer_get_time() - press_us) / 1000 >= HOLD_REPEAT_START_MS) {"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1099,
+      "code": "vTaskDelay(pdMS_TO_TICKS(period));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1125,
+      "code": "vTaskDelay(pdMS_TO_TICKS(50));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1154,
+      "code": "if (xQueueSend(s_rf_queue, &job, 0) != pdTRUE) {"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1159,
+      "code": "if (xQueueReceive(s_rf_queue, &drop, 0) == pdTRUE) {"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1164,
+      "code": "xQueueSend(s_rf_queue, &job, 0);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1288,
+      "code": "const int64_t _n = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1376,
+      "code": "s_action_press_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1423,
+      "code": "s_action_press_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1640,
+      "code": "s_action_press_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1798,
+      "code": "int64_t nowu = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 1986,
+      "code": "pm_err  = esp_pm_configure(&pm_cfg);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2049,
+      "code": "esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, \"pair\", &s_pair_cpu_lock);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2051,
+      "code": "if (s_pair_cpu_lock) esp_pm_lock_acquire(s_pair_cpu_lock);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2060,
+      "code": "if (s_pair_cpu_lock) esp_pm_lock_release(s_pair_cpu_lock);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2135,
+      "code": "xTaskCreate(_rf_worker_task,    \"rf_worker\",   3072, NULL, 9, NULL);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2136,
+      "code": "xTaskCreate(_hold_repeat_task,  \"hold_repeat\", 2048, NULL, 8, NULL);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2240,
+      "code": "vTaskDelay(pdMS_TO_TICKS(500));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2264,
+      "code": "vTaskDelay(pdMS_TO_TICKS(500));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2277,
+      "code": "vTaskDelay(pdMS_TO_TICKS(150));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2438,
+      "code": "ok = (adc_oneshot_new_unit(&ucfg, &s_bat_adc) == ESP_OK);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2442,
+      "code": "adc_oneshot_config_channel(s_bat_adc, s_bat_ch, &ccfg);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2456,
+      "code": "adc_oneshot_del_unit(s_bat_adc);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2481,
+      "code": "if (adc_oneshot_io_to_channel(BOARD_PIN_BAT_ADC, &unit, &s_bat_ch) != ESP_OK) {"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2489,
+      "code": "if (adc_oneshot_new_unit(&ucfg, &s_bat_adc) != ESP_OK) return;"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2492,
+      "code": "adc_oneshot_config_channel(s_bat_adc, s_bat_ch, &ccfg);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2500,
+      "code": "adc_oneshot_del_unit(s_bat_adc);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2587,
+      "code": "if (adc_oneshot_read(s_bat_adc, s_bat_ch, &raw) == ESP_OK) {"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2944,
+      "code": "const esp_sleep_wakeup_cause_t wc = esp_sleep_get_wakeup_cause();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2964,
+      "code": "esp_err_t e = esp_pm_light_sleep_register_cbs(&cfg);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 2967,
+      "code": "esp_sleep_set_sleep_context(&s_slp_ctx);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3005,
+      "code": "esp_pm_dump_locks(ms);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3037,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3080,
+      "code": "? (uint32_t)((esp_timer_get_time() - s_dis_t0_us) / 1000000) : 0;"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3108,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3155,
+      "code": "s_dis_t0_us    = esp_timer_get_time() - (int64_t)s_bl_saved_el * 1000000;"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3158,
+      "code": "s_dis_prev_us  = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3219,
+      "code": "e->ls   = _ls_take_pct(esp_timer_get_time());"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3233,
+      "code": "const int64_t now = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3337,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3480,
+      "code": "if (adc_oneshot_read(s_bat_adc, ch, &raw) == ESP_OK) { sum += raw; n++; }"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3496,
+      "code": "const bool adc_ok = (adc_oneshot_io_to_channel(pin, &unit, &ch) == ESP_OK)"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3501,
+      "code": "if (adc_oneshot_config_channel(s_bat_adc, ch, &ccfg) != ESP_OK)"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3521,
+      "code": "vTaskDelay(pdMS_TO_TICKS(50));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3535,
+      "code": "gpio_set_level(pin, 0);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3536,
+      "code": "vTaskDelay(pdMS_TO_TICKS(20));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3538,
+      "code": "gpio_set_level(pin, 0);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3539,
+      "code": "vTaskDelay(pdMS_TO_TICKS(20));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3745,
+      "code": "int64_t now = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3816,
+      "code": "s_chg_start_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 3819,
+      "code": "int64_t elapsed_ms = (esp_timer_get_time() - s_chg_start_us) / 1000;"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4018,
+      "code": "s_bc.last_btn_tick_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4106,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4115,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4121,
+      "code": "vTaskDelay(pdMS_TO_TICKS(300));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4169,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4175,
+      "code": "vTaskDelay(pdMS_TO_TICKS(300));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4183,
+      "code": "gpio_set_level((gpio_num_t)BOARD_PIN_CC1101_CS, 1);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4184,
+      "code": "gpio_hold_en((gpio_num_t)BOARD_PIN_CC1101_CS);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4188,
+      "code": "esp_sleep_enable_timer_wakeup((uint64_t)s_dsleep_enter_dur_s * 1000000ULL);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4211,
+      "code": "vTaskDelay(pdMS_TO_TICKS(3000));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4213,
+      "code": "vTaskDelay(pdMS_TO_TICKS(50));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4251,
+      "code": "vTaskDelay(pdMS_TO_TICKS(20));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4275,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4283,
+      "code": "if (esp_timer_create(&a, &s_dsleep_fallback_tmr) == ESP_OK)"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4284,
+      "code": "esp_timer_start_once(s_dsleep_fallback_tmr, 20ULL * 1000000ULL);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4291,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4293,
+      "code": "const esp_sleep_wakeup_cause_t wc = esp_sleep_get_wakeup_cause();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4300,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4316,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4415,
+      "code": "nvs_commit(hc);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4449,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4453,
+      "code": "nvs_set_u8(hc, \"tries\", 0); nvs_commit(hc); nvs_close(hc);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4579,
+      "code": "if (on) gpio_hold_en((gpio_num_t)s_lsf_hold_pins[i]);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4580,
+      "code": "else    gpio_hold_dis((gpio_num_t)s_lsf_hold_pins[i]);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4615,
+      "code": "vTaskDelay(pdMS_TO_TICKS(100));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4636,
+      "code": "if (dry) { vTaskDelay(pdMS_TO_TICKS(samp_s * 1000u)); return; }"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4637,
+      "code": "const int64_t t_in = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4638,
+      "code": "esp_sleep_enable_timer_wakeup((uint64_t)samp_s * 1000000ULL);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4640,
+      "code": "*cause = (unsigned)esp_sleep_get_wakeup_cause();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4648,
+      "code": "const int64_t slept_ms = (esp_timer_get_time() - t_in) / 1000;"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4651,
+      "code": "vTaskDelay(pdMS_TO_TICKS((uint32_t)((int64_t)samp_s * 1000 - slept_ms)));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4665,
+      "code": "const int64_t t0    = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4672,
+      "code": "const int64_t slp = next - esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4673,
+      "code": "if (slp < 2000) { next = esp_timer_get_time(); continue; }"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4675,
+      "code": "vTaskDelay(pdMS_TO_TICKS((uint32_t)(slp / 1000)));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4677,
+      "code": "esp_sleep_enable_timer_wakeup((uint64_t)slp);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4679,
+      "code": "*cause = (unsigned)esp_sleep_get_wakeup_cause();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4689,
+      "code": "if ((n % LSF_WAKE_YIELD_EVERY) == 0) vTaskDelay(1);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4693,
+      "code": "const int64_t rest = t_end - esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4696,
+      "code": "vTaskDelay(pdMS_TO_TICKS((uint32_t)(rest / 1000)));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4698,
+      "code": "esp_sleep_enable_timer_wakeup((uint64_t)rest);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4723,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4736,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4740,
+      "code": "vTaskDelay(pdMS_TO_TICKS(300));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4758,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4774,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4791,
+      "code": "vTaskDelay(pdMS_TO_TICKS(20));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4807,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4829,
+      "code": "esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4844,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4846,
+      "code": "esp_sleep_set_sleep_context(&s_lsf_ctx);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4855,
+      "code": "const int64_t t0 = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4871,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4881,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4895,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4910,
+      "code": "const uint32_t t_s = (uint32_t)((esp_timer_get_time() - t0 + 500000) / 1000000);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4921,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4948,
+      "code": "cc1101_idle(&g_cc1101);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4953,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4958,
+      "code": "if (cc_cal_on) { cc1101_idle(&g_cc1101); cc_cal_on = false; }"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4970,
+      "code": "cc1101_idle(&g_cc1101);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 4986,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5063,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5104,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5128,
+      "code": "nvs_commit(h);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5134,
+      "code": "vTaskDelay(pdMS_TO_TICKS(300));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5298,
+      "code": "xTaskCreate(_deferred_task_starter, \"defer_start\", 3072, NULL, 4, NULL);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5369,
+      "code": "esp_sleep_enable_gpio_wakeup();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5376,
+      "code": "esp_sleep_enable_timer_wakeup(150000);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5413,
+      "code": "s_bc.last_main_tick_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5429,
+      "code": "vTaskDelay(pdMS_TO_TICKS(1000));"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5460,
+      "code": "int64_t mt_now = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5540,
+      "code": "_heap_watch_tick(esp_timer_get_time(), s_setup_screen == SETUP_MATTER_PAIR);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5566,
+      "code": "int64_t pnow = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5619,
+      "code": "int64_t now_us = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 5677,
+      "code": "const bool _hide_window = (esp_timer_get_time() < (int64_t)BAT_HIDE_MAX_S * 1000000LL);"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 6182,
+      "code": "if (!_boot_ok_marked && esp_timer_get_time() > 30LL * 1000000LL) {"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 6189,
+      "code": "int64_t _up = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 6202,
+      "code": "int64_t nu = esp_timer_get_time();"
+    },
+    {
+      "file": "main/somfy_app.c",
+      "line": 6312,
+      "code": "vTaskDelay(pdMS_TO_TICKS(100));"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "line": 274,
+      "code": "esp_err_t e = rmt_enable(s_tx_chan);"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "line": 285,
+      "code": "rmt_disable(s_tx_chan);"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "line": 332,
+      "code": "vTaskDelay(pdMS_TO_TICKS(ms));"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "line": 357,
+      "code": "esp_err_t e = rmt_new_tx_channel(&tx_chan_cfg, &s_tx_chan);"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "line": 363,
+      "code": "if (rmt_new_copy_encoder(&copy_enc_cfg, &s_copy_enc) != ESP_OK) {"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "line": 367,
+      "code": "if (rmt_enable(s_tx_chan) != ESP_OK) {"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "line": 383,
+      "code": "rmt_disable(s_tx_chan);"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "line": 533,
+      "code": "cc1101_idle(ctx->cc1101);"
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "line": 577,
+      "code": "cc1101_idle(ctx->cc1101);"
+    }
+  ],
+  "budget": {
+    "capacity_mAh": 700,
+    "usable_fraction": 0.8,
+    "usable_mAh": 560,
+    "target_days": 15,
+    "target_average_mA": 1.5555555555555556,
+    "screen_seconds": 10,
+    "screen_uses_per_day": [
+      20,
+      50
+    ],
+    "active_extra_mA_assumption": 50,
+    "historical_model_mA": 4.56,
+    "wake_delta_per_second_assumption": 30,
+    "screen": [
+      {
+        "uses": 20,
+        "active_seconds": 200,
+        "extra_mAh_per_day": 2.7777777777777777,
+        "extra_average_mA": 0.11574074074074074,
+        "remaining_average_mA": 1.4398148148148149
+      },
+      {
+        "uses": 50,
+        "active_seconds": 500,
+        "extra_mAh_per_day": 6.944444444444445,
+        "extra_average_mA": 0.28935185185185186,
+        "remaining_average_mA": 1.2662037037037037
+      }
+    ],
+    "wake_sensitivity": [
+      {
+        "extra_charge_uC_per_wake_assumption": 1,
+        "saved_mA": 0.03,
+        "remaining_model_mA": 4.529999999999999,
+        "conditional_days": 5.150846210448861
+      },
+      {
+        "extra_charge_uC_per_wake_assumption": 10,
+        "saved_mA": 0.3,
+        "remaining_model_mA": 4.26,
+        "conditional_days": 5.477308294209703
+      },
+      {
+        "extra_charge_uC_per_wake_assumption": 50,
+        "saved_mA": 1.5,
+        "remaining_model_mA": 3.0599999999999996,
+        "conditional_days": 7.625272331154684
+      },
+      {
+        "extra_charge_uC_per_wake_assumption": 100,
+        "saved_mA": 3,
+        "remaining_model_mA": 1.5599999999999996,
+        "conditional_days": 14.957264957264961
+      }
+    ],
+    "average_current_table": [
+      {
+        "average_mA": 1,
+        "mAh_per_day": 24,
+        "days": 23.333333333333332
+      },
+      {
+        "average_mA": 1.3,
+        "mAh_per_day": 31.200000000000003,
+        "days": 17.94871794871795
+      },
+      {
+        "average_mA": 1.5,
+        "mAh_per_day": 36,
+        "days": 15.555555555555555
+      },
+      {
+        "average_mA": 1.5555555555555556,
+        "mAh_per_day": 37.333333333333336,
+        "days": 15
+      },
+      {
+        "average_mA": 2,
+        "mAh_per_day": 48,
+        "days": 11.666666666666666
+      },
+      {
+        "average_mA": 3,
+        "mAh_per_day": 72,
+        "days": 7.777777777777778
+      },
+      {
+        "average_mA": 4.56,
+        "mAh_per_day": 109.44,
+        "days": 5.116959064327486
+      }
+    ]
+  }
+}

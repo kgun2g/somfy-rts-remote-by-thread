@@ -170,6 +170,8 @@ def main(path):
     print()
     pd_flags.cc_report(_get_u32(items, 'ccp_slp'), _get_u32(items, 'ccp_awk'),
                        _get_u32(items, 'ccp_last'))
+    print()
+    pd_flags.rt_report(_get_u32(items, 'rt_init'), _get_u32(items, 'rt_crt'))
     return 0
 
 

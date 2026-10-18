@@ -350,6 +350,9 @@ bool somfy_rts_init(somfy_rts_t *ctx, cc1101_t *dev)
         .trans_queue_depth = 4,
         .flags.invert_out = false,
         .flags.with_dma   = false,
+        /* ★2026-10-15 TOP 도메인을 꺼도 되게 RMT 레지스터 리텐션을 만든다 — cc1101.c 의
+         *  SPICOMMON_BUSFLAG_SLP_ALLOW_PD 주석과 같은 이유. 없으면 RMT 가 TOP 차단을 영영 막는다. */
+        .flags.allow_pd   = 1,
     };
     esp_err_t e = rmt_new_tx_channel(&tx_chan_cfg, &s_tx_chan);
     if (e != ESP_OK) {

@@ -188,6 +188,11 @@ CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=n
 #  ★ESP_PHY_MAC_BB_PD 가 아니다 — 그쪽 도움말은 "Wi-Fi and Bluetooth" 이고
 #    RAM 을 2~4KB 더 먹는다. 우리는 Wi-Fi 미사용·BLE 는 페어링 때만 쓰므로
 #    이득 없이 RAM 만 낭비한다. Thread(802.15.4)에 작용하는 건 이 옵션이다.
+#    ★★2026-10-15 이 판단은 **재검토 대상**이다. Espressif 공식 Thread SED 예제
+#      (esp-idf/examples/openthread/ot_sleepy_device/light_sleep/sdkconfig.defaults.esp32c6)는
+#      C6 에서 CONFIG_ESP_PHY_MAC_BB_PD=y 를 켠다. 10/13 MODEM 도메인을 껐을 때 Thread 가
+#      28초 만에 멈춘 원인이 이 옵션의 부재일 수 있다(가설, 미검증). 무선이 뜬 상태에서
+#      MODEM 을 끄는 실험을 다시 할 때 같이 켜서 볼 것. 지금은 그대로 둔다.
 #  ★위험: SED/ICD 는 부모 라우터가 메시지를 버퍼링했다가 폴링 때 넘겨주므로
 #    이론상 명령 유실이 없다. 다만 IDF Kconfig 에 "Todo: Remove when support
 #    safe power-down of the power domain (IDF-7317)" 라는 단서가 붙어 있어

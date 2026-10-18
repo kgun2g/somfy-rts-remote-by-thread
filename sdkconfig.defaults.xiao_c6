@@ -126,7 +126,19 @@ CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
 #    (약간의 소비 증가를 감수하고 링크 마진 8dB 를 얻는 게 이득이다).
 #  · 그대로 1칸 → 케이블 접지 효과(물리) → 펌웨어로는 해결 불가,
 #    안테나 주변 배치를 봐야 한다.
-# CONFIG_IEEE802154_SLEEP_ENABLE is not set
+#
+# ★★2026-10-15 다시 켬(=y). 위 8/16 실험은 끝났고 실제 빌드 설정(sdkconfig.xiao-c6)은 그 뒤
+#  계속 =y 로 돌았다(9월 이후 측정은 전부 =y). 이 파일만 옛 실험값으로 남아 있었는데,
+#  build.ps1 이 이 파일을 **마지막에** 얹으므로 sdkconfig 를 재생성하면 무선 절전이 조용히
+#  꺼지는 함정이었다(GPT 리포트 doc/POWER_SAVING_REPORT_2026-10-13.md 지적 — 확인함).
+CONFIG_IEEE802154_SLEEP_ENABLE=y
+
+# ★★2026-10-15 주변장치(TOP) 도메인 절전 차단 허용 — Espressif 공식 Thread SED 예제
+#  (esp-idf/examples/openthread/ot_sleepy_device/light_sleep)와 같은 설정이다.
+#  켜기만 해서는 평소 동작이 바뀌지 않는다: 이 설정에서는 상주 ADC 유닛이 MODEM 과 TOP 을
+#  둘 다 붙잡는다(esp_adc/adc_oneshot.c). 무선 시작 전 lsfloor 측정으로 TOP 몫을 재기 위한 전제다.
+#  드라이버 쪽 짝: cc1101.c SPICOMMON_BUSFLAG_SLP_ALLOW_PD, somfy_rts.c flags.allow_pd.
+CONFIG_PM_POWER_DOWN_PERIPHERAL_IN_LIGHT_SLEEP=y
 
 # ★진단용 — 전류 측정 빌드에서는 **끌 것**(런타임 오버헤드).
 #  콘솔 `pm` 이 lock 보유시간 + 절전모드 체류시간을 출력한다.
@@ -184,3 +196,18 @@ CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 #    (커미셔닝·CASE)이 느려질 수도 있다. **회당 깨어있는 시간**으로 판정할 것.
 #    이상 시 160 으로 되돌린다.
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_80=y
+
+# ── ★2026-10-18 DNS64 클라이언트 (사용자 결정 "DNS64를 켜서 실제로 동작하게 시도") ──
+#   이 기판의 SNTP 는 **한 번도 성공한 적이 없다**(남은 로그 전부에서 "SNTP 동기화 →" 0건).
+#   Thread 쪽에 DNS 서버가 없어 pool.ntp.org 를 못 풀고 15→150초 재시도만 했다.
+#   켜면 IDF 가 Thread 망 데이터의 **NAT64 접두어**로 DNS 서버(<접두어>::8.8.8.8)를 잡고
+#   (esp_openthread_state.c handle_ot_netdata_change — 로그 "OT_STATE: Set dns server address"),
+#   lwIP 이름 해석(SNTP 가 쓰는 dns_gethostbyname 포함)의 IPv4 답을 NAT64 IPv6 로 바꿔 준다
+#   (esp_openthread_dns64.c lwip_hook_dns_external_resolve).
+#   ★성패는 경계 라우터(SmartThings 허브)가 NAT64 를 광고하느냐에 달렸다 — 안 하면 지금과 같다(헛시도만).
+#   ★DNS 훅 선택: sdkconfig.xiao-c6 에 NONE 이 박혀 있어 CUSTOM 을 **명시**해야 훅이 lwIP 에 연결된다
+#     (DNS64 가 고르는 기본값은 이미 저장된 선택을 못 바꾼다).
+#   비용: DNS 해석 대기표 RAM 약 1KB. H2 는 켜지 않는다(BOARD_DISABLE_TIME — SNTP 자체가 없고 RAM 이 빠듯).
+CONFIG_OPENTHREAD_DNS64_CLIENT=y
+CONFIG_OPENTHREAD_DNS_SERVER_ADDR="8.8.8.8"
+CONFIG_LWIP_HOOK_DNS_EXT_RESOLVE_CUSTOM=y

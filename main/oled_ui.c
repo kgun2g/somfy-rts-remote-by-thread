@@ -56,6 +56,23 @@ static SemaphoreHandle_t s_i2c_mutex = NULL;
  *  이 플래그로 _ui_task 가 렌더·flush 를 건너뛰고 주기도 늘린다. */
 static volatile bool s_panel_on = true;
 bool oled_ui_is_panel_on(void) { return s_panel_on; }
+/* ★2026-10-18 마지막 ON/OFF 명령이 패널에 안 닿았다 — UI 태스크가 맞을 때까지 재시도(감사 F14,
+ *  oled_ui_set_display_on 주석). g_oled_onoff_fail_cnt = 즉시 3회 재시도도 실패한 누적(정상 = 0). */
+static volatile bool s_panel_cmd_pending = false;
+volatile uint32_t g_oled_onoff_fail_cnt = 0;
+/* ★★2026-10-18 화면 켜기/끄기 **요청** 플래그 (감사 보고서 F13, 사용자 "F13·F16·F17 우선 구현").
+ *  버튼 태스크(prio 10)·Matter 콜백(CHIP 태스크)이 화면을 켤 때 직접 그리고(비트뱅 I2C 페이지당 ~3.8ms)
+ *  0xAF 까지 보낸 **뒤에야** RF 요청으로 넘어가던 것을 UI 태스크(prio 3)로 넘긴다.
+ *  요청(oled_ui_request_display)은 논리 상태 s_panel_on 과 이 플래그만 바꾸고 통지한 뒤 즉시 돌아온다.
+ *  UI 태스크는 회전 **처음에** 이 플래그를 거두고, 그 회전에 현재 화면을 그린 **뒤** 명령을 보낸다
+ *  → 켤 때 옛 화면이 비치지 않는다(예전 _exit_sleep 의 "먼저 그리고 켠다"를 그대로 지킨다).
+ *  얻는 것: ① 명령 경로가 I2C 잠금·전송·복구를 기다리지 않는다(시뮬 중앙 11.5ms → 0)
+ *          ② IDF I2C NACK 무한 스핀이 prio 10 에서 나는 길이 없어진다(oled_ui_start_task 의 prio 3 격리)
+ *          ③ 프레임버퍼 s_fb 를 그리는 곳이 UI 태스크 하나가 된다
+ *  대가: 켜짐이 중앙 +5ms(16ms), 끄기가 최대 50ms(한 회전) 늦다. 검증: sim/tools/oled_req_sim.py */
+static volatile bool s_panel_sync_req = false;
+/* ★2026-10-18 UI 태스크 핸들 — 패널 OFF 동안 통지로 자다가 켜질 때 즉시 깨우려고(감사 F10) */
+static TaskHandle_t s_ui_task_h = NULL;
 
 static bool     s_oled_present = false;
 static uint32_t s_oled_last_probe_ms = 0;
@@ -2803,6 +2820,15 @@ static void _render_pairing(oled_ui_ctx_t *ctx)
         _draw_center("Connected", 30);
         break;
 
+    case OLED_PAIR_ALREADY:
+        /* ★2026-10-18 이미 등록된 기기 — 커미셔닝 창을 열지 않았다(somfy_app.c MA_PAIR 주석).
+         *  5초 뒤 메인 복귀는 메인 루프가 한다(SUCCESS 와 같은 시간). 실패 화면과 같은 배치. */
+        _draw_center("MATTER PAIR", 0);
+        _fb_hline(0, OLED_WIDTH - 1, 8);
+        _draw_center("ALREADY", 14);
+        _draw_center("PAIRED", 24);
+        break;
+
     case OLED_PAIR_FAIL:
         /* 실패 — SETUP 복귀 전까지 유지. 오류 코드를 점멸 표시.
          * ★2026-08-12 기능 교환으로 복귀 버튼이 STOP → SETUP 이 되었다. */
@@ -2856,6 +2882,10 @@ static void _ui_task(void *pvParam)
     oled_ui_ctx_t *ctx = (oled_ui_ctx_t *)pvParam;
 
     while (1) {
+        /* ★2026-10-18 F13 켜기/끄기 요청을 회전 **처음에** 거둔다 — 명령은 아래에서 이번 회전의 렌더가
+         *  끝난 뒤 보낸다(s_panel_sync_req 주석). 거둔 뒤 들어온 요청은 다음 회전에 처리된다(맨 아래 continue). */
+        const bool sync_req = s_panel_sync_req;
+        if (sync_req) s_panel_sync_req = false;
         uint32_t now = _ms_now();
         ctx->anim_frame++;  // ~20fps, 0~255 순환
 
@@ -2914,8 +2944,34 @@ static void _ui_task(void *pvParam)
          *  (렌더 자체는 위에서 이미 dirty-page 로 전송을 안 하지만, 20fps 로 깨어나는
          *   것만으로도 light sleep 진입을 방해한다 — 배터리 모드에서 특히 손해.) */
         g_wake_iter[WI_OLED]++;        /* ★깨어남 출처 계측 */
-        vTaskDelay(pdMS_TO_TICKS(s_panel_on ? OLED_TASK_INTERVAL_MS
-                                            : OLED_TASK_INTERVAL_OFF_MS));
+        /* ★2026-10-18 ON/OFF 명령이 실패한 채면 패널 상태가 논리 상태와 어긋나 있다 — 맞을 때까지 재시도
+         *  (oled_ui_set_display_on 주석, 감사 F14). 평소엔 이 조건이 거짓이라 비용이 없다.
+         *  ★2026-10-18 F13 요청(sync_req)도 여기서 보낸다 — 위 렌더가 끝난 뒤라 켤 때 새 화면이 바로 보인다.
+         *  요청은 즉시 3회(5ms 간격 — CONFIG_FREERTOS_HZ=1000 이라 실제 5틱), 재시도는 회전당 1회.
+         *  보내는 값은 **지금의** 논리 상태다 — 거둔 뒤 반대 요청이 와도 마지막 요청이 이긴다. */
+        if ((sync_req || s_panel_cmd_pending) && s_oled_present) {
+            const uint8_t c = s_panel_on ? 0xAF : 0xAE;
+            esp_err_t r = ESP_FAIL;
+            for (int i = 0; i < (sync_req ? 3 : 1) && r != ESP_OK; i++) {
+                if (i) vTaskDelay(pdMS_TO_TICKS(5));
+                r = _oled_send_cmds(&c, 1);
+            }
+            if (r == ESP_OK) {
+                s_panel_cmd_pending = false;
+            } else if (!s_panel_cmd_pending) {      /* 처음 실패만 센다 — 이어지는 재시도 실패는 같은 건 */
+                s_panel_cmd_pending = true;
+                g_oled_onoff_fail_cnt++;
+                ESP_LOGW(TAG, "★화면 %s 명령이 패널에 안 닿았다(3회) — 다음 회전부터 계속 재시도 (누적 %u)",
+                         (c == 0xAF) ? "ON" : "OFF", (unsigned)g_oled_onoff_fail_cnt);
+            }
+        }
+        /* ★2026-10-18 F13 회전 도중(렌더·전송 중) 새 요청이 들어왔으면 기다리지 않고 바로 다음 회전 —
+         *  안 그러면 꺼진 상태에서 켜기 요청이 50ms 지연 대기(vTaskDelay)에 묶일 수 있다. */
+        if (s_panel_sync_req) continue;
+        /* ★2026-10-18 패널 OFF 면 통지(oled_ui_set_display_on(true))까지 잔다 — 최대 OLED_TASK_INTERVAL_OFF_MS
+         *  (oled_ui.h 주석, 감사 F10). 켜져 있으면 기존 50ms(20fps) 그대로. */
+        if (s_panel_on) vTaskDelay(pdMS_TO_TICKS(OLED_TASK_INTERVAL_MS));
+        else            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(OLED_TASK_INTERVAL_OFF_MS));
     }
 }
 
@@ -3247,10 +3303,16 @@ void oled_ui_start_task(oled_ui_ctx_t *ctx)
      *  실측: prio 5 = 워치독 180~385건·기기 정지 / prio 3 = 워치독 0·정상 동작.
      *  드라이버에 타임아웃이 없어 호출자가 빠져나올 방법이 없으므로 우선순위로 격리한다
      *  → 화면이 죽어도 본체는 산다. (평상시 somfy_app 은 대부분 자므로 프레임률 영향 없음.) */
-    xTaskCreate(_ui_task, "oled_ui", 4096, ctx, 3, NULL);
+    xTaskCreate(_ui_task, "oled_ui", 4096, ctx, 3, &s_ui_task_h);   /* ★2026-10-18 핸들 보관(F10) */
 }
 
-void oled_ui_set_display_on(bool on)
+/* ★★2026-10-18 ON/OFF 명령이 패널에 **닿았는지** 확인한다 (감사 보고서 F14).
+ *  예전엔 전송 결과를 버렸다 — 0xAE 가 NACK 로 실패해도 펌웨어·로그·batlog 는 "화면 OFF" 로 알고
+ *  패널은 켜진 채(수 mA) 남을 수 있었다. 이 기판은 OLED 버스 고착 이력이 있다(oled-module-wedge 메모).
+ *  → 즉시 3회까지 다시 보내고, 그래도 안 되면 UI 태스크가 루프마다 다시 보낸다(s_panel_cmd_pending).
+ *  실패 횟수는 g_oled_onoff_fail_cnt 로 센다(정상 = 0). 반환: 패널이 명령을 받았는가.
+ *  (s_panel_cmd_pending·g_oled_onoff_fail_cnt 정의는 파일 위 s_panel_on 옆 — UI 태스크가 먼저 쓴다) */
+bool oled_ui_set_display_on(bool on)
 {
     /* SSD1315/SSD1306 명령:
      *   0xAE = Display OFF (sleep mode, panel 차단, ~5μA)
@@ -3258,9 +3320,34 @@ void oled_ui_set_display_on(bool on)
      * I2C 패널이 응답 못해도(전원 OFF 상태 등) 호출은 안전 — _oled_send_cmds
      * 가 i2c_master_transmit 의 timeout 으로 fail 후 반환. */
     s_panel_on = on;               /* 미검출이어도 논리 상태는 갱신(태스크가 참조) */
-    if (!s_oled_present) return;   /* 미검출 시 NACK 로그 방지 */
+    if (on && s_ui_task_h) xTaskNotifyGive(s_ui_task_h);   /* ★2026-10-18 OFF 동안 자던 UI 태스크를 즉시 깨움(F10) */
+    if (!s_oled_present) return false;   /* 미검출 시 NACK 로그 방지 */
     uint8_t cmd = on ? 0xAF : 0xAE;
-    _oled_send_cmds(&cmd, 1);
+    esp_err_t r = ESP_FAIL;
+    for (int i = 0; i < 3 && r != ESP_OK; i++) {
+        r = _oled_send_cmds(&cmd, 1);
+        if (r != ESP_OK) vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    s_panel_cmd_pending = (r != ESP_OK);
+    if (r != ESP_OK) {
+        g_oled_onoff_fail_cnt++;
+        ESP_LOGW(TAG, "★화면 %s 명령이 패널에 안 닿았다(3회) — UI 태스크가 계속 재시도 (누적 %u)",
+                 on ? "ON" : "OFF", (unsigned)g_oled_onoff_fail_cnt);
+    }
+    return r == ESP_OK;
+}
+
+/* ★★2026-10-18 화면 켜기/끄기 **요청** (감사 F13 — s_panel_sync_req 주석).
+ *  I2C 를 건드리지 않고 논리 상태만 바꾼 뒤 UI 태스크를 깨운다. UI 태스크가 그 회전에 화면을 그리고 명령을 보낸다.
+ *  평소의 켜기(_exit_sleep·_exit_screensaver)·끄기(_enter_sleep·_enter_screensaver)가 이걸 쓴다.
+ *  결과가 바로 필요한 측정 경로(lsfloor oled_off 기록·dsleep 진입)는 그대로 oled_ui_set_display_on() 을 쓴다.
+ *  UI 태스크가 아직 없으면(부팅 중) 예전처럼 직접 보낸다. */
+void oled_ui_request_display(bool on)
+{
+    if (!s_ui_task_h) { (void)oled_ui_set_display_on(on); return; }
+    s_panel_on       = on;          /* 논리 상태는 즉시 — 메인 루프·batlog·로그가 읽는 값은 예전과 같은 시점에 바뀐다 */
+    s_panel_sync_req = true;
+    xTaskNotifyGive(s_ui_task_h);   /* 켜기: 통지 대기에서 즉시 / 끄기: 50ms 대기가 끝나는 대로 */
 }
 
 void oled_ui_set_action_blinds(oled_ui_ctx_t *ctx, uint8_t mask)
@@ -3342,6 +3429,8 @@ void oled_ui_render_pairing_once(oled_ui_ctx_t *ctx, const char *pair_code,
     _render_pairing(ctx);   /* 단 1회 렌더 + flush */
 }
 
+/* ★2026-10-18 F13 이후 평소 경로에서는 안 쓴다 — _exit_sleep/_exit_screensaver 가 oled_ui_request_display 로
+ *  바꿨다(UI 태스크가 그린다). UI 태스크가 없을 때를 위한 공개 API 로 남겨 둔다. */
 void oled_ui_render_main_once(oled_ui_ctx_t *ctx)
 {
     s_ctx = ctx;
