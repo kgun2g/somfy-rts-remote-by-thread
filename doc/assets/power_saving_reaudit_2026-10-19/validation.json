@@ -1,0 +1,26 @@
+{
+  "firmware_changed": false,
+  "source_hashes_rechecked": 50,
+  "source_hash_mismatches": 0,
+  "report_local_link_errors": 0,
+  "nvs_files_recomputed": 20,
+  "existing_offline_models": [
+    {
+      "name": "btn_lp_wait_sim.py",
+      "exit": 0,
+      "result": "pass"
+    },
+    {
+      "name": "oled_req_sim.py",
+      "exit": 0,
+      "result": "pass"
+    },
+    {
+      "name": "vibe_stuck_edge_sim.py",
+      "exit": 0,
+      "result": "pass; does not model wake API IRQ-type overwrite"
+    }
+  ],
+  "hardware_operations": [],
+  "firmware_build_performed": false
+}

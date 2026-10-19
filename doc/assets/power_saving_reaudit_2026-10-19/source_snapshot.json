@@ -1,0 +1,308 @@
+{
+  "date": "2026-10-19",
+  "head": "e9ed0b57975089fd16d79d2155598ac71a8c4485",
+  "firmware_files": 42,
+  "changed_firmware_files": 7,
+  "source_snapshot": [
+    {
+      "file": "main/app_driver.cpp",
+      "sha256": "eb22de9ea0f242c5c3f7fcfe602418af2dbc47e86413a6963658ff1a64d003df",
+      "lines": 183,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/app_log.h",
+      "sha256": "b76db315d50c22f970f4eeac4d472bb093195baa31cb7128b96dff63e51f2b1c",
+      "lines": 39,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/app_main.cpp",
+      "sha256": "27841ac212966a8da53768ab0c174f4b67c73eb46b7fa1d53959b4dfde4cff2a",
+      "lines": 1290,
+      "changed_since_2026_10_16": true
+    },
+    {
+      "file": "main/app_priv.h",
+      "sha256": "1e1087a05857708f92d38479f2c2348603b0dbba0d8019774dd77d5acb1fd426",
+      "lines": 96,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/blind_manager.c",
+      "sha256": "cdbdb37bd5c1b2f1a9afdf755963c48c1dc62cc30f75a37205cefdf9ebbfbdb8",
+      "lines": 420,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/blind_manager.h",
+      "sha256": "9a53e65dccf7282ff9f8e91ef1251170c48c809625686ae6273bdc7d970ff1b2",
+      "lines": 104,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/boards/board_select.h",
+      "sha256": "7a8214f0038c97ab7abd8fb3270e6fc83216ba936a8c4ad7534c782cabedb39b",
+      "lines": 491,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/boards/esp32-c6.h",
+      "sha256": "4b8fc627956e0ae48a0790b5b300ad3b478e2d5196d33949caee2d5a359b829a",
+      "lines": 11,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/boards/esp32-h2.h",
+      "sha256": "de46612f08e9b7afb5ab9550c5c963bbc6d6cf1260a421bf3d1741bfc6890b8f",
+      "lines": 273,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/boards/gnpe-c6.h",
+      "sha256": "04b3b59ed1789da589ee8877ec0f4648d31023f07df3b00fbaf1dff6c40f7395",
+      "lines": 71,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/boards/xiao-c6-test.h",
+      "sha256": "310a6b1929d37dde5b6b99e5b916f7456bb21592b73207de4fb93203b961dad2",
+      "lines": 93,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/boards/xiao-c6.h",
+      "sha256": "f95e5ee4a8318387b9aee00f9d3ce353f72d94a6d5538dd5962e251bacd6adf8",
+      "lines": 200,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/boot_diag.c",
+      "sha256": "77fae1f8b8e6be826a37f85660297474eb01cd85081030bda8606c0edb40d6cd",
+      "lines": 279,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/boot_diag.h",
+      "sha256": "2295a75092760bff8195621a6f011f2e7de36e69c84b8dfcecbc8c86f0462891",
+      "lines": 98,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/button_handler.c",
+      "sha256": "3a6149b5ad91acbb2adb3b9b5d88e45d27300c5a9fff870017d3d3c4fa7b5ef9",
+      "lines": 1910,
+      "changed_since_2026_10_16": true
+    },
+    {
+      "file": "main/button_handler.h",
+      "sha256": "8b845ffc09d61d85cf9957bbb8063aab0fe02051cb831207ea40c5259180ca3b",
+      "lines": 249,
+      "changed_since_2026_10_16": true
+    },
+    {
+      "file": "main/cc1101.c",
+      "sha256": "dd45a9bdbc9c51be06ba5480033fc4a3d4b55b5d1033bc7d447d8b67c89e5f34",
+      "lines": 567,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/cc1101.h",
+      "sha256": "6828f0d0c4d8caaa29cb04225fd0083ddd0b21af525f4f4aa597b4694e60ca4e",
+      "lines": 212,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/CHIPProjectConfig.h",
+      "sha256": "c079b7493d5b08bb9ce303b1620d0e88b3f84c73bae09807832b5bac595f7b03",
+      "lines": 70,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/CMakeLists.txt",
+      "sha256": "10a4e5bf5a9276d9584196cdd393a575957c1c31b35ad1ffa5bca33ac6c28d91",
+      "lines": 183,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/common_macros.h",
+      "sha256": "8b7b65b9cbfac5cc6f3931e4abb8c9c94f3c415e618c13c432fcc512f708dd1a",
+      "lines": 44,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/efuse_commissionable.cpp",
+      "sha256": "13ec8346621e74a49c49e4d28977c7a8da7944954921bacb7b62a3bce07bfb4e",
+      "lines": 99,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/efuse_commissionable.h",
+      "sha256": "587c3718a23c85d77c3a9ce5750c8d0368a59bf98573cb22afd4eb2e31c162b1",
+      "lines": 39,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/font5x7_basic.h",
+      "sha256": "558149c4e9da8e399759b33de865686316dc58bde2e4540c5b68580561044c36",
+      "lines": 108,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/font8x8_basic.h",
+      "sha256": "f5051d9a4259978ee532340de3b39c96f957798e3f3fccbac025b05373487187",
+      "lines": 109,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/idf_component.yml",
+      "sha256": "3b18539a6dec93a832dcfa81cb85137282e1b709b0ec19b976715096216cb918",
+      "lines": 10,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/Kconfig.projbuild",
+      "sha256": "3efa78d9084a0a154eea9900c6b2ac754b7c9816271936293255f25c825c3f5e",
+      "lines": 10,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/log_heap_numbers.h",
+      "sha256": "98619c338b9486eaa9dcf78578243e61492032988be73a47a2e98e2d9cfdab2f",
+      "lines": 22,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/lp_core/pcf_lp_config.h",
+      "sha256": "e6660487912ece4bb7c4237cd947ecb207ee7cd3928e5c8ea19b395a792ce9b0",
+      "lines": 92,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/lp_core/pcf_poll.c",
+      "sha256": "ee1344bd55a77e6a46574d067a4d9a8fe80d838ea6081d7bc0c14305cab10b1f",
+      "lines": 194,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/matter_blinds.h",
+      "sha256": "d303194a28dd89d398f14c3623d99f589e45d798667c3cb16b86a028eee9bc46",
+      "lines": 153,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/matter_blinds_shim.cpp",
+      "sha256": "daca17b621ede379f53c35c8270836259f9e0d6fa41a29b492fbeb61ded62328",
+      "lines": 289,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/oled_ui.c",
+      "sha256": "f32be7863a0c6b70c9059bf0d378fe501d446747b2a0efac377f733205907fea",
+      "lines": 3544,
+      "changed_since_2026_10_16": true
+    },
+    {
+      "file": "main/oled_ui.h",
+      "sha256": "9870b9e0f92b1fb2fd20821a9408a59c9f311fdf002172f07fb2bbed7c1de9f4",
+      "lines": 459,
+      "changed_since_2026_10_16": true
+    },
+    {
+      "file": "main/somfy_app.c",
+      "sha256": "4e6f7ba0cbe11f0ff14944e7aecbe10ae76e2491ae86920468cd11bbd8e4773d",
+      "lines": 6635,
+      "changed_since_2026_10_16": true
+    },
+    {
+      "file": "main/somfy_config.h",
+      "sha256": "900f3e99047f65ed9682b1f200d18802ec4b1a9e7c877a4f395a64ae35966cf9",
+      "lines": 225,
+      "changed_since_2026_10_16": true
+    },
+    {
+      "file": "main/somfy_rts.c",
+      "sha256": "9c32e6caac049df926e16649fb797bd58cd8e33b6168ae89e3149314885827b5",
+      "lines": 580,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/somfy_rts.h",
+      "sha256": "dbd376c2827fb9eb2c47c17a098c9e82688fc2c2af1d55fcb791ae16a5fa0a2e",
+      "lines": 196,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/thread_provision.c",
+      "sha256": "659c100f5bdb98524025f395edde17e44a09210f48adfac5141b76e9985a0aa5",
+      "lines": 216,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/thread_provision.h",
+      "sha256": "7188ed9502a89ad0b073e84ed05494938bfae938371e39300d414fe7d054dc9d",
+      "lines": 112,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/wake_diag.h",
+      "sha256": "30e3d5cf92d1cf0b7ce18f2bfb5c626aedf068638682e66d6c8b26c0f6f7236d",
+      "lines": 28,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "main/gen_build_epoch.cmake",
+      "sha256": "bcb01323aa651cf6ffa7580107613f2eee058534268bd5a1c6a610e3e60f752b",
+      "lines": 18,
+      "changed_since_2026_10_16": false
+    },
+    {
+      "file": "CMakeLists.txt",
+      "sha256": "4a62f2e5303013e4429cd176e0142574fc3975880ebcea6e3be9805c521d0ed8",
+      "lines": 48,
+      "category": "related build or hub command path"
+    },
+    {
+      "file": "build.ps1",
+      "sha256": "bf1b0f35da033695e12eabecdcea99f7d03effe6b74f8ff7e4e1374ce696fabe",
+      "lines": 367,
+      "category": "related build or hub command path"
+    },
+    {
+      "file": "sdkconfig.xiao-c6",
+      "sha256": "03e98a095918d478048067e2f6291b3841a552352927d1f084ee1bbf004d894b",
+      "lines": 3657,
+      "category": "related build or hub command path"
+    },
+    {
+      "file": "sdkconfig.defaults",
+      "sha256": "3fa27189c1ee084dea88c33e2207e56194b4bf3b96d4150ceddf3bdd1e31b4ed",
+      "lines": 201,
+      "category": "related build or hub command path"
+    },
+    {
+      "file": "sdkconfig.defaults.c6_thread",
+      "sha256": "01d60f4951791a3b3f7ad783b9ab2fdd252ae19ec9df4ef5807e70c09a7c4715",
+      "lines": 108,
+      "category": "related build or hub command path"
+    },
+    {
+      "file": "sdkconfig.defaults.xiao_c6",
+      "sha256": "2073337057875e9b01f7843e6c094e0a9ebd73f04d469471b64ae43c80707dae",
+      "lines": 214,
+      "category": "related build or hub command path"
+    },
+    {
+      "file": "dependencies.lock",
+      "sha256": "a32bd1ee519198018ed6689399eb11e4c2f5ec051a5f7837cb0bee72a3241840",
+      "lines": 326,
+      "category": "related build or hub command path"
+    },
+    {
+      "file": "smartthings-driver/src/init.lua",
+      "sha256": "eb6014854c1f0abab1bb7209f90fe3700f9d4bb291b6eb46be66cc757b877247",
+      "lines": 172,
+      "category": "related build or hub command path"
+    }
+  ]
+}
