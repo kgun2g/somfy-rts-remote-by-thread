@@ -1,0 +1,12 @@
+{
+  "kicad/somfy_blinds_v6.kicad_sch": "afcb49144d1411f07cfd33d1236adca79e31267061369994fa649e5516910d4f",
+  "kicad/somfy_blinds_v6.kicad_pcb": "4bdb85d6dba01140635ba23f84b48ab7f6f1d7bac9876e628f7687fc2b23215e",
+  "main/app_main.cpp": "27841ac212966a8da53768ab0c174f4b67c73eb46b7fa1d53959b4dfde4cff2a",
+  "main/button_handler.c": "e017415b2c6e8bbb13b76cfe66d8390fc1d177cc250949ecfe7a87a352f5b77b",
+  "main/button_handler.h": "acb95645ce367238496821061c23502282ee5f503cab1a8e26a156149cdae156",
+  "main/lp_core/pcf_poll.c": "7303401836b64ee4d15fc8851eb14d281044b9a740d507c404f225e2284550cd",
+  "main/oled_ui.c": "db3989179e6f5eb5caddfb1df78ed225d54462cac9bf0e1c64d10cf19c0cd518",
+  "main/somfy_app.c": "45362c483549c2cf8f4f4c886f670e1b996ab28eab1079033fd2d32f768c383d",
+  "main/boards/xiao-c6.h": "f95e5ee4a8318387b9aee00f9d3ce353f72d94a6d5538dd5962e251bacd6adf8",
+  "main/boards/board_select.h": "7a8214f0038c97ab7abd8fb3270e6fc83216ba936a8c4ad7534c782cabedb39b"
+}

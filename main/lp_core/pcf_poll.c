@@ -57,8 +57,20 @@ volatile uint32_t seq        = 0;        /* 변화 카운터 */
  *  버튼은 active-low(풀업, 눌림=0)라 `~rx` 의 1 비트가 '눌렸음' 이다.
  *  소비 규약은 rot_delta 와 동일하게 **HP 가 본 것만 차감**한다:
  *      uint32_t d = ulp_press_latch;  ...사용...  ulp_press_latch &= ~d;
- *  (HP 가 통째로 0 을 쓰면, 읽기와 쓰기 사이에 LP 가 OR 한 비트를 잃는다.) */
-volatile uint32_t press_latch = 0;
+ *  (HP 가 통째로 0 을 쓰면, 읽기와 쓰기 사이에 LP 가 OR 한 비트를 잃는다.)
+ *
+ * ★★2026-10-20 위 '본 것만 차감'도 경합이었다 (GPT 재감사 N06). HP 의 `&=` 와 LP 의 `|=` 는 각각 읽고-고쳐-쓰기라,
+ *  겹치면 (a) HP 가 LP 가 막 OR 한 **다른 버튼** 비트를 지우고 (b) LP 가 HP 가 막 지운 비트를 되살린다(헛누름).
+ *  → **쓰는 쪽을 LP 하나로** 바꿨다. 버튼마다 4비트 '세대' 카운터를 두고 "2연속 눌림이 새로 시작될 때" +1 한다.
+ *    버튼 0~7 은 press_gen0, 8~15 는 press_gen1 — 한 버튼의 칸은 반드시 한 워드 안이라 워드 저장 1번이면 원자적이다.
+ *    HP 는 **읽기만** 하고 자기 사본과 칸별로 비교해 "그동안 새로 눌렸음"을 안다(button_handler.c).
+ *  4비트 = HP 가 한 번 읽는 사이 같은 버튼이 16번 새로 눌려야 한 바퀴 돈다(2비트 첫 안은 깨움 없는 6.5초 공백에서
+ *  4번에 걸렸다). LP 가 상태 변화마다 HP 를 깨우므로 실제로는 1 이상 쌓이기도 드물다.
+ *  의미 차이 하나: 옛 래치는 누르고 있는 동안 계속 다시 섰다(뗀 뒤 HP 한 폴 더 '눌림'). 새 카운터는 시작에서만 오른다 —
+ *  누르고 있는 동안은 pcf_state 자체가 '눌림'이라 HP 가 보는 값은 같고, 떼는 순간이 한 폴 빨리 보일 뿐이다.
+ *  검증 sim/tools/lp_latch_gen_sim.py: 경합을 일부러 만든 조건에서 옛 방식 헛누름 741~1,404회 → 새 방식 0, 놓침 0. */
+volatile uint32_t press_gen0 = 0;
+volatile uint32_t press_gen1 = 0;
 volatile uint32_t poll_cnt   = 0;        /* 폴링 누적(생존 확인) */
 volatile uint32_t i2c_err    = 0;        /* I2C 실패 누적 */
 volatile uint32_t enabled    = 1;        /* HP 가 0 으로 내리면 I2C 정지 */
@@ -88,6 +100,7 @@ static uint8_t  prev_ab  = 0x03;         /* 디텐트 기본 위치(11) */
 static int8_t   accum    = 0;
 static uint32_t last     = 0xFFFFFFFFu;  /* '아직 안 읽음' 표식 — 16비트 값과 겹치면 안 된다 */
 static uint32_t prev_low = 0;            /* 2연속 눌림 판정용 직전 표본 */
+static uint32_t held     = 0;            /* ★2026-10-20 직전 폴의 '2연속 눌림' — 새로 시작된 것만 세려고 */
 
 /* ★★★2026-09-01 **busy-wait 무한루프 → 1회 실행 후 halt** 로 바꿨다.
  *
@@ -171,8 +184,22 @@ int main(void)
             const uint32_t mask = ((LP_PCF_NBYTES == 2) ? 0xFFFFu : 0xFFu)
                                 & ~((1u << BIT_ROT_A) | (1u << BIT_ROT_B));
             const uint32_t low = ((uint32_t)(~rx)) & mask;
-            press_latch |= (low & prev_low);
+            /* ★2026-10-20 래치 OR → 버튼별 세대 카운터 (선언부 press_gen 주석). LP 만 쓴다. */
+            const uint32_t now_held = low & prev_low;
+            const uint32_t starts   = now_held & ~held;
+            held     = now_held;
             prev_low = low;
+            if (starts) {
+                uint32_t g0 = press_gen0, g1 = press_gen1;
+                for (int i = 0; i < 16; i++) {
+                    if (!(starts & (1u << i))) continue;
+                    const int sh = (i & 7) * 4;
+                    if (i < 8) g0 = (g0 & ~(0xFu << sh)) | ((((g0 >> sh) + 1u) & 0xFu) << sh);
+                    else       g1 = (g1 & ~(0xFu << sh)) | ((((g1 >> sh) + 1u) & 0xFu) << sh);
+                }
+                press_gen0 = g0;      /* 워드 하나씩 저장 — 한 버튼은 한 워드 안에만 있다 */
+                press_gen1 = g1;
+            }
         }
 
         /* ── 버튼/전체 상태 변화 → HP 에게 알림 ── */

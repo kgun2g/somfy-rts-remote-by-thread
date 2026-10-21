@@ -1,0 +1,1056 @@
+{
+    "$schema": "https://schemas.kicad.org/drc.v1.json",
+    "coordinate_units": "mm",
+    "date": "2026-10-21T00:12:50",
+    "ignored_checks": [
+        {
+            "description": "Footprint has no courtyard defined",
+            "key": "missing_courtyard"
+        },
+        {
+            "description": "Track endpoint not centered on via",
+            "key": "track_not_centered_on_via"
+        },
+        {
+            "description": "Tuning profile track geometries",
+            "key": "tuning_profile_track_geometries"
+        },
+        {
+            "description": "Footprint doesn't match symbol's footprint filters",
+            "key": "footprint_filters_mismatch"
+        },
+        {
+            "description": "Footprint component type doesn't match footprint pads",
+            "key": "footprint_type_mismatch"
+        }
+    ],
+    "included_severities": [
+        "error",
+        "warning"
+    ],
+    "kicad_version": "10.0.6",
+    "schematic_parity": [
+        {
+            "description": "회로도에서 대응하는 핀을 찾을 수 없습니다",
+            "items": [
+                {
+                    "description": "패드 MP [GND]의 BAT1 위B.Cu",
+                    "pos": {
+                        "x": 24.7,
+                        "y": 161.4
+                    },
+                    "uuid": "3ce977d6-28b0-4b7e-9e5a-c56deed50e2d"
+                }
+            ],
+            "severity": "warning",
+            "type": "net_conflict"
+        },
+        {
+            "description": "회로도에서 대응하는 핀을 찾을 수 없습니다",
+            "items": [
+                {
+                    "description": "패드 MP [GND]의 BAT1 위B.Cu",
+                    "pos": {
+                        "x": 24.7,
+                        "y": 166.35
+                    },
+                    "uuid": "36332d8b-3e08-44d9-ad01-2850a81d12ed"
+                }
+            ],
+            "severity": "warning",
+            "type": "net_conflict"
+        }
+    ],
+    "source": "somfy_blinds_v6.kicad_pcb",
+    "unconnected_items": [],
+    "violations": [
+        {
+            "description": "Track has unconnected end",
+            "items": [
+                {
+                    "description": "배선 [SPI_MISO] on B.Cu, 길이 0.1500 mm",
+                    "pos": {
+                        "x": 17.900001,
+                        "y": 36.099999
+                    },
+                    "uuid": "dce13ea3-5b68-4c70-9bcd-eaddfce337bf"
+                }
+            ],
+            "severity": "warning",
+            "type": "track_dangling"
+        },
+        {
+            "description": "Silkscreen clipped by board edge",
+            "items": [
+                {
+                    "description": "세그먼트 (Edge.Cuts)",
+                    "pos": {
+                        "x": 16.5,
+                        "y": 17.0
+                    },
+                    "uuid": "3498e607-a01f-40da-96e1-3a6604cfc598"
+                },
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 28.276,
+                        "y": 16.4945
+                    },
+                    "uuid": "3e73bfd6-8848-4ef6-8190-8ab011b48eca"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_edge_clearance"
+        },
+        {
+            "description": "Silkscreen clipped by board edge",
+            "items": [
+                {
+                    "description": "세그먼트 (Edge.Cuts)",
+                    "pos": {
+                        "x": 16.5,
+                        "y": 17.0
+                    },
+                    "uuid": "3498e607-a01f-40da-96e1-3a6604cfc598"
+                },
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 37.275,
+                        "y": 17.5045
+                    },
+                    "uuid": "e777c77d-ae21-497a-9f65-95d74c2182a5"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_edge_clearance"
+        },
+        {
+            "description": "Silkscreen clipped by board edge",
+            "items": [
+                {
+                    "description": "호 (Edge.Cuts)",
+                    "pos": {
+                        "x": 27.5,
+                        "y": 38.4784
+                    },
+                    "uuid": "ee7973c2-201e-464f-a926-54146804c1ab"
+                },
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 39.765,
+                        "y": 38.4595
+                    },
+                    "uuid": "e0cf2561-e966-4dd7-bade-4d273cb169ed"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_edge_clearance"
+        },
+        {
+            "description": "Silkscreen clipped by board edge",
+            "items": [
+                {
+                    "description": "세그먼트 (Edge.Cuts)",
+                    "pos": {
+                        "x": 51.0,
+                        "y": 19.0
+                    },
+                    "uuid": "f80ee64b-4d70-4a5a-8ff5-22c31ae9a00f"
+                },
+                {
+                    "description": "호 of ENC1 on B.Silkscreen",
+                    "pos": {
+                        "x": 46.73907,
+                        "y": 74.35853
+                    },
+                    "uuid": "6741aa8b-0454-4089-910a-d4532bb1c7de"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_edge_clearance"
+        },
+        {
+            "description": "Silkscreen clipped by board edge",
+            "items": [
+                {
+                    "description": "세그먼트 (Edge.Cuts)",
+                    "pos": {
+                        "x": 51.0,
+                        "y": 19.0
+                    },
+                    "uuid": "f80ee64b-4d70-4a5a-8ff5-22c31ae9a00f"
+                },
+                {
+                    "description": "호 of ENC1 on B.Silkscreen",
+                    "pos": {
+                        "x": 46.72543,
+                        "y": 74.47893
+                    },
+                    "uuid": "cad8537c-4adf-4203-88a4-e4641c0c8428"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_edge_clearance"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 R8",
+                    "pos": {
+                        "x": 47.99,
+                        "y": 38.75
+                    },
+                    "uuid": "08a37f56-f5ee-459e-bca7-6268fd51a2f1"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C3",
+                    "pos": {
+                        "x": 31.75,
+                        "y": 146.0
+                    },
+                    "uuid": "0e52a7e4-8284-4cd9-a986-47616cbae953"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 R3",
+                    "pos": {
+                        "x": 24.25,
+                        "y": 107.01
+                    },
+                    "uuid": "1b45c7d6-9fbc-4934-8d2d-442430e79159"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 R1",
+                    "pos": {
+                        "x": 27.75,
+                        "y": 23.0
+                    },
+                    "uuid": "23bd4172-ba1b-469b-9097-ccdb0696a727"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C8",
+                    "pos": {
+                        "x": 20.0,
+                        "y": 158.0
+                    },
+                    "uuid": "2ea18cd2-4557-4098-9e8d-54e55b04540e"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C7",
+                    "pos": {
+                        "x": 20.0,
+                        "y": 160.5
+                    },
+                    "uuid": "42bde7e0-7dfc-4f91-962a-2bccd4662f5a"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 R9",
+                    "pos": {
+                        "x": 47.99,
+                        "y": 36.5
+                    },
+                    "uuid": "45961493-671b-49be-bf04-56edd4df4914"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C4",
+                    "pos": {
+                        "x": 34.0,
+                        "y": 146.02
+                    },
+                    "uuid": "7310ef05-c013-419b-91ea-dc94a566fcf5"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 R4",
+                    "pos": {
+                        "x": 48.48,
+                        "y": 30.49
+                    },
+                    "uuid": "81889873-5289-4021-b92d-022eedeff5ae"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "풋프린트 'MountingHole_2.2mm_M2_ISO7380_Pad_TopBottom'이(가) 라이브러리 'MountingHole'의 사본과 일치하지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 MH3",
+                    "pos": {
+                        "x": 48.5,
+                        "y": 167.5
+                    },
+                    "uuid": "956987fb-c0aa-48eb-9a32-630011d21aa3"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_mismatch"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C6",
+                    "pos": {
+                        "x": 48.98,
+                        "y": 32.75
+                    },
+                    "uuid": "95a38220-9bea-4390-a26f-77d753fb1f4c"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C5",
+                    "pos": {
+                        "x": 34.48,
+                        "y": 50.0
+                    },
+                    "uuid": "99fdcd13-1975-4847-ba15-52640c403ae8"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C2",
+                    "pos": {
+                        "x": 28.25,
+                        "y": 107.02
+                    },
+                    "uuid": "a30cd120-d656-467a-aa3b-6e798ad2eeef"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C11",
+                    "pos": {
+                        "x": 19.975,
+                        "y": 150.5
+                    },
+                    "uuid": "ce97a575-a07e-46c6-a3ea-25e08d68325b"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 R5",
+                    "pos": {
+                        "x": 49.01,
+                        "y": 34.5
+                    },
+                    "uuid": "ceccea02-e69a-460c-abb1-fd596df9642a"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 R2",
+                    "pos": {
+                        "x": 29.5,
+                        "y": 25.0
+                    },
+                    "uuid": "d54566fa-fa9e-4806-8e1a-0edae30f7f7e"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 R7",
+                    "pos": {
+                        "x": 17.74,
+                        "y": 30.0
+                    },
+                    "uuid": "d6882087-eb10-4d76-b211-0f5fbd9eef6b"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C1",
+                    "pos": {
+                        "x": 21.5,
+                        "y": 107.02
+                    },
+                    "uuid": "e3aa1200-9be5-4f1d-b601-8a8791a1f7d1"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 R6",
+                    "pos": {
+                        "x": 18.25,
+                        "y": 26.49
+                    },
+                    "uuid": "e52dea4b-d5f3-4e79-afdf-2f97b90964f9"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C9",
+                    "pos": {
+                        "x": 20.0,
+                        "y": 155.5
+                    },
+                    "uuid": "efd46f09-4d8a-4d09-aeca-a2bbbc56078e"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 C10",
+                    "pos": {
+                        "x": 20.0,
+                        "y": 153.0
+                    },
+                    "uuid": "fa0e7fe9-d7df-41c5-8140-2c695e4c775f"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "풋프린트 'JST_GH_SM02B-GHS-TB_1x02-1MP_P1.25mm_Horizontal'이(가) 라이브러리 'Connector_JST'의 사본과 일치하지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 BAT1",
+                    "pos": {
+                        "x": 23.35,
+                        "y": 163.875
+                    },
+                    "uuid": "8971178a-0447-4267-b8cb-21cc792438c5"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_mismatch"
+        },
+        {
+            "description": "풋프린트 'SIQ-02FVS3'이(가) 라이브러리 'siq'의 사본과 일치하지 않습니다",
+            "items": [
+                {
+                    "description": "풋프린트 ENC1",
+                    "pos": {
+                        "x": 44.2359,
+                        "y": 74.4217
+                    },
+                    "uuid": "c6ef6948-6734-49de-b762-ef4528d9a2b4"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_mismatch"
+        },
+        {
+            "description": "Silkscreen clearance",
+            "items": [
+                {
+                    "description": "LEFT1 의 참조 필드",
+                    "pos": {
+                        "x": 16.25,
+                        "y": 74.5
+                    },
+                    "uuid": "9ea09b5f-a7a0-4662-b881-cbbb14ad7658"
+                },
+                {
+                    "description": "원 (F.Silkscreen)",
+                    "pos": {
+                        "x": 32.75,
+                        "y": 74.5
+                    },
+                    "uuid": "ed362ea5-87a2-4551-a824-8a9b99d11389"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_overlap"
+        },
+        {
+            "description": "Silkscreen clearance",
+            "items": [
+                {
+                    "description": "DOWN1 의 참조 필드",
+                    "pos": {
+                        "x": 32.75,
+                        "y": 91.0
+                    },
+                    "uuid": "9bd82f9d-3b27-4eaf-91d3-133d7be04c2a"
+                },
+                {
+                    "description": "원 (F.Silkscreen)",
+                    "pos": {
+                        "x": 32.75,
+                        "y": 74.5
+                    },
+                    "uuid": "ed362ea5-87a2-4551-a824-8a9b99d11389"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_overlap"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "RIGHT1 의 참조 필드",
+                    "pos": {
+                        "x": 43.25,
+                        "y": 74.5
+                    },
+                    "uuid": "a07eb1bd-fefc-4899-b376-169397c2e792"
+                },
+                {
+                    "description": "ENC1의 NPTH 패드",
+                    "pos": {
+                        "x": 42.1716,
+                        "y": 77.4217
+                    },
+                    "uuid": "c2bb46e0-5d8d-4c60-9465-4c788920cc9d"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U2 on F.Silkscreen",
+                    "pos": {
+                        "x": 18.9,
+                        "y": 18.9
+                    },
+                    "uuid": "4ffc7b77-bb72-448d-babb-1717005ecd93"
+                },
+                {
+                    "description": "15의 PTH 패드[unconnected-(U1-GPIO5_MTDI-Pad15)]U1",
+                    "pos": {
+                        "x": 34.0534,
+                        "y": 19.4
+                    },
+                    "uuid": "49d32ce5-5d45-41af-a98c-80d6a7203aeb"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U2 on F.Silkscreen",
+                    "pos": {
+                        "x": 18.9,
+                        "y": 18.9
+                    },
+                    "uuid": "4ffc7b77-bb72-448d-babb-1717005ecd93"
+                },
+                {
+                    "description": "16의 PTH 패드[LP_I2C_SCL]U1",
+                    "pos": {
+                        "x": 31.5134,
+                        "y": 19.4
+                    },
+                    "uuid": "3c39e8db-e4d3-4631-a160-6803feae40e1"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 23.89,
+                        "y": 36.5545
+                    },
+                    "uuid": "38b57fb7-7640-44e8-8f39-8e4594fd5012"
+                },
+                {
+                    "description": "8의 PTH 패드[CHG_STAT]U1",
+                    "pos": {
+                        "x": 25.17,
+                        "y": 35.6615
+                    },
+                    "uuid": "6b87d841-342f-4155-8b7f-e1c434caf2d1"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 23.89,
+                        "y": 36.5545
+                    },
+                    "uuid": "38b57fb7-7640-44e8-8f39-8e4594fd5012"
+                },
+                {
+                    "description": "9의 PTH 패드[SPI_SCK]U1",
+                    "pos": {
+                        "x": 25.17,
+                        "y": 33.1215
+                    },
+                    "uuid": "f5a61856-9c77-4fef-8b41-1f2342d4a7a6"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 23.89,
+                        "y": 36.5545
+                    },
+                    "uuid": "38b57fb7-7640-44e8-8f39-8e4594fd5012"
+                },
+                {
+                    "description": "10의 PTH 패드[SPI_MISO]U1",
+                    "pos": {
+                        "x": 25.17,
+                        "y": 30.5815
+                    },
+                    "uuid": "146582f8-414f-41dd-999a-973b5ce60b81"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 23.89,
+                        "y": 36.5545
+                    },
+                    "uuid": "38b57fb7-7640-44e8-8f39-8e4594fd5012"
+                },
+                {
+                    "description": "12의 PTH 패드[+3V3]U1",
+                    "pos": {
+                        "x": 25.17,
+                        "y": 25.5015
+                    },
+                    "uuid": "304bb25b-ea05-440f-bddf-9ee1cdd5a7ae"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 23.89,
+                        "y": 36.5545
+                    },
+                    "uuid": "38b57fb7-7640-44e8-8f39-8e4594fd5012"
+                },
+                {
+                    "description": "13의 PTH 패드[GND]U1",
+                    "pos": {
+                        "x": 25.17,
+                        "y": 22.9615
+                    },
+                    "uuid": "31e6c66a-4fa6-455d-85fa-18bfbf7370e2"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 23.89,
+                        "y": 36.5545
+                    },
+                    "uuid": "38b57fb7-7640-44e8-8f39-8e4594fd5012"
+                },
+                {
+                    "description": "14의 PTH 패드[+5V]U1",
+                    "pos": {
+                        "x": 25.17,
+                        "y": 20.4215
+                    },
+                    "uuid": "0f31ac30-97d5-4893-8c86-9c3b83159be4"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 23.89,
+                        "y": 36.5545
+                    },
+                    "uuid": "38b57fb7-7640-44e8-8f39-8e4594fd5012"
+                },
+                {
+                    "description": "11의 PTH 패드[SPI_MOSI]U1",
+                    "pos": {
+                        "x": 25.17,
+                        "y": 28.0415
+                    },
+                    "uuid": "6661bb8c-a2ad-470a-ac82-01b4bea90b01"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 41.67,
+                        "y": 36.5545
+                    },
+                    "uuid": "c4db2cf3-00d9-4ff7-a622-2f573b70fa9a"
+                },
+                {
+                    "description": "1의 PTH 패드[VIBRATION]U1",
+                    "pos": {
+                        "x": 40.395,
+                        "y": 20.4215
+                    },
+                    "uuid": "9e2df0ba-7d00-4486-8976-ccc776683218"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 41.67,
+                        "y": 36.5545
+                    },
+                    "uuid": "c4db2cf3-00d9-4ff7-a622-2f573b70fa9a"
+                },
+                {
+                    "description": "2의 PTH 패드[BAT_ADC]U1",
+                    "pos": {
+                        "x": 40.395,
+                        "y": 22.9615
+                    },
+                    "uuid": "2f6a24cf-2566-4873-9023-60f51acec069"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 41.67,
+                        "y": 36.5545
+                    },
+                    "uuid": "c4db2cf3-00d9-4ff7-a622-2f573b70fa9a"
+                },
+                {
+                    "description": "3의 PTH 패드[PCF_INT]U1",
+                    "pos": {
+                        "x": 40.395,
+                        "y": 25.5015
+                    },
+                    "uuid": "8610a113-d664-499a-aaae-869959518faa"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 41.67,
+                        "y": 36.5545
+                    },
+                    "uuid": "c4db2cf3-00d9-4ff7-a622-2f573b70fa9a"
+                },
+                {
+                    "description": "4의 PTH 패드[SPI_CS]U1",
+                    "pos": {
+                        "x": 40.395,
+                        "y": 28.0415
+                    },
+                    "uuid": "bff1cd8e-2229-4fbf-8ce5-5127d0fc24aa"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 41.67,
+                        "y": 36.5545
+                    },
+                    "uuid": "c4db2cf3-00d9-4ff7-a622-2f573b70fa9a"
+                },
+                {
+                    "description": "7의 PTH 패드[CC1101_GD0]U1",
+                    "pos": {
+                        "x": 40.395,
+                        "y": 35.6615
+                    },
+                    "uuid": "a3368371-4631-489a-943e-d6e5b287d9f9"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 41.67,
+                        "y": 36.5545
+                    },
+                    "uuid": "c4db2cf3-00d9-4ff7-a622-2f573b70fa9a"
+                },
+                {
+                    "description": "5의 PTH 패드[I2C_SDA]U1",
+                    "pos": {
+                        "x": 40.395,
+                        "y": 30.5815
+                    },
+                    "uuid": "36ff492c-9c8e-41df-9d56-f2c8f74dd6a1"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "세그먼트 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 41.67,
+                        "y": 36.5545
+                    },
+                    "uuid": "c4db2cf3-00d9-4ff7-a622-2f573b70fa9a"
+                },
+                {
+                    "description": "6의 PTH 패드[I2C_SCL]U1",
+                    "pos": {
+                        "x": 40.395,
+                        "y": 33.1215
+                    },
+                    "uuid": "b2754124-2eff-4b38-b409-39acb2632911"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "호 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 25.795,
+                        "y": 36.5545
+                    },
+                    "uuid": "f4ff4bef-330f-48ef-85e5-8e240baf0290"
+                },
+                {
+                    "description": "8의 PTH 패드[CHG_STAT]U1",
+                    "pos": {
+                        "x": 25.17,
+                        "y": 35.6615
+                    },
+                    "uuid": "6b87d841-342f-4155-8b7f-e1c434caf2d1"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Silkscreen clipped by solder mask",
+            "items": [
+                {
+                    "description": "호 of U1 on B.Silkscreen",
+                    "pos": {
+                        "x": 39.764999,
+                        "y": 36.554499
+                    },
+                    "uuid": "eb15c6d5-660f-4986-b326-ebbafa59d709"
+                },
+                {
+                    "description": "7의 PTH 패드[CC1101_GD0]U1",
+                    "pos": {
+                        "x": 40.395,
+                        "y": 35.6615
+                    },
+                    "uuid": "a3368371-4631-489a-943e-d6e5b287d9f9"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_over_copper"
+        },
+        {
+            "description": "Non-Mirrored text on back layer",
+            "items": [
+                {
+                    "description": "PCB 텍스트 '+' (B.Silkscreen)",
+                    "pos": {
+                        "x": 20.0,
+                        "y": 162.25
+                    },
+                    "uuid": "101cf177-008e-46c7-b851-1529dfc9f5b3"
+                }
+            ],
+            "severity": "warning",
+            "type": "nonmirrored_text_on_back_layer"
+        },
+        {
+            "description": "Non-Mirrored text on back layer",
+            "items": [
+                {
+                    "description": "PCB 텍스트 '-' (B.Silkscreen)",
+                    "pos": {
+                        "x": 20.0,
+                        "y": 166.5
+                    },
+                    "uuid": "7b58f5aa-352c-419c-a086-44ec2b3a346b"
+                }
+            ],
+            "severity": "warning",
+            "type": "nonmirrored_text_on_back_layer"
+        }
+    ]
+}

@@ -222,6 +222,7 @@ volatile int64_t g_adc_exit_us  = 0;   /* ADC 읽기 종료 시각 */
  *  락은 **여기 한 곳**에 두는 것이 안전하다. 호출 지점이 늘어도 자동으로 보호되고,
  *  `_fb_flush` 의 바깥 락과 중첩되면 재귀 획득으로 흡수된다(depth 증가).
  *
+ *  ★2026-10-20 아래 판단은 뒤집었다 — 이제 못 잡으면 보내지 않는다(_bbo_write 안 주석).
  *  타임아웃 시 동작: **그냥 전송한다**(건너뛰지 않는다). 락은 겹침 방지용 최적화지,
  *  전송의 전제조건이 아니다. 200ms 나 못 잡았다면 보유자가 이상한 상태라는 뜻인데,
  *  그때 화면을 영구히 멈추는 것보다 한 프레임 깨지는 편이 낫다. 발생 횟수는
@@ -233,7 +234,11 @@ static bool _bbo_write(uint8_t addr7, const uint8_t *buf, size_t len) {
     if (s_i2c_mutex) {
         held = (xSemaphoreTakeRecursive(s_i2c_mutex,
                                         pdMS_TO_TICKS(BBO_LOCK_WAIT_MS)) == pdTRUE);
-        if (!held) g_bbo_lock_to_cnt++;   /* 락 없이 진행 — 위 주석의 판단 근거 */
+        /* ★2026-10-20 못 잡으면 **보내지 않고 실패로 돌려준다** (GPT 재감사 N09 — 위 "그냥 전송한다" 판단을 뒤집음).
+         *  이 버스는 ADC·PCF 와 같은 락으로 직렬화한 뒤에야 고착이 멈췄다(8/11 진범 = 락 구멍). 락 없이 보내면 그 구멍을
+         *  스스로 다시 여는 셈이다. 실패는 호출자가 처리한다 — 페이지 쓰기는 재시도·연속 실패 시 재검출, ON/OFF 명령은
+         *  s_panel_cmd_pending 재시도(F14). 정상 동작에서는 0 이다(g_bbo_lock_to_cnt, [OLEDMON] lockTO). */
+        if (!held) { g_bbo_lock_to_cnt++; return false; }
     }
     _bbo(BBO_SDA, 1); _bbo(BBO_SCL, 1); esp_rom_delay_us(BBO_HALF_US);
     _bbo(BBO_SDA, 0); esp_rom_delay_us(BBO_HALF_US);         /* START */
@@ -1105,6 +1110,9 @@ static bool _oled_try_detect(void) {
      *  얼어붙었다(실측). init 후 잠깐 정착시켜 첫 flush 를 안정화한다. */
     vTaskDelay(pdMS_TO_TICKS(200));
     s_oled_present = true; g_oled_present_mon = true; _shadow_invalidate();
+    /* ★2026-10-20 _oled_panel_init 이 끝에 0xAF(켜기)를 보낸다 — 화면 OFF 상태에서 다시 찾은 경우 패널이 켜진 채
+     *  남지 않게, 지금의 논리 상태 명령을 UI 태스크가 다시 보내게 한다(GPT 재감사 N09, _oled_redetect_tick). */
+    s_panel_cmd_pending = true;
     ESP_LOGI(TAG, "OLED 검출 (addr 0x%02X, 패널 %d×%d) — 표시 활성화", addr, OLED_PANEL_W, OLED_PANEL_H);
     return true;
 }
@@ -1216,6 +1224,37 @@ static void _fb_notice_overlay(void) {
     _fb_draw_string(x, y + 2, s_notice);
 }
 
+/* ★★2026-10-20 OLED 재검출·자동복구 (원래 _fb_flush 안 — GPT 재감사 N09).
+ *  예전엔 화면을 **그릴 때만** 돌았다. 화면 OFF(SCREENSAVER 는 그리지 않음) 동안 패널을 잃으면(고착 → present=false)
+ *  0xAE 도 건너뛰어(oled_ui_set_display_on/UI 태스크의 전송 조건) 패널이 켜진 채 남을 수 있었고, 재검출은 다음에 화면이
+ *  켜져야 돌았다. 이제 UI 태스크가 OFF 회전(5초)에도 부른다. 다시 찾으면 _oled_try_detect 가 s_panel_cmd_pending 을 세워
+ *  지금 논리 상태의 명령(OFF 면 0xAE)을 다시 보낸다. 5초 간격은 그대로(s_oled_last_probe_ms). */
+static void _oled_redetect_tick(void) {
+    if (s_oled_present) return;
+    uint32_t now = _ms_now();
+    if (now - s_oled_last_probe_ms < 5000) return;
+    s_oled_last_probe_ms = now;
+    if (!_oled_try_detect()) {   /* 성공 시 내부에서 s_oled_present=true + 로그 */
+        /* ★2026-07-23 자동복구: 모듈이 "버스는 정상(SDA/SCL 둘 다 HIGH)인데
+         *  응답만 안 하는" 상태로 고착되는 현상이 실기에서 반복 확인됐다
+         *  (화면이 마지막 프레임에 멈춤). 원인은 슬레이브 I2C 상태머신 고착.
+         *  실측: 표준 9클럭+STOP 복구를 **반복**하면 전원차단 없이 되살아난다
+         *  (1회로는 안 풀리는 경우가 있어 재검출 실패마다 시도).
+         *  검출 실패 시에만 수행하므로 정상 버스를 건드리지 않는다
+         *  (과거 "idle 버스에 쓰면 해로웠다"는 지적을 이 조건으로 회피). */
+        s_oled_recover_tries++;
+        _oled_i2c_bus_recover();
+        if ((s_oled_recover_tries % 6) == 1) {   /* 30초마다 1회만 로그 */
+            ESP_LOGW(TAG, "[OLED] 검출 실패 %u회 → 9클럭 버스복구 시도 중"
+                          " (모듈 고착 자동해제)", (unsigned)s_oled_recover_tries);
+        }
+    } else if (s_oled_recover_tries) {
+        ESP_LOGW(TAG, "[OLED] ★버스복구 성공 — %u회 시도 후 모듈 재검출됨",
+                 (unsigned)s_oled_recover_tries);
+        s_oled_recover_tries = 0;
+    }
+}
+
 static void _fb_flush(void) {
     _fb_notice_overlay();          /* ★전송 직전에 얹는다 (위 주석의 ③) */
     /* ★RF 송신 중에는 I2C 를 아예 건드리지 않는다(모듈 고착 방지 — 위 주석 참조).
@@ -1237,30 +1276,9 @@ static void _fb_flush(void) {
 #endif
     if (!s_oled_present) {
         /* OLED 미검출: ssd1306_display_image 호출 안 함 → I2C NACK 로그 스팸 차단.
-         * 5초마다 1회 재검출(0x3C/0x3D) → 나중에 연결하면 자동 활성화(hot-plug). */
-        uint32_t now = _ms_now();
-        if (now - s_oled_last_probe_ms >= 5000) {
-            s_oled_last_probe_ms = now;
-            if (!_oled_try_detect()) {   /* 성공 시 내부에서 s_oled_present=true + 로그 */
-                /* ★2026-07-23 자동복구: 모듈이 "버스는 정상(SDA/SCL 둘 다 HIGH)인데
-                 *  응답만 안 하는" 상태로 고착되는 현상이 실기에서 반복 확인됐다
-                 *  (화면이 마지막 프레임에 멈춤). 원인은 슬레이브 I2C 상태머신 고착.
-                 *  실측: 표준 9클럭+STOP 복구를 **반복**하면 전원차단 없이 되살아난다
-                 *  (1회로는 안 풀리는 경우가 있어 재검출 실패마다 시도).
-                 *  검출 실패 시에만 수행하므로 정상 버스를 건드리지 않는다
-                 *  (과거 "idle 버스에 쓰면 해로웠다"는 지적을 이 조건으로 회피). */
-                s_oled_recover_tries++;
-                _oled_i2c_bus_recover();
-                if ((s_oled_recover_tries % 6) == 1) {   /* 30초마다 1회만 로그 */
-                    ESP_LOGW(TAG, "[OLED] 검출 실패 %u회 → 9클럭 버스복구 시도 중"
-                                  " (모듈 고착 자동해제)", (unsigned)s_oled_recover_tries);
-                }
-            } else if (s_oled_recover_tries) {
-                ESP_LOGW(TAG, "[OLED] ★버스복구 성공 — %u회 시도 후 모듈 재검출됨",
-                         (unsigned)s_oled_recover_tries);
-                s_oled_recover_tries = 0;
-            }
-        }
+         * 5초마다 1회 재검출(0x3C/0x3D) → 나중에 연결하면 자동 활성화(hot-plug).
+         * ★2026-10-20 재검출 본문은 _oled_redetect_tick 으로 옮겼다 — 화면 OFF(그리지 않음)에서도 부르려고. */
+        _oled_redetect_tick();
         return;
     }
     oled_ui_i2c_lock();   /* 공유 HW I2C: flush 동안 PCF8574 read 가 끼어들지 못하게 직렬화 */
@@ -2944,6 +2962,9 @@ static void _ui_task(void *pvParam)
          *  (렌더 자체는 위에서 이미 dirty-page 로 전송을 안 하지만, 20fps 로 깨어나는
          *   것만으로도 light sleep 진입을 방해한다 — 배터리 모드에서 특히 손해.) */
         g_wake_iter[WI_OLED]++;        /* ★깨어남 출처 계측 */
+        /* ★2026-10-20 화면 OFF(SCREENSAVER 는 그리지 않아 _fb_flush 가 안 돈다)에서도 패널 재검출 — 잃은 패널이 켜진 채
+         *  남지 않게(GPT 재감사 N09). 검출돼 있으면 바로 돌아오고, 아니면 5초에 한 번(_oled_redetect_tick). */
+        _oled_redetect_tick();
         /* ★2026-10-18 ON/OFF 명령이 실패한 채면 패널 상태가 논리 상태와 어긋나 있다 — 맞을 때까지 재시도
          *  (oled_ui_set_display_on 주석, 감사 F14). 평소엔 이 조건이 거짓이라 비용이 없다.
          *  ★2026-10-18 F13 요청(sync_req)도 여기서 보낸다 — 위 렌더가 끝난 뒤라 켤 때 새 화면이 바로 보인다.

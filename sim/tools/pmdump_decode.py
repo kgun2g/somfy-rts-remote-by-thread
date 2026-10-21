@@ -19,6 +19,14 @@ esp_pm 카운터는 **부팅 기준 누적**이고 `Time since boot up` 에는 �
 고정으로 쓰므로(REGDMA 382+480 · 발진기 재교정 194 · LP/HP 기상대기 1796 · 도메인
 동기 150 µs), 평균 절전 길이가 이보다 짧으면 **자는 시간보다 자러 가는 비용이 크다**.
 봐야 할 것은 **초당 절전 횟수**다.
+★2026-10-20 정정(GPT 재감사 N05): 위 2.5ms 는 IDF 상수를 더한 **추정치**이고 실측이 아니다. 또 그 전환 구간은
+esp_light_sleep_start() 호출 경과 = SLEEP 모드 시간 **안에 이미 들어 있다** — sleep 시간 밖에 따로 더하면 중복이다.
+그래서 "전환비용이 벽시계의 X%" 같은 비율은 더 이상 찍지 않고, mA 로 환산하지도 않는다(횟수·길이 비교용으로만).
+
+★2026-10-20 (GPT 재감사 N03) 기준점을 **방전 세션마다** 다시 잡는다 — 옛 판은 "부팅 후 첫 배터리 저장"이라
+한 부팅 안에서 USB 를 두 번 뺐다 꽂으면 앞 세션·USB 구간이 섞였다(20:10 COM7: PM 창 3,337초 ≠ batlog 2,652초).
+새 판은 sess0/t0(기준점이 찍힌 batlog 세션·세션 경과초), sess1/t1(마지막 저장)을 같이 남긴다.
+sess0 ≠ sess1 이면 두 스냅샷이 다른 세션이라 차분을 믿지 않는다. 저장 주기는 300초 + 세션 시작·끝.
 
     esptool ... read_flash 0x10000 0xC000 nvs.bin
     python sim/tools/pmdump_decode.py nvs.bin
@@ -61,7 +69,11 @@ def _ints(line):
 
 def _snap(txt):
     """덤프 텍스트 → {boot_us, sleep_us, ls_cnt, ls_rej, locks{name:(count,us)}}"""
-    d = {'boot_us': 0, 'sleep_us': 0, 'ls_cnt': 0, 'ls_rej': 0, 'locks': {}}
+    # ★2026-10-21 has_sleep: esp_pm_dump_locks 는 light sleep 이 **꺼져 있는 순간**에는 SLEEP 줄·Sleep stats 를
+    #  아예 안 찍는다. 10/20 판은 세션 끝 저장을 USB 연결 뒤(light sleep 끈 뒤)에 해서 그런 덤프가 남았다 —
+    #  그걸 0 으로 읽으면 "절전 0" 이라는 거짓 결론이 된다(10/21 실기에서 그렇게 찍혔다).
+    d = {'boot_us': 0, 'sleep_us': 0, 'ls_cnt': 0, 'ls_rej': 0, 'locks': {},
+         'has_sleep': 'light_sleep_counts' in txt}
     m = re.search(r'Time since boot up:\s*(\d+)\s*us', txt)
     if m:
         d['boot_us'] = int(m.group(1))
@@ -90,7 +102,7 @@ def _report(a, b, real_delta=True):
     """a=배터리 진입 시점(locks0), b=마지막(locks). 차분을 사람 말로 푼다."""
     wall = (b['boot_us'] - a['boot_us']) / 1e6
     if wall <= 0:
-        print('※ locks0 와 locks 의 시각이 같다 — 배터리 구간이 60초 미만이다.')
+        print('※ locks0 와 locks 의 시각이 같다 — 세션이 시작만 되고 다음 저장(300초 또는 세션 끝)이 없었다.')
         return
     cnt = b['ls_cnt'] - a['ls_cnt']
     rej = b['ls_rej'] - a['ls_rej']
@@ -100,20 +112,27 @@ def _report(a, b, real_delta=True):
     else:
         print('=== [주의] 부팅 전체 기준 (locks0 없음 - 배터리 구간 아님) ===')
     print('  창 길이        : %.1f분 (%.2f시간)' % (wall / 60, wall / 3600))
+    if not (a.get('has_sleep', True) and b.get('has_sleep', True)):
+        print('  ★★절전 통계를 알 수 없다 — %s 덤프가 light sleep 이 꺼진 순간에 찍혀 SLEEP 줄이 없다.'
+              % ('마지막(locks)' if a.get('has_sleep', True) else '기준점(locks0)'))
+        print('     (10/20 판의 세션 끝 저장이 USB 연결 뒤였다. 절전 횟수는 batlog 의 ls_cnt/ls_rjs/ls_rjh 로 볼 것.)')
+        return
     if cnt <= 0:
         print('  ※ 절전 횟수 증가 0 — light sleep 이 걸리지 않았다.')
         return
     per = slp / cnt * 1000.0                      # 회당 평균 절전(ms)
     rate = cnt / wall
-    overhead = rate * SLEEP_FIXED_COST_US / 1e6   # 전환비용이 차지하는 벽시계 비율
-    print('  ★초당 절전 횟수: %.1f회/초   (총 %d회, 거부 %d회)' % (rate, cnt, rej))
+    att = cnt + rej
+    print('  ★초당 절전 횟수: %.1f회/초   (성공 %d회, 거부 %d회 = 시도의 %.1f%%)'
+          % (rate, cnt, rej, 100.0 * rej / att if att else 0))
     print('  sleep 체류율    : %.1f%%   깨어있음 %.1f%%' % (100 * slp / wall,
                                                             100 * (1 - slp / wall)))
     print('  회당 평균 절전  : %.2f ms' % per)
-    print('  회당 고정비용   : %.2f ms  (C6 하드웨어 전환 — 위 머리말)' % (SLEEP_FIXED_COST_US / 1000))
-    print('  → 전환비용이 벽시계의 %.0f%% 를 먹는다' % (100 * overhead))
+    # ★2026-10-20 (N05) 벽시계 비율·mA 환산 삭제 — 2.52ms 는 추정치이고 SLEEP 시간 안에 이미 들어 있다(머리말).
+    print('  참고: IDF 상수로 추정한 회당 전환 구간 ~%.2f ms (실측 아님, SLEEP 시간에 포함 — 따로 더하지 말 것)'
+          % (SLEEP_FIXED_COST_US / 1000))
     if per < SLEEP_FIXED_COST_US / 1000:
-        print('  ★★자는 시간(%.2fms)보다 자러 가는 비용(%.2fms)이 크다 — 절약이 사실상 0.'
+        print('  ★회당 평균 절전(%.2fms)이 추정 전환 구간(~%.2fms)보다 짧다 — 실제로 낮은 전류에 머문 시간이 거의 없을 수 있다.'
               % (per, SLEEP_FIXED_COST_US / 1000))
     print()
     print('  락별 증가(횟수 / 보유 µs):')
@@ -131,10 +150,21 @@ def main(path):
     txt = _get(items, 'locks')
     txt0 = _get(items, 'locks0')
     if not txt:
-        print('pmdump/locks 가 없다 — 배터리 구동 중 60초 주기로 저장된다.')
-        print('USB 를 뺀 채 최소 1분 이상 두었다가 다시 연결해 덤프할 것.')
+        print('pmdump/locks 가 없다 — 배터리 방전 세션 시작·끝과 그 사이 300초마다 저장된다(10/20 이전 판은 60초).')
+        print('USB 를 뺀 채 1분 이상(세션 시작까지 ~25초) 두었다가 다시 연결해 덤프할 것.')
         return 1
     if txt0:
+        # ★2026-10-20 (N03) 두 스냅샷이 같은 batlog 세션인지 먼저 본다 — 옛 판은 이 키가 없다.
+        s0, s1 = _get_u32(items, 'sess0'), _get_u32(items, 'sess1')
+        t0, t1 = _get_u32(items, 't0'), _get_u32(items, 't1')
+        if s0 is None or s1 is None:
+            print('*** 옛 판 기록(sess0/sess1 없음) — locks0 는 "부팅 후 첫 배터리 저장"이라 한 부팅 안의')
+            print('    다른 세션·USB 구간이 섞였을 수 있다(N03). batlog 세션 경과와 창 길이를 맞대 볼 것.')
+        elif s0 != s1:
+            print('*** ★★locks0(세션 #%d) 와 locks(세션 #%d) 가 **다른 세션**이다 — 아래 차분은 믿지 말 것.' % (s0, s1))
+        else:
+            print('세션 #%d 의 경과 %d초 ~ %d초 구간 (batlog 세션 경과와 같은 축)' % (s0, t0 or 0, t1 or 0))
+            print('  ※재부팅으로 이어받은 세션이면 t0 가 0 이 아니다 — esp_pm 카운터가 그 부팅에서 0 부터라 기준점도 거기서 다시 잡혔다.')
         _report(_snap(txt0), _snap(txt))
         print()
     else:

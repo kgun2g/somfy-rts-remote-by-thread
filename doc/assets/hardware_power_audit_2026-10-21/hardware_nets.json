@@ -1,0 +1,3749 @@
+{
+  "components": {
+    "BAT1": {
+      "value": "BAT",
+      "footprint": "Connector_JST:JST_GH_SM02B-GHS-TB_1x02-1MP_P1.25mm_Horizontal",
+      "datasheet": null,
+      "pins": {
+        "1": {
+          "net": "BAT+",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "BAT-",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C1": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "datasheet": "https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf",
+      "pins": {
+        "1": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "GND",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C2": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "datasheet": "https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf",
+      "pins": {
+        "1": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "GND",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C3": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "datasheet": "https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf",
+      "pins": {
+        "1": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "GND",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C4": {
+      "value": "10uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "datasheet": "https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf",
+      "pins": {
+        "1": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "GND",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C5": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "datasheet": "https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf",
+      "pins": {
+        "1": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "GND",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C6": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "datasheet": "https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf",
+      "pins": {
+        "1": {
+          "net": "BAT_ADC",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "GND",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C7": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "datasheet": "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf",
+      "pins": {
+        "1": {
+          "net": "BAT+",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "BAT-",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C8": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "datasheet": "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf",
+      "pins": {
+        "1": {
+          "net": "BAT+",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "BAT-",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C9": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "datasheet": "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf",
+      "pins": {
+        "1": {
+          "net": "BAT+",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "BAT-",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C10": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "datasheet": "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf",
+      "pins": {
+        "1": {
+          "net": "BAT+",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "BAT-",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "C11": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "datasheet": "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf",
+      "pins": {
+        "1": {
+          "net": "BAT+",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "BAT-",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "DOWN1": {
+      "value": "BTN_DOWN",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "datasheet": null,
+      "pins": {
+        "2": {
+          "net": "BTN_DOWN",
+          "name": "B_2",
+          "type": "passive"
+        },
+        "1": {
+          "net": "GND",
+          "name": "A_1",
+          "type": "passive"
+        }
+      }
+    },
+    "ENC1": {
+      "value": "SIQ-02FVS3",
+      "footprint": "siq:SIQ-02FVS3",
+      "datasheet": null,
+      "pins": {
+        "1": {
+          "net": "GND",
+          "name": "EH_1",
+          "type": "unspecified"
+        },
+        "2": {
+          "net": "GND",
+          "name": "EH_2",
+          "type": "unspecified"
+        },
+        "3": {
+          "net": "GND",
+          "name": "EH_3",
+          "type": "unspecified"
+        },
+        "4": {
+          "net": "GND",
+          "name": "EH_4",
+          "type": "unspecified"
+        },
+        "5": {
+          "net": "GND",
+          "name": "EH_5",
+          "type": "unspecified"
+        },
+        "6": {
+          "net": "GND",
+          "name": "EH_6",
+          "type": "unspecified"
+        },
+        "C": {
+          "net": "GND",
+          "name": "C_C",
+          "type": "unspecified"
+        },
+        "A": {
+          "net": "ROT_A",
+          "name": "A_A",
+          "type": "unspecified"
+        },
+        "B": {
+          "net": "ROT_B",
+          "name": "B_B",
+          "type": "unspecified"
+        },
+        "S": {
+          "net": "ROT_SW",
+          "name": "S_S",
+          "type": "unspecified"
+        }
+      }
+    },
+    "LEFT1": {
+      "value": "BTN_LEFT",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "datasheet": null,
+      "pins": {
+        "2": {
+          "net": "BTN_LEFT",
+          "name": "B_2",
+          "type": "passive"
+        },
+        "1": {
+          "net": "GND",
+          "name": "A_1",
+          "type": "passive"
+        }
+      }
+    },
+    "PROG1": {
+      "value": "BTN_PROG",
+      "footprint": "Button_Switch_SMD:SW_SPST_TL3342",
+      "datasheet": null,
+      "pins": {
+        "2": {
+          "net": "BTN_PROG",
+          "name": "B_2",
+          "type": "passive"
+        },
+        "1": {
+          "net": "GND",
+          "name": "A_1",
+          "type": "passive"
+        }
+      }
+    },
+    "R1": {
+      "value": "4.7k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "datasheet": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+      "pins": {
+        "2": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "1": {
+          "net": "LP_I2C_SCL",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "R2": {
+      "value": "4.7k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "datasheet": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+      "pins": {
+        "2": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "1": {
+          "net": "LP_I2C_SDA",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "R3": {
+      "value": "10k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "datasheet": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+      "pins": {
+        "2": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "1": {
+          "net": "PCF_INT",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "R4": {
+      "value": "100k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "datasheet": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+      "pins": {
+        "1": {
+          "net": "BAT+",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "BAT_ADC",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "R5": {
+      "value": "100k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "datasheet": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+      "pins": {
+        "1": {
+          "net": "BAT_ADC",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "GND",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "R6": {
+      "value": "100k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "datasheet": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+      "pins": {
+        "1": {
+          "net": "+5V",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "CHG_STAT",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "R7": {
+      "value": "150k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "datasheet": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+      "pins": {
+        "1": {
+          "net": "CHG_STAT",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "GND",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "R8": {
+      "value": "4.7k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "datasheet": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+      "pins": {
+        "1": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "I2C_SCL",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "R9": {
+      "value": "4.7k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "datasheet": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+      "pins": {
+        "1": {
+          "net": "+3V3",
+          "name": null,
+          "type": "passive"
+        },
+        "2": {
+          "net": "I2C_SDA",
+          "name": null,
+          "type": "passive"
+        }
+      }
+    },
+    "RIGHT1": {
+      "value": "BTN_RIGHT",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "datasheet": null,
+      "pins": {
+        "2": {
+          "net": "BTN_RIGHT",
+          "name": "B_2",
+          "type": "passive"
+        },
+        "1": {
+          "net": "GND",
+          "name": "A_1",
+          "type": "passive"
+        }
+      }
+    },
+    "SELECT1": {
+      "value": "BTN_SELECT",
+      "footprint": "Button_Switch_SMD:SW_SPST_TL3342",
+      "datasheet": null,
+      "pins": {
+        "2": {
+          "net": "BTN_SELECT",
+          "name": "B_2",
+          "type": "passive"
+        },
+        "1": {
+          "net": "GND",
+          "name": "A_1",
+          "type": "passive"
+        }
+      }
+    },
+    "SETUP1": {
+      "value": "BTN_SETUP",
+      "footprint": "Button_Switch_SMD:SW_SPST_TL3342",
+      "datasheet": null,
+      "pins": {
+        "2": {
+          "net": "BTN_SETUP",
+          "name": "B_2",
+          "type": "passive"
+        },
+        "1": {
+          "net": "GND",
+          "name": "A_1",
+          "type": "passive"
+        }
+      }
+    },
+    "STOP1": {
+      "value": "BTN_STOP",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "datasheet": null,
+      "pins": {
+        "2": {
+          "net": "BTN_STOP",
+          "name": "B_2",
+          "type": "passive"
+        },
+        "1": {
+          "net": "GND",
+          "name": "A_1",
+          "type": "passive"
+        }
+      }
+    },
+    "SW_I2C1": {
+      "value": "CAS-220TB1",
+      "footprint": "CAS:CAS-220TB1",
+      "datasheet": "file://D:\\dev\\workspaces\\somfy-blinds-things-by-claude\\kicad\\libs\\cas\\CAS-220TB1.pdf",
+      "pins": {
+        "4": {
+          "net": "I2C_SCL",
+          "name": "4_4",
+          "type": "unspecified"
+        },
+        "1": {
+          "net": "I2C_SDA",
+          "name": "1_1",
+          "type": "unspecified"
+        },
+        "6": {
+          "net": "LP_I2C_SCL",
+          "name": "6_6",
+          "type": "unspecified"
+        },
+        "3": {
+          "net": "LP_I2C_SDA",
+          "name": "3_3",
+          "type": "unspecified"
+        },
+        "5": {
+          "net": "SW_I2C_SCL",
+          "name": "5_5",
+          "type": "unspecified"
+        },
+        "2": {
+          "net": "SW_I2C_SDA",
+          "name": "2_2",
+          "type": "unspecified"
+        }
+      }
+    },
+    "U1": {
+      "value": "XIAO-ESP32-C6-SMD_HOLE",
+      "footprint": "xiao:XIAO-ESP32-C6-SMD_HOLE",
+      "datasheet": "https://www.espressif.com/sites/default/files/documentation/esp32-h2_datasheet_en.pdf",
+      "pins": {
+        "12": {
+          "net": "+3V3",
+          "name": "3V3_12",
+          "type": "passive"
+        },
+        "22": {
+          "net": "+3V3",
+          "name": "3V3_22",
+          "type": "passive"
+        },
+        "14": {
+          "net": "+5V",
+          "name": "VBUS_14",
+          "type": "passive"
+        },
+        "23": {
+          "net": "BAT+",
+          "name": "BAT_23",
+          "type": "passive"
+        },
+        "24": {
+          "net": "BAT-",
+          "name": "GND_24",
+          "type": "passive"
+        },
+        "2": {
+          "net": "BAT_ADC",
+          "name": "GPIO1_A1_D1_2",
+          "type": "passive"
+        },
+        "7": {
+          "net": "CC1101_GD0",
+          "name": "GPIO16_D6_TX_7",
+          "type": "passive"
+        },
+        "8": {
+          "net": "CHG_STAT",
+          "name": "GPIO17_D7_RX_8",
+          "type": "passive"
+        },
+        "13": {
+          "net": "GND",
+          "name": "GND_13",
+          "type": "passive"
+        },
+        "18": {
+          "net": "GND",
+          "name": "GND_18",
+          "type": "passive"
+        },
+        "6": {
+          "net": "I2C_SCL",
+          "name": "GPIO23_D5_SCL_6",
+          "type": "passive"
+        },
+        "5": {
+          "net": "I2C_SDA",
+          "name": "GPIO22_D4_SDA_5",
+          "type": "passive"
+        },
+        "16": {
+          "net": "LP_I2C_SCL",
+          "name": "GPIO7_MTDO_16",
+          "type": "passive"
+        },
+        "20": {
+          "net": "LP_I2C_SDA",
+          "name": "GPIO6_MTCK_20",
+          "type": "passive"
+        },
+        "3": {
+          "net": "PCF_INT",
+          "name": "GPIO2_A2_D2_3",
+          "type": "passive"
+        },
+        "4": {
+          "net": "SPI_CS",
+          "name": "GPIO21_D3_4",
+          "type": "passive"
+        },
+        "10": {
+          "net": "SPI_MISO",
+          "name": "GPIO20_D9_MISO_10",
+          "type": "passive"
+        },
+        "11": {
+          "net": "SPI_MOSI",
+          "name": "GPIO18_D10_MOSI_11",
+          "type": "passive"
+        },
+        "9": {
+          "net": "SPI_SCK",
+          "name": "GPIO19_D8_SCK_9",
+          "type": "passive"
+        },
+        "1": {
+          "net": "VIBRATION",
+          "name": "GPIO0_A0_D0_1",
+          "type": "passive"
+        },
+        "17": {
+          "net": "unconnected-(U1-CHIP_EN-Pad17)",
+          "name": "CHIP_EN_17",
+          "type": "passive+no_connect"
+        },
+        "19": {
+          "net": "unconnected-(U1-GPIO4_MTMS-Pad19)",
+          "name": "GPIO4_MTMS_19",
+          "type": "passive+no_connect"
+        },
+        "15": {
+          "net": "unconnected-(U1-GPIO5_MTDI-Pad15)",
+          "name": "GPIO5_MTDI_15",
+          "type": "passive+no_connect"
+        },
+        "21": {
+          "net": "unconnected-(U1-GPIO9_BOOT-Pad21)",
+          "name": "GPIO9_BOOT_21",
+          "type": "passive+no_connect"
+        }
+      }
+    },
+    "U2": {
+      "value": "OLED 0.96\" I2C",
+      "footprint": "SomfyBlinds:OLED_0.96_I2C_4PIN_NOHOLE",
+      "datasheet": "kicad-embed://128x64_oled_4pin.png",
+      "pins": {
+        "2": {
+          "net": "+3V3",
+          "name": "VCC_2",
+          "type": "power_in"
+        },
+        "1": {
+          "net": "GND",
+          "name": "GND_1",
+          "type": "power_in"
+        },
+        "3": {
+          "net": "I2C_SCL",
+          "name": "SCL_3",
+          "type": "input"
+        },
+        "4": {
+          "net": "I2C_SDA",
+          "name": "SDA_4",
+          "type": "bidirectional"
+        }
+      }
+    },
+    "U3": {
+      "value": "PCF8575DBR",
+      "footprint": "Package_SO:SSOP-24_5.3x8.2mm_P0.65mm",
+      "datasheet": "https://www.ti.com/lit/ds/symlink/pcf8575.pdf",
+      "pins": {
+        "24": {
+          "net": "+3V3",
+          "name": "VCC_24",
+          "type": "power_in"
+        },
+        "9": {
+          "net": "BTN_DOWN",
+          "name": "P5_9",
+          "type": "bidirectional"
+        },
+        "13": {
+          "net": "BTN_LEFT",
+          "name": "P10_13",
+          "type": "bidirectional"
+        },
+        "11": {
+          "net": "BTN_PROG",
+          "name": "P7_11",
+          "type": "bidirectional"
+        },
+        "14": {
+          "net": "BTN_RIGHT",
+          "name": "P11_14",
+          "type": "bidirectional"
+        },
+        "10": {
+          "net": "BTN_SELECT",
+          "name": "P6_10",
+          "type": "bidirectional"
+        },
+        "7": {
+          "net": "BTN_SETUP",
+          "name": "P3_7",
+          "type": "bidirectional"
+        },
+        "6": {
+          "net": "BTN_STOP",
+          "name": "P2_6",
+          "type": "bidirectional"
+        },
+        "8": {
+          "net": "BTN_UP",
+          "name": "P4_8",
+          "type": "bidirectional"
+        },
+        "12": {
+          "net": "GND",
+          "name": "GND_12",
+          "type": "power_in"
+        },
+        "2": {
+          "net": "GND",
+          "name": "A1_2",
+          "type": "input"
+        },
+        "21": {
+          "net": "GND",
+          "name": "A0_21",
+          "type": "input"
+        },
+        "3": {
+          "net": "GND",
+          "name": "A2_3",
+          "type": "input"
+        },
+        "1": {
+          "net": "PCF_INT",
+          "name": "~{INT}_1",
+          "type": "open_collector"
+        },
+        "4": {
+          "net": "ROT_A",
+          "name": "P0_4",
+          "type": "bidirectional"
+        },
+        "5": {
+          "net": "ROT_B",
+          "name": "P1_5",
+          "type": "bidirectional"
+        },
+        "15": {
+          "net": "ROT_SW",
+          "name": "P12_15",
+          "type": "bidirectional"
+        },
+        "22": {
+          "net": "SW_I2C_SCL",
+          "name": "SCL_22",
+          "type": "input"
+        },
+        "23": {
+          "net": "SW_I2C_SDA",
+          "name": "SDA_23",
+          "type": "bidirectional"
+        },
+        "16": {
+          "net": "unconnected-(U3-P13-Pad16)",
+          "name": "P13_16",
+          "type": "bidirectional+no_connect"
+        },
+        "17": {
+          "net": "unconnected-(U3-P14-Pad17)",
+          "name": "P14_17",
+          "type": "bidirectional+no_connect"
+        },
+        "18": {
+          "net": "unconnected-(U3-P15-Pad18)",
+          "name": "P15_18",
+          "type": "bidirectional+no_connect"
+        },
+        "19": {
+          "net": "unconnected-(U3-P16-Pad19)",
+          "name": "P16_19",
+          "type": "bidirectional+no_connect"
+        },
+        "20": {
+          "net": "unconnected-(U3-P17-Pad20)",
+          "name": "P17_20",
+          "type": "bidirectional+no_connect"
+        }
+      }
+    },
+    "U5": {
+      "value": "E07-400MM10S",
+      "footprint": "cc1101:E07-400MM10S",
+      "datasheet": "kicad-embed://E07-400MM10S_E07-900MM10S_UserManual_EN_v1.0.pdf",
+      "pins": {
+        "1": {
+          "net": "+3V3",
+          "name": "VCC_1",
+          "type": "power_in"
+        },
+        "6": {
+          "net": "ANT_447M",
+          "name": "ANT_6",
+          "type": "bidirectional"
+        },
+        "18": {
+          "net": "CC1101_GD0",
+          "name": "GD00_18",
+          "type": "bidirectional"
+        },
+        "16": {
+          "net": "GND",
+          "name": "GND_16",
+          "type": "power_in"
+        },
+        "2": {
+          "net": "GND",
+          "name": "GND_2",
+          "type": "power_in"
+        },
+        "7": {
+          "net": "GND",
+          "name": "GND_7",
+          "type": "power_in"
+        },
+        "14": {
+          "net": "SPI_CS",
+          "name": "CSN_14",
+          "type": "input"
+        },
+        "12": {
+          "net": "SPI_MISO",
+          "name": "MISO/GD01_12",
+          "type": "output"
+        },
+        "13": {
+          "net": "SPI_MOSI",
+          "name": "MOSI_13",
+          "type": "input"
+        },
+        "15": {
+          "net": "SPI_SCK",
+          "name": "SCK_15",
+          "type": "input"
+        },
+        "20": {
+          "net": "unconnected-(U5-GD02-Pad20)",
+          "name": "GD02_20",
+          "type": "bidirectional+no_connect"
+        },
+        "3": {
+          "net": "unconnected-(U5-NC-Pad3)",
+          "name": "NC_3",
+          "type": "no_connect"
+        },
+        "4": {
+          "net": "unconnected-(U5-NC-Pad4)",
+          "name": "NC_4",
+          "type": "no_connect"
+        },
+        "5": {
+          "net": "unconnected-(U5-NC-Pad5)",
+          "name": "NC_5",
+          "type": "no_connect"
+        },
+        "8": {
+          "net": "unconnected-(U5-NC-Pad8)",
+          "name": "NC_8",
+          "type": "no_connect"
+        },
+        "9": {
+          "net": "unconnected-(U5-NC-Pad9)",
+          "name": "NC_9",
+          "type": "no_connect"
+        },
+        "10": {
+          "net": "unconnected-(U5-NC-Pad10)",
+          "name": "NC_10",
+          "type": "no_connect"
+        },
+        "11": {
+          "net": "unconnected-(U5-NC-Pad11)",
+          "name": "NC_11",
+          "type": "no_connect"
+        },
+        "17": {
+          "net": "unconnected-(U5-NC-Pad17)",
+          "name": "NC_17",
+          "type": "no_connect"
+        },
+        "19": {
+          "net": "unconnected-(U5-NC-Pad19)",
+          "name": "NC_19",
+          "type": "no_connect"
+        }
+      }
+    },
+    "UP1": {
+      "value": "BTN_UP",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "datasheet": null,
+      "pins": {
+        "2": {
+          "net": "BTN_UP",
+          "name": "B_2",
+          "type": "passive"
+        },
+        "1": {
+          "net": "GND",
+          "name": "A_1",
+          "type": "passive"
+        }
+      }
+    },
+    "VS1": {
+      "value": "C06",
+      "footprint": "SomfyBlinds:Vibration_SMD_0805_2012Metric",
+      "datasheet": "kicad-embed://C06_C08_VIE.png",
+      "pins": {
+        "2": {
+          "net": "GND",
+          "name": "A_2",
+          "type": "passive"
+        },
+        "1": {
+          "net": "VIBRATION",
+          "name": "K_1",
+          "type": "passive"
+        }
+      }
+    }
+  },
+  "nets": {
+    "+3V3": [
+      {
+        "ref": "C1",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C2",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C3",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C4",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C5",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R1",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R2",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R3",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R8",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R9",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "12",
+        "pinfunction": "3V3_12",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "22",
+        "pinfunction": "3V3_22",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U2",
+        "pin": "2",
+        "pinfunction": "VCC_2",
+        "pintype": "power_in"
+      },
+      {
+        "ref": "U3",
+        "pin": "24",
+        "pinfunction": "VCC_24",
+        "pintype": "power_in"
+      },
+      {
+        "ref": "U5",
+        "pin": "1",
+        "pinfunction": "VCC_1",
+        "pintype": "power_in"
+      }
+    ],
+    "+5V": [
+      {
+        "ref": "R6",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "14",
+        "pinfunction": "VBUS_14",
+        "pintype": "passive"
+      }
+    ],
+    "ANT_447M": [
+      {
+        "ref": "U5",
+        "pin": "6",
+        "pinfunction": "ANT_6",
+        "pintype": "bidirectional"
+      }
+    ],
+    "BAT+": [
+      {
+        "ref": "BAT1",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C10",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C11",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C7",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C8",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C9",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R4",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "23",
+        "pinfunction": "BAT_23",
+        "pintype": "passive"
+      }
+    ],
+    "BAT-": [
+      {
+        "ref": "BAT1",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C10",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C11",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C7",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C8",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C9",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "24",
+        "pinfunction": "GND_24",
+        "pintype": "passive"
+      }
+    ],
+    "BAT_ADC": [
+      {
+        "ref": "C6",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R4",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R5",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "2",
+        "pinfunction": "GPIO1_A1_D1_2",
+        "pintype": "passive"
+      }
+    ],
+    "BTN_DOWN": [
+      {
+        "ref": "DOWN1",
+        "pin": "2",
+        "pinfunction": "B_2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U3",
+        "pin": "9",
+        "pinfunction": "P5_9",
+        "pintype": "bidirectional"
+      }
+    ],
+    "BTN_LEFT": [
+      {
+        "ref": "LEFT1",
+        "pin": "2",
+        "pinfunction": "B_2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U3",
+        "pin": "13",
+        "pinfunction": "P10_13",
+        "pintype": "bidirectional"
+      }
+    ],
+    "BTN_PROG": [
+      {
+        "ref": "PROG1",
+        "pin": "2",
+        "pinfunction": "B_2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U3",
+        "pin": "11",
+        "pinfunction": "P7_11",
+        "pintype": "bidirectional"
+      }
+    ],
+    "BTN_RIGHT": [
+      {
+        "ref": "RIGHT1",
+        "pin": "2",
+        "pinfunction": "B_2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U3",
+        "pin": "14",
+        "pinfunction": "P11_14",
+        "pintype": "bidirectional"
+      }
+    ],
+    "BTN_SELECT": [
+      {
+        "ref": "SELECT1",
+        "pin": "2",
+        "pinfunction": "B_2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U3",
+        "pin": "10",
+        "pinfunction": "P6_10",
+        "pintype": "bidirectional"
+      }
+    ],
+    "BTN_SETUP": [
+      {
+        "ref": "SETUP1",
+        "pin": "2",
+        "pinfunction": "B_2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U3",
+        "pin": "7",
+        "pinfunction": "P3_7",
+        "pintype": "bidirectional"
+      }
+    ],
+    "BTN_STOP": [
+      {
+        "ref": "STOP1",
+        "pin": "2",
+        "pinfunction": "B_2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U3",
+        "pin": "6",
+        "pinfunction": "P2_6",
+        "pintype": "bidirectional"
+      }
+    ],
+    "BTN_UP": [
+      {
+        "ref": "U3",
+        "pin": "8",
+        "pinfunction": "P4_8",
+        "pintype": "bidirectional"
+      },
+      {
+        "ref": "UP1",
+        "pin": "2",
+        "pinfunction": "B_2",
+        "pintype": "passive"
+      }
+    ],
+    "CC1101_GD0": [
+      {
+        "ref": "U1",
+        "pin": "7",
+        "pinfunction": "GPIO16_D6_TX_7",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U5",
+        "pin": "18",
+        "pinfunction": "GD00_18",
+        "pintype": "bidirectional"
+      }
+    ],
+    "CHG_STAT": [
+      {
+        "ref": "R6",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R7",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "8",
+        "pinfunction": "GPIO17_D7_RX_8",
+        "pintype": "passive"
+      }
+    ],
+    "GND": [
+      {
+        "ref": "C1",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C2",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C3",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C4",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C5",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "C6",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "DOWN1",
+        "pin": "1",
+        "pinfunction": "A_1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "ENC1",
+        "pin": "1",
+        "pinfunction": "EH_1",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "ENC1",
+        "pin": "2",
+        "pinfunction": "EH_2",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "ENC1",
+        "pin": "3",
+        "pinfunction": "EH_3",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "ENC1",
+        "pin": "4",
+        "pinfunction": "EH_4",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "ENC1",
+        "pin": "5",
+        "pinfunction": "EH_5",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "ENC1",
+        "pin": "6",
+        "pinfunction": "EH_6",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "ENC1",
+        "pin": "C",
+        "pinfunction": "C_C",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "LEFT1",
+        "pin": "1",
+        "pinfunction": "A_1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "PROG1",
+        "pin": "1",
+        "pinfunction": "A_1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R5",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "R7",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "RIGHT1",
+        "pin": "1",
+        "pinfunction": "A_1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "SELECT1",
+        "pin": "1",
+        "pinfunction": "A_1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "SETUP1",
+        "pin": "1",
+        "pinfunction": "A_1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "STOP1",
+        "pin": "1",
+        "pinfunction": "A_1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "13",
+        "pinfunction": "GND_13",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "18",
+        "pinfunction": "GND_18",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U2",
+        "pin": "1",
+        "pinfunction": "GND_1",
+        "pintype": "power_in"
+      },
+      {
+        "ref": "U3",
+        "pin": "12",
+        "pinfunction": "GND_12",
+        "pintype": "power_in"
+      },
+      {
+        "ref": "U3",
+        "pin": "2",
+        "pinfunction": "A1_2",
+        "pintype": "input"
+      },
+      {
+        "ref": "U3",
+        "pin": "21",
+        "pinfunction": "A0_21",
+        "pintype": "input"
+      },
+      {
+        "ref": "U3",
+        "pin": "3",
+        "pinfunction": "A2_3",
+        "pintype": "input"
+      },
+      {
+        "ref": "U5",
+        "pin": "16",
+        "pinfunction": "GND_16",
+        "pintype": "power_in"
+      },
+      {
+        "ref": "U5",
+        "pin": "2",
+        "pinfunction": "GND_2",
+        "pintype": "power_in"
+      },
+      {
+        "ref": "U5",
+        "pin": "7",
+        "pinfunction": "GND_7",
+        "pintype": "power_in"
+      },
+      {
+        "ref": "UP1",
+        "pin": "1",
+        "pinfunction": "A_1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "VS1",
+        "pin": "2",
+        "pinfunction": "A_2",
+        "pintype": "passive"
+      }
+    ],
+    "I2C_SCL": [
+      {
+        "ref": "R8",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "SW_I2C1",
+        "pin": "4",
+        "pinfunction": "4_4",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "U1",
+        "pin": "6",
+        "pinfunction": "GPIO23_D5_SCL_6",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U2",
+        "pin": "3",
+        "pinfunction": "SCL_3",
+        "pintype": "input"
+      }
+    ],
+    "I2C_SDA": [
+      {
+        "ref": "R9",
+        "pin": "2",
+        "pintype": "passive"
+      },
+      {
+        "ref": "SW_I2C1",
+        "pin": "1",
+        "pinfunction": "1_1",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "U1",
+        "pin": "5",
+        "pinfunction": "GPIO22_D4_SDA_5",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U2",
+        "pin": "4",
+        "pinfunction": "SDA_4",
+        "pintype": "bidirectional"
+      }
+    ],
+    "LP_I2C_SCL": [
+      {
+        "ref": "R1",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "SW_I2C1",
+        "pin": "6",
+        "pinfunction": "6_6",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "U1",
+        "pin": "16",
+        "pinfunction": "GPIO7_MTDO_16",
+        "pintype": "passive"
+      }
+    ],
+    "LP_I2C_SDA": [
+      {
+        "ref": "R2",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "SW_I2C1",
+        "pin": "3",
+        "pinfunction": "3_3",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "U1",
+        "pin": "20",
+        "pinfunction": "GPIO6_MTCK_20",
+        "pintype": "passive"
+      }
+    ],
+    "PCF_INT": [
+      {
+        "ref": "R3",
+        "pin": "1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U1",
+        "pin": "3",
+        "pinfunction": "GPIO2_A2_D2_3",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U3",
+        "pin": "1",
+        "pinfunction": "~{INT}_1",
+        "pintype": "open_collector"
+      }
+    ],
+    "ROT_A": [
+      {
+        "ref": "ENC1",
+        "pin": "A",
+        "pinfunction": "A_A",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "U3",
+        "pin": "4",
+        "pinfunction": "P0_4",
+        "pintype": "bidirectional"
+      }
+    ],
+    "ROT_B": [
+      {
+        "ref": "ENC1",
+        "pin": "B",
+        "pinfunction": "B_B",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "U3",
+        "pin": "5",
+        "pinfunction": "P1_5",
+        "pintype": "bidirectional"
+      }
+    ],
+    "ROT_SW": [
+      {
+        "ref": "ENC1",
+        "pin": "S",
+        "pinfunction": "S_S",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "U3",
+        "pin": "15",
+        "pinfunction": "P12_15",
+        "pintype": "bidirectional"
+      }
+    ],
+    "SPI_CS": [
+      {
+        "ref": "U1",
+        "pin": "4",
+        "pinfunction": "GPIO21_D3_4",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U5",
+        "pin": "14",
+        "pinfunction": "CSN_14",
+        "pintype": "input"
+      }
+    ],
+    "SPI_MISO": [
+      {
+        "ref": "U1",
+        "pin": "10",
+        "pinfunction": "GPIO20_D9_MISO_10",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U5",
+        "pin": "12",
+        "pinfunction": "MISO/GD01_12",
+        "pintype": "output"
+      }
+    ],
+    "SPI_MOSI": [
+      {
+        "ref": "U1",
+        "pin": "11",
+        "pinfunction": "GPIO18_D10_MOSI_11",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U5",
+        "pin": "13",
+        "pinfunction": "MOSI_13",
+        "pintype": "input"
+      }
+    ],
+    "SPI_SCK": [
+      {
+        "ref": "U1",
+        "pin": "9",
+        "pinfunction": "GPIO19_D8_SCK_9",
+        "pintype": "passive"
+      },
+      {
+        "ref": "U5",
+        "pin": "15",
+        "pinfunction": "SCK_15",
+        "pintype": "input"
+      }
+    ],
+    "SW_I2C_SCL": [
+      {
+        "ref": "SW_I2C1",
+        "pin": "5",
+        "pinfunction": "5_5",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "U3",
+        "pin": "22",
+        "pinfunction": "SCL_22",
+        "pintype": "input"
+      }
+    ],
+    "SW_I2C_SDA": [
+      {
+        "ref": "SW_I2C1",
+        "pin": "2",
+        "pinfunction": "2_2",
+        "pintype": "unspecified"
+      },
+      {
+        "ref": "U3",
+        "pin": "23",
+        "pinfunction": "SDA_23",
+        "pintype": "bidirectional"
+      }
+    ],
+    "VIBRATION": [
+      {
+        "ref": "U1",
+        "pin": "1",
+        "pinfunction": "GPIO0_A0_D0_1",
+        "pintype": "passive"
+      },
+      {
+        "ref": "VS1",
+        "pin": "1",
+        "pinfunction": "K_1",
+        "pintype": "passive"
+      }
+    ],
+    "unconnected-(U1-CHIP_EN-Pad17)": [
+      {
+        "ref": "U1",
+        "pin": "17",
+        "pinfunction": "CHIP_EN_17",
+        "pintype": "passive+no_connect"
+      }
+    ],
+    "unconnected-(U1-GPIO4_MTMS-Pad19)": [
+      {
+        "ref": "U1",
+        "pin": "19",
+        "pinfunction": "GPIO4_MTMS_19",
+        "pintype": "passive+no_connect"
+      }
+    ],
+    "unconnected-(U1-GPIO5_MTDI-Pad15)": [
+      {
+        "ref": "U1",
+        "pin": "15",
+        "pinfunction": "GPIO5_MTDI_15",
+        "pintype": "passive+no_connect"
+      }
+    ],
+    "unconnected-(U1-GPIO9_BOOT-Pad21)": [
+      {
+        "ref": "U1",
+        "pin": "21",
+        "pinfunction": "GPIO9_BOOT_21",
+        "pintype": "passive+no_connect"
+      }
+    ],
+    "unconnected-(U3-P13-Pad16)": [
+      {
+        "ref": "U3",
+        "pin": "16",
+        "pinfunction": "P13_16",
+        "pintype": "bidirectional+no_connect"
+      }
+    ],
+    "unconnected-(U3-P14-Pad17)": [
+      {
+        "ref": "U3",
+        "pin": "17",
+        "pinfunction": "P14_17",
+        "pintype": "bidirectional+no_connect"
+      }
+    ],
+    "unconnected-(U3-P15-Pad18)": [
+      {
+        "ref": "U3",
+        "pin": "18",
+        "pinfunction": "P15_18",
+        "pintype": "bidirectional+no_connect"
+      }
+    ],
+    "unconnected-(U3-P16-Pad19)": [
+      {
+        "ref": "U3",
+        "pin": "19",
+        "pinfunction": "P16_19",
+        "pintype": "bidirectional+no_connect"
+      }
+    ],
+    "unconnected-(U3-P17-Pad20)": [
+      {
+        "ref": "U3",
+        "pin": "20",
+        "pinfunction": "P17_20",
+        "pintype": "bidirectional+no_connect"
+      }
+    ],
+    "unconnected-(U5-GD02-Pad20)": [
+      {
+        "ref": "U5",
+        "pin": "20",
+        "pinfunction": "GD02_20",
+        "pintype": "bidirectional+no_connect"
+      }
+    ],
+    "unconnected-(U5-NC-Pad3)": [
+      {
+        "ref": "U5",
+        "pin": "3",
+        "pinfunction": "NC_3",
+        "pintype": "no_connect"
+      }
+    ],
+    "unconnected-(U5-NC-Pad4)": [
+      {
+        "ref": "U5",
+        "pin": "4",
+        "pinfunction": "NC_4",
+        "pintype": "no_connect"
+      }
+    ],
+    "unconnected-(U5-NC-Pad5)": [
+      {
+        "ref": "U5",
+        "pin": "5",
+        "pinfunction": "NC_5",
+        "pintype": "no_connect"
+      }
+    ],
+    "unconnected-(U5-NC-Pad8)": [
+      {
+        "ref": "U5",
+        "pin": "8",
+        "pinfunction": "NC_8",
+        "pintype": "no_connect"
+      }
+    ],
+    "unconnected-(U5-NC-Pad9)": [
+      {
+        "ref": "U5",
+        "pin": "9",
+        "pinfunction": "NC_9",
+        "pintype": "no_connect"
+      }
+    ],
+    "unconnected-(U5-NC-Pad10)": [
+      {
+        "ref": "U5",
+        "pin": "10",
+        "pinfunction": "NC_10",
+        "pintype": "no_connect"
+      }
+    ],
+    "unconnected-(U5-NC-Pad11)": [
+      {
+        "ref": "U5",
+        "pin": "11",
+        "pinfunction": "NC_11",
+        "pintype": "no_connect"
+      }
+    ],
+    "unconnected-(U5-NC-Pad17)": [
+      {
+        "ref": "U5",
+        "pin": "17",
+        "pinfunction": "NC_17",
+        "pintype": "no_connect"
+      }
+    ],
+    "unconnected-(U5-NC-Pad19)": [
+      {
+        "ref": "U5",
+        "pin": "19",
+        "pinfunction": "NC_19",
+        "pintype": "no_connect"
+      }
+    ]
+  },
+  "footprints": {
+    "R8": {
+      "value": "4.7k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "at": [
+        "47.99",
+        "38.75",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "I2C_SCL",
+          "pinfunction": []
+        }
+      ]
+    },
+    "C3": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "at": [
+        "31.75",
+        "146",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "MH4": {
+      "value": "MountingHole_2.2mm_M2_ISO7380_Pad_TopBottom",
+      "footprint": "MountingHole:MountingHole_2.2mm_M2_ISO7380_Pad_TopBottom",
+      "at": [
+        "17",
+        "19.5"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "thru_hole",
+          "net": "GND",
+          "pinfunction": []
+        },
+        {
+          "number": "1",
+          "type": "connect",
+          "net": "GND",
+          "pinfunction": []
+        },
+        {
+          "number": "1",
+          "type": "connect",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "R3": {
+      "value": "10k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "at": [
+        "24.25",
+        "107.01",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "PCF_INT",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        }
+      ]
+    },
+    "R1": {
+      "value": "4.7k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "at": [
+        "27.75",
+        "23",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "LP_I2C_SCL",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        }
+      ]
+    },
+    "PROG1": {
+      "value": "BTN_PROG",
+      "footprint": "Button_Switch_SMD:SW_SPST_TL3342",
+      "at": [
+        "41",
+        "134.25",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_PROG",
+          "pinfunction": [
+            "B_2"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_PROG",
+          "pinfunction": [
+            "B_2"
+          ]
+        }
+      ]
+    },
+    "U5": {
+      "value": "E07-400MM10S",
+      "footprint": "cc1101:E07-400MM10S",
+      "at": [
+        "42.54",
+        "148"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": [
+            "VCC_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "GND_2"
+          ]
+        },
+        {
+          "number": "3",
+          "type": "smd",
+          "net": "unconnected-(U5-NC-Pad3)",
+          "pinfunction": [
+            "NC_3"
+          ]
+        },
+        {
+          "number": "4",
+          "type": "smd",
+          "net": "unconnected-(U5-NC-Pad4)",
+          "pinfunction": [
+            "NC_4"
+          ]
+        },
+        {
+          "number": "5",
+          "type": "smd",
+          "net": "unconnected-(U5-NC-Pad5)",
+          "pinfunction": [
+            "NC_5"
+          ]
+        },
+        {
+          "number": "6",
+          "type": "smd",
+          "net": "ANT_447M",
+          "pinfunction": [
+            "ANT_6"
+          ]
+        },
+        {
+          "number": "7",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "GND_7"
+          ]
+        },
+        {
+          "number": "8",
+          "type": "smd",
+          "net": "unconnected-(U5-NC-Pad8)",
+          "pinfunction": [
+            "NC_8"
+          ]
+        },
+        {
+          "number": "9",
+          "type": "smd",
+          "net": "unconnected-(U5-NC-Pad9)",
+          "pinfunction": [
+            "NC_9"
+          ]
+        },
+        {
+          "number": "10",
+          "type": "smd",
+          "net": "unconnected-(U5-NC-Pad10)",
+          "pinfunction": [
+            "NC_10"
+          ]
+        },
+        {
+          "number": "11",
+          "type": "smd",
+          "net": "unconnected-(U5-NC-Pad11)",
+          "pinfunction": [
+            "NC_11"
+          ]
+        },
+        {
+          "number": "12",
+          "type": "smd",
+          "net": "SPI_MISO",
+          "pinfunction": [
+            "MISO/GD01_12"
+          ]
+        },
+        {
+          "number": "13",
+          "type": "smd",
+          "net": "SPI_MOSI",
+          "pinfunction": [
+            "MOSI_13"
+          ]
+        },
+        {
+          "number": "14",
+          "type": "smd",
+          "net": "SPI_CS",
+          "pinfunction": [
+            "CSN_14"
+          ]
+        },
+        {
+          "number": "15",
+          "type": "smd",
+          "net": "SPI_SCK",
+          "pinfunction": [
+            "SCK_15"
+          ]
+        },
+        {
+          "number": "16",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "GND_16"
+          ]
+        },
+        {
+          "number": "17",
+          "type": "smd",
+          "net": "unconnected-(U5-NC-Pad17)",
+          "pinfunction": [
+            "NC_17"
+          ]
+        },
+        {
+          "number": "18",
+          "type": "smd",
+          "net": "CC1101_GD0",
+          "pinfunction": [
+            "GD00_18"
+          ]
+        },
+        {
+          "number": "19",
+          "type": "smd",
+          "net": "unconnected-(U5-NC-Pad19)",
+          "pinfunction": [
+            "NC_19"
+          ]
+        },
+        {
+          "number": "20",
+          "type": "smd",
+          "net": "unconnected-(U5-GD02-Pad20)",
+          "pinfunction": [
+            "GD02_20"
+          ]
+        }
+      ]
+    },
+    "C8": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "at": [
+        "20",
+        "158",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BAT+",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BAT-",
+          "pinfunction": []
+        }
+      ]
+    },
+    "SETUP2": {
+      "value": "K2-1107ST-A4DW-06",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "at": [
+        "24",
+        "134.25"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BTN_SETUP",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "C7": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "at": [
+        "20",
+        "160.5",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BAT+",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BAT-",
+          "pinfunction": []
+        }
+      ]
+    },
+    "R9": {
+      "value": "4.7k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "at": [
+        "47.99",
+        "36.5",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "I2C_SDA",
+          "pinfunction": []
+        }
+      ]
+    },
+    "RIGHT1": {
+      "value": "BTN_RIGHT",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "at": [
+        "46.25",
+        "74.5",
+        "90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_RIGHT",
+          "pinfunction": [
+            "B_2"
+          ]
+        }
+      ]
+    },
+    "VS1": {
+      "value": "C06",
+      "footprint": "SomfyBlinds:Vibration_SMD_0805_2012Metric",
+      "at": [
+        "47.75",
+        "26.75",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "VIBRATION",
+          "pinfunction": [
+            "K_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_2"
+          ]
+        }
+      ]
+    },
+    "SETUP1": {
+      "value": "BTN_SETUP",
+      "footprint": "Button_Switch_SMD:SW_SPST_TL3342",
+      "at": [
+        "24",
+        "134.25",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_SETUP",
+          "pinfunction": [
+            "B_2"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_SETUP",
+          "pinfunction": [
+            "B_2"
+          ]
+        }
+      ]
+    },
+    "SELECT1": {
+      "value": "BTN_SELECT",
+      "footprint": "Button_Switch_SMD:SW_SPST_TL3342",
+      "at": [
+        "32.5",
+        "117",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_SELECT",
+          "pinfunction": [
+            "B_2"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_SELECT",
+          "pinfunction": [
+            "B_2"
+          ]
+        }
+      ]
+    },
+    "SELECT2": {
+      "value": "K2-1107ST-A4DW-06",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "at": [
+        "32.5",
+        "117"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BTN_SELECT",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "C4": {
+      "value": "10uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "at": [
+        "34",
+        "146.02",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "R4": {
+      "value": "100k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "at": [
+        "48.48",
+        "30.49",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BAT+",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BAT_ADC",
+          "pinfunction": []
+        }
+      ]
+    },
+    "STOP1": {
+      "value": "BTN_STOP",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "at": [
+        "32.75",
+        "74.5",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_STOP",
+          "pinfunction": [
+            "B_2"
+          ]
+        }
+      ]
+    },
+    "SW_I2C1": {
+      "value": "CAS-220TB1",
+      "footprint": "CAS:CAS-220TB1",
+      "at": [
+        "20.25",
+        "52",
+        "90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "I2C_SDA",
+          "pinfunction": [
+            "1_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "SW_I2C_SDA",
+          "pinfunction": [
+            "2_2"
+          ]
+        },
+        {
+          "number": "3",
+          "type": "smd",
+          "net": "LP_I2C_SDA",
+          "pinfunction": [
+            "3_3"
+          ]
+        },
+        {
+          "number": "4",
+          "type": "smd",
+          "net": "I2C_SCL",
+          "pinfunction": [
+            "4_4"
+          ]
+        },
+        {
+          "number": "5",
+          "type": "smd",
+          "net": "SW_I2C_SCL",
+          "pinfunction": [
+            "5_5"
+          ]
+        },
+        {
+          "number": "6",
+          "type": "smd",
+          "net": "LP_I2C_SCL",
+          "pinfunction": [
+            "6_6"
+          ]
+        }
+      ]
+    },
+    "MH3": {
+      "value": "MountingHole_2.2mm_M2_ISO7380_Pad_TopBottom",
+      "footprint": "MountingHole:MountingHole_2.2mm_M2_ISO7380_Pad_TopBottom",
+      "at": [
+        "48.5",
+        "167.5"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "",
+          "type": "np_thru_hole",
+          "net": "",
+          "pinfunction": []
+        }
+      ]
+    },
+    "C6": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "at": [
+        "48.98",
+        "32.75"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BAT_ADC",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "C5": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "at": [
+        "34.48",
+        "50"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "U3": {
+      "value": "PCF8575DBR",
+      "footprint": "Package_SO:SSOP-24_5.3x8.2mm_P0.65mm",
+      "at": [
+        "22.675",
+        "99.675",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "PCF_INT",
+          "pinfunction": [
+            "~{INT}_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A1_2"
+          ]
+        },
+        {
+          "number": "3",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A2_3"
+          ]
+        },
+        {
+          "number": "4",
+          "type": "smd",
+          "net": "ROT_A",
+          "pinfunction": [
+            "P0_4"
+          ]
+        },
+        {
+          "number": "5",
+          "type": "smd",
+          "net": "ROT_B",
+          "pinfunction": [
+            "P1_5"
+          ]
+        },
+        {
+          "number": "6",
+          "type": "smd",
+          "net": "BTN_STOP",
+          "pinfunction": [
+            "P2_6"
+          ]
+        },
+        {
+          "number": "7",
+          "type": "smd",
+          "net": "BTN_SETUP",
+          "pinfunction": [
+            "P3_7"
+          ]
+        },
+        {
+          "number": "8",
+          "type": "smd",
+          "net": "BTN_UP",
+          "pinfunction": [
+            "P4_8"
+          ]
+        },
+        {
+          "number": "9",
+          "type": "smd",
+          "net": "BTN_DOWN",
+          "pinfunction": [
+            "P5_9"
+          ]
+        },
+        {
+          "number": "10",
+          "type": "smd",
+          "net": "BTN_SELECT",
+          "pinfunction": [
+            "P6_10"
+          ]
+        },
+        {
+          "number": "11",
+          "type": "smd",
+          "net": "BTN_PROG",
+          "pinfunction": [
+            "P7_11"
+          ]
+        },
+        {
+          "number": "12",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "GND_12"
+          ]
+        },
+        {
+          "number": "13",
+          "type": "smd",
+          "net": "BTN_LEFT",
+          "pinfunction": [
+            "P10_13"
+          ]
+        },
+        {
+          "number": "14",
+          "type": "smd",
+          "net": "BTN_RIGHT",
+          "pinfunction": [
+            "P11_14"
+          ]
+        },
+        {
+          "number": "15",
+          "type": "smd",
+          "net": "ROT_SW",
+          "pinfunction": [
+            "P12_15"
+          ]
+        },
+        {
+          "number": "16",
+          "type": "smd",
+          "net": "unconnected-(U3-P13-Pad16)",
+          "pinfunction": [
+            "P13_16"
+          ]
+        },
+        {
+          "number": "17",
+          "type": "smd",
+          "net": "unconnected-(U3-P14-Pad17)",
+          "pinfunction": [
+            "P14_17"
+          ]
+        },
+        {
+          "number": "18",
+          "type": "smd",
+          "net": "unconnected-(U3-P15-Pad18)",
+          "pinfunction": [
+            "P15_18"
+          ]
+        },
+        {
+          "number": "19",
+          "type": "smd",
+          "net": "unconnected-(U3-P16-Pad19)",
+          "pinfunction": [
+            "P16_19"
+          ]
+        },
+        {
+          "number": "20",
+          "type": "smd",
+          "net": "unconnected-(U3-P17-Pad20)",
+          "pinfunction": [
+            "P17_20"
+          ]
+        },
+        {
+          "number": "21",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A0_21"
+          ]
+        },
+        {
+          "number": "22",
+          "type": "smd",
+          "net": "SW_I2C_SCL",
+          "pinfunction": [
+            "SCL_22"
+          ]
+        },
+        {
+          "number": "23",
+          "type": "smd",
+          "net": "SW_I2C_SDA",
+          "pinfunction": [
+            "SDA_23"
+          ]
+        },
+        {
+          "number": "24",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": [
+            "VCC_24"
+          ]
+        }
+      ]
+    },
+    "C2": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "at": [
+        "28.25",
+        "107.02",
+        "90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "U2": {
+      "value": "OLED 0.96\" I2C",
+      "footprint": "SomfyBlinds:OLED_0.96_I2C_4PIN_NOHOLE",
+      "at": [
+        "46.6",
+        "46.9",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "thru_hole",
+          "net": "GND",
+          "pinfunction": [
+            "GND_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "thru_hole",
+          "net": "+3V3",
+          "pinfunction": [
+            "VCC_2"
+          ]
+        },
+        {
+          "number": "3",
+          "type": "thru_hole",
+          "net": "I2C_SCL",
+          "pinfunction": [
+            "SCL_3"
+          ]
+        },
+        {
+          "number": "4",
+          "type": "thru_hole",
+          "net": "I2C_SDA",
+          "pinfunction": [
+            "SDA_4"
+          ]
+        }
+      ]
+    },
+    "C11": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "at": [
+        "19.975",
+        "150.5",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BAT+",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BAT-",
+          "pinfunction": []
+        }
+      ]
+    },
+    "R5": {
+      "value": "100k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "at": [
+        "49.01",
+        "34.5"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BAT_ADC",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "DOWN1": {
+      "value": "BTN_DOWN",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "at": [
+        "32.75",
+        "88",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_DOWN",
+          "pinfunction": [
+            "B_2"
+          ]
+        }
+      ]
+    },
+    "R2": {
+      "value": "4.7k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "at": [
+        "29.5",
+        "25",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "LP_I2C_SDA",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        }
+      ]
+    },
+    "LEFT1": {
+      "value": "BTN_LEFT",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "at": [
+        "19.25",
+        "74.5",
+        "90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_LEFT",
+          "pinfunction": [
+            "B_2"
+          ]
+        }
+      ]
+    },
+    "R7": {
+      "value": "150k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "at": [
+        "17.74",
+        "30",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "CHG_STAT",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "C1": {
+      "value": "0.1uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_0402_1005Metric",
+      "at": [
+        "21.5",
+        "107.02",
+        "90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "+3V3",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "R6": {
+      "value": "100k",
+      "footprint": "PCM_SparkFun-Resistor:R_0402_1005Metric",
+      "at": [
+        "18.25",
+        "26.49",
+        "-90"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "+5V",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "CHG_STAT",
+          "pinfunction": []
+        }
+      ]
+    },
+    "UP1": {
+      "value": "BTN_UP",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "at": [
+        "32.75",
+        "61",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "A_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BTN_UP",
+          "pinfunction": [
+            "B_2"
+          ]
+        }
+      ]
+    },
+    "C9": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "at": [
+        "20",
+        "155.5",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BAT+",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BAT-",
+          "pinfunction": []
+        }
+      ]
+    },
+    "PROG2": {
+      "value": "K2-1107ST-A4DW-06",
+      "footprint": "Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS",
+      "at": [
+        "41",
+        "134.25"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BTN_PROG",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "C10": {
+      "value": "220uF",
+      "footprint": "PCM_SparkFun-Capacitor:C_1206_3216Metric",
+      "at": [
+        "20",
+        "153",
+        "180"
+      ],
+      "layer": [
+        "F.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "BAT+",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "BAT-",
+          "pinfunction": []
+        }
+      ]
+    },
+    "BAT1": {
+      "value": "BAT",
+      "footprint": "Connector_JST:JST_GH_SM02B-GHS-TB_1x02-1MP_P1.25mm_Horizontal",
+      "at": [
+        "23.35",
+        "163.875",
+        "-90"
+      ],
+      "layer": [
+        "B.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "thru_hole",
+          "net": "BAT+",
+          "pinfunction": []
+        },
+        {
+          "number": "2",
+          "type": "thru_hole",
+          "net": "BAT-",
+          "pinfunction": []
+        },
+        {
+          "number": "MP",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        },
+        {
+          "number": "MP",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": []
+        }
+      ]
+    },
+    "U1": {
+      "value": "XIAO-ESP32-C6-SMD_HOLE",
+      "footprint": "xiao:XIAO-ESP32-C6-SMD_HOLE",
+      "at": [
+        "41.67",
+        "38.5415",
+        "180"
+      ],
+      "layer": [
+        "B.Cu"
+      ],
+      "pads": [
+        {
+          "number": "1",
+          "type": "thru_hole",
+          "net": "VIBRATION",
+          "pinfunction": [
+            "GPIO0_A0_D0_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "thru_hole",
+          "net": "BAT_ADC",
+          "pinfunction": [
+            "GPIO1_A1_D1_2"
+          ]
+        },
+        {
+          "number": "3",
+          "type": "thru_hole",
+          "net": "PCF_INT",
+          "pinfunction": [
+            "GPIO2_A2_D2_3"
+          ]
+        },
+        {
+          "number": "4",
+          "type": "thru_hole",
+          "net": "SPI_CS",
+          "pinfunction": [
+            "GPIO21_D3_4"
+          ]
+        },
+        {
+          "number": "5",
+          "type": "thru_hole",
+          "net": "I2C_SDA",
+          "pinfunction": [
+            "GPIO22_D4_SDA_5"
+          ]
+        },
+        {
+          "number": "6",
+          "type": "thru_hole",
+          "net": "I2C_SCL",
+          "pinfunction": [
+            "GPIO23_D5_SCL_6"
+          ]
+        },
+        {
+          "number": "7",
+          "type": "thru_hole",
+          "net": "CC1101_GD0",
+          "pinfunction": [
+            "GPIO16_D6_TX_7"
+          ]
+        },
+        {
+          "number": "8",
+          "type": "thru_hole",
+          "net": "CHG_STAT",
+          "pinfunction": [
+            "GPIO17_D7_RX_8"
+          ]
+        },
+        {
+          "number": "9",
+          "type": "thru_hole",
+          "net": "SPI_SCK",
+          "pinfunction": [
+            "GPIO19_D8_SCK_9"
+          ]
+        },
+        {
+          "number": "10",
+          "type": "thru_hole",
+          "net": "SPI_MISO",
+          "pinfunction": [
+            "GPIO20_D9_MISO_10"
+          ]
+        },
+        {
+          "number": "11",
+          "type": "thru_hole",
+          "net": "SPI_MOSI",
+          "pinfunction": [
+            "GPIO18_D10_MOSI_11"
+          ]
+        },
+        {
+          "number": "12",
+          "type": "thru_hole",
+          "net": "+3V3",
+          "pinfunction": [
+            "3V3_12"
+          ]
+        },
+        {
+          "number": "13",
+          "type": "thru_hole",
+          "net": "GND",
+          "pinfunction": [
+            "GND_13"
+          ]
+        },
+        {
+          "number": "14",
+          "type": "thru_hole",
+          "net": "+5V",
+          "pinfunction": [
+            "VBUS_14"
+          ]
+        },
+        {
+          "number": "15",
+          "type": "thru_hole",
+          "net": "unconnected-(U1-GPIO5_MTDI-Pad15)",
+          "pinfunction": [
+            "GPIO5_MTDI_15"
+          ]
+        },
+        {
+          "number": "16",
+          "type": "thru_hole",
+          "net": "LP_I2C_SCL",
+          "pinfunction": [
+            "GPIO7_MTDO_16"
+          ]
+        },
+        {
+          "number": "17",
+          "type": "thru_hole",
+          "net": "unconnected-(U1-CHIP_EN-Pad17)",
+          "pinfunction": [
+            "CHIP_EN_17"
+          ]
+        },
+        {
+          "number": "18",
+          "type": "thru_hole",
+          "net": "GND",
+          "pinfunction": [
+            "GND_18"
+          ]
+        },
+        {
+          "number": "19",
+          "type": "thru_hole",
+          "net": "unconnected-(U1-GPIO4_MTMS-Pad19)",
+          "pinfunction": [
+            "GPIO4_MTMS_19"
+          ]
+        },
+        {
+          "number": "20",
+          "type": "thru_hole",
+          "net": "LP_I2C_SDA",
+          "pinfunction": [
+            "GPIO6_MTCK_20"
+          ]
+        },
+        {
+          "number": "21",
+          "type": "thru_hole",
+          "net": "unconnected-(U1-GPIO9_BOOT-Pad21)",
+          "pinfunction": [
+            "GPIO9_BOOT_21"
+          ]
+        },
+        {
+          "number": "22",
+          "type": "thru_hole",
+          "net": "+3V3",
+          "pinfunction": [
+            "3V3_22"
+          ]
+        },
+        {
+          "number": "23",
+          "type": "thru_hole",
+          "net": "BAT+",
+          "pinfunction": [
+            "BAT_23"
+          ]
+        },
+        {
+          "number": "24",
+          "type": "thru_hole",
+          "net": "BAT-",
+          "pinfunction": [
+            "GND_24"
+          ]
+        }
+      ]
+    },
+    "ENC1": {
+      "value": "SIQ-02FVS3",
+      "footprint": "siq:SIQ-02FVS3",
+      "at": [
+        "44.2359",
+        "74.4217",
+        "90"
+      ],
+      "layer": [
+        "B.Cu"
+      ],
+      "pads": [
+        {
+          "number": "",
+          "type": "np_thru_hole",
+          "net": "",
+          "pinfunction": []
+        },
+        {
+          "number": "",
+          "type": "np_thru_hole",
+          "net": "",
+          "pinfunction": []
+        },
+        {
+          "number": "1",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "EH_1"
+          ]
+        },
+        {
+          "number": "2",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "EH_2"
+          ]
+        },
+        {
+          "number": "3",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "EH_3"
+          ]
+        },
+        {
+          "number": "4",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "EH_4"
+          ]
+        },
+        {
+          "number": "5",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "EH_5"
+          ]
+        },
+        {
+          "number": "6",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "EH_6"
+          ]
+        },
+        {
+          "number": "A",
+          "type": "smd",
+          "net": "ROT_A",
+          "pinfunction": [
+            "A_A"
+          ]
+        },
+        {
+          "number": "B",
+          "type": "smd",
+          "net": "ROT_B",
+          "pinfunction": [
+            "B_B"
+          ]
+        },
+        {
+          "number": "C",
+          "type": "smd",
+          "net": "GND",
+          "pinfunction": [
+            "C_C"
+          ]
+        },
+        {
+          "number": "S",
+          "type": "smd",
+          "net": "ROT_SW",
+          "pinfunction": [
+            "S_S"
+          ]
+        }
+      ]
+    }
+  },
+  "sha256": {
+    "kicad/somfy_blinds_v6.kicad_sch": "afcb49144d1411f07cfd33d1236adca79e31267061369994fa649e5516910d4f",
+    "kicad/somfy_blinds_v6.kicad_pcb": "4bdb85d6dba01140635ba23f84b48ab7f6f1d7bac9876e628f7687fc2b23215e"
+  }
+}

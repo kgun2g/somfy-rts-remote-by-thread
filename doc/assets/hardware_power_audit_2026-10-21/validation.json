@@ -1,0 +1,19 @@
+{
+  "original_schematic_hash_matches": true,
+  "original_pcb_hash_matches": true,
+  "source_hash_changes": [],
+  "local_link_errors": [],
+  "schematic_components": 36,
+  "pcb_footprints": 41,
+  "drc": {
+    "errors": 0,
+    "warnings": 52,
+    "unconnected": 0,
+    "parity": 2
+  },
+  "erc": {
+    "errors": 2,
+    "warnings": 96
+  },
+  "hardware_measured": false
+}

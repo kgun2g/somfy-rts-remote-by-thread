@@ -21,6 +21,7 @@
 #include "esp_pm.h"
 #include "esp_sntp.h"
 #include "esp_system.h"       /* esp_reset_reason — boot 시 panic 감지 */
+#include "esp_app_desc.h"     /* ★2026-10-20 batlog 세션에 펌웨어 판(버전·ELF sha) 기록 (GPT 재감사 N03) */
 #include "esp_heap_caps.h"    /* heap_caps_get_largest_free_block — heap 진단 */
 #include "esp_task_wdt.h"    /* Task WDT — 메인 루프 hang 자동 리부트 */
 #include "wake_diag.h"        /* ★2026-08-20 깨어남 출처 계측 */
@@ -769,8 +770,10 @@ static inline bool _is_usb_powered(void) {
  *    · CHG_STAT(IO17)         → 미확인. 그래서 이제 **세 개 모두** 여기를 거친다.
  *  → 거는 순간 핀을 읽어 이미 웨이크 레벨이면 **등록하지 않고 로그를 남긴다.**
  *  ※부팅 시점 검사다. 이후에 고착되는 경우는 각자의 감시가 처리한다
- *    (진동은 button_handler.c 의 stuck 판정이 gpio_wakeup_disable 을 부른다). */
-static void _arm_level_wake(gpio_num_t pin, gpio_int_type_t lvl, const char *name)
+ *    (진동은 button_handler.c 의 stuck 판정이 gpio_wakeup_disable 을 부른다).
+ *  ★2026-10-20 진동은 더 이상 여기를 안 쓴다 — button_handler.c _vibe_level_service 가 LOW 에서 걸고 HIGH 에서 끈다.
+ *    C6 는 `~INT`·CHG_STAT 도 안 걸어 호출처가 없을 수 있어 unused 로 표시한다. */
+static void __attribute__((unused)) _arm_level_wake(gpio_num_t pin, gpio_int_type_t lvl, const char *name)
 {
   const int wake_lvl = (lvl == GPIO_INTR_HIGH_LEVEL) ? 1 : 0;
   const int now      = gpio_get_level(pin);
@@ -1979,6 +1982,8 @@ static void _sntp_sync_cb(struct timeval *tv) {
 static inline void _wake_time_task(void) {
 }
 
+static void _pmdump_session_end(void);   /* ★2026-10-21 정의는 아래 pmdump 블록(보드 구성별 스텁 포함) */
+
 static void _enable_pm_light_sleep(void) {
 #if CONFIG_PM_ENABLE
   /* ★★2026-08-11 재작성 — light sleep 을 **커미셔닝 완료 후에만** 켠다.
@@ -2091,6 +2096,12 @@ static void _enable_pm_light_sleep(void) {
   const int want = (ls ? 2 : 0) + (on_usb ? 0 : 1);
   if (s_pm_state == want) return;
 
+  /* ★2026-10-21 방전 세션 끝 PM 스냅샷은 **light sleep 을 끄기 전에** 찍는다.
+   *  10/21 실기: 세션 끝 저장을 batlog 의 'USB 연결' 분기에서 했더니, 그때는 여기서 이미 light sleep 을 꺼 버려
+   *  esp_pm_dump_locks 가 SLEEP 줄과 light_sleep_counts 를 아예 안 찍었다 → 디코더가 그 세션을 "절전 0" 으로 읽었다.
+   *  USB 때문에 끌 때만이다(배터리 중 다른 이유로 끄는 경우에 세션 스냅샷을 닫으면 이후 300초 저장이 끊긴다).
+   *  세션당 한 번만 찍히므로 뒤따르는 batlog 분기의 호출은 아무것도 안 한다(_pmdump_session_end 주석). */
+  if (on_usb && s_pm_state >= 0 && (s_pm_state & 2)) _pmdump_session_end();
   esp_err_t pm_err = ESP_ERR_INVALID_ARG;
   int min_mhz = max_mhz;
   for (int i = 0; i < 3 && pm_err != ESP_OK; i++) {
@@ -2932,6 +2943,7 @@ static uint8_t _bat_mv_to_pct(int mv) {
  *    · USB 분리 직후 2분간 : 5초마다
  *    · 그 이후            : 2분마다
  *
+ *  ★2026-10-20 아래 '통째로' 는 옛 구조 — 지금은 20표본 조각 중 바뀐 것만 쓴다(s_bl_chunk_dirty 주석, N08).
  *  구조: RAM 링버퍼에 쌓고 **매 샘플마다 통째로 NVS blob 1회 쓰기**.
  *  샘플 6바이트 × 300 = 1.8KB — 2분 간격이면 약 10시간, 초반 5초 24건 포함.
  *  꽉 차면 오래된 것부터 덮어써 최근 구간을 남긴다.
@@ -3001,6 +3013,18 @@ typedef struct __attribute__((packed)) {
 
 #if BOARD_BATLOG_ENABLE
 static bat_sample_t s_bl_buf[BATLOG_MAX];
+/* ★★2026-10-20 **조각 저장** (GPT 재감사 N08 "표본 1개 추가에도 링 전체 3,300B 를 쓴다").
+ *  링을 BATLOG_CHUNK 개씩 잘라 NVS 키 "b0".."bN" 에 따로 두고, 바뀐 조각만 쓴다(보통 1개 = 220B, 93% 덜 쓴다).
+ *  주기는 그대로다(사용자 지정 5초/120초 — 바꾸지 않음). 옛 형식("buf" 한 덩어리)은 읽어서 다음 저장 때 조각으로 옮기고,
+ *  조각을 다 쓴 뒤에야 "buf" 를 지운다(측정 데이터 보존). 디코더는 두 형식 다 읽는다(sim/tools/batlog_decode.py).
+ *  쓰는 순서도 바꿨다: 조각 → n/head. 그 사이 전원이 끊기면 새 표본이 '없던 것'이 될 뿐, 낡은 칸이 새 표본으로 읽히지 않는다.
+ *  검증 sim/tools/batlog_chunk_sim.py (임의 지점 전원 차단·옛 형식 이전). */
+#define BATLOG_CHUNK   20
+#define BATLOG_NCHUNK  ((BATLOG_MAX + BATLOG_CHUNK - 1) / BATLOG_CHUNK)
+_Static_assert(BATLOG_NCHUNK <= 31, "batlog 조각 수가 dirty 비트(32)를 넘는다");
+#define BL_ALL_CHUNKS  ((1u << BATLOG_NCHUNK) - 1u)
+static uint32_t     s_bl_chunk_dirty = 0;      /* bit c = 조각 c 를 NVS 에 써야 한다 */
+static bool         s_bl_legacy_buf  = false;  /* 옛 "buf" 키가 남아 있다 → 조각을 다 쓴 뒤 지운다 */
 static uint16_t     s_bl_n = 0;     /* 저장된 개수(최대 BATLOG_MAX) */
 static uint16_t     s_bl_head = 0;  /* 다음 쓸 위치(링) */
 static uint32_t     s_bl_sess = 0;  /* 세션 번호(부팅/분리마다 증가) */
@@ -3030,6 +3054,11 @@ static uint32_t s_dis_ls_base_cnt = 0;   /* 이전 부팅들에서 누적된 진
 static int64_t  s_dis_ls_base_us  = 0;   /* 〃 sleep 시간 */
 static uint32_t s_bl_saved_lscnt  = 0;   /* NVS 에서 읽어온 값 */
 static uint64_t s_bl_saved_lsus   = 0;
+/* ★2026-10-20 같은 방식(세션 시작 기준점 + 이전 부팅 누적)으로 **거부된 절전**과 **OLED ON/OFF 명령 실패**도 세션 단위로
+ *  남긴다 (GPT 재감사 N03·N04). 거부는 아래 s_ls_rej_* 주석, OLED 실패는 oled_ui.c g_oled_onoff_fail_cnt(정상 = 0). */
+static uint32_t s_dis_rjs0 = 0, s_dis_rjh0 = 0, s_dis_olf0 = 0;          /* 세션 시작 시점 값 */
+static uint32_t s_dis_base_rjs = 0, s_dis_base_rjh = 0, s_dis_base_olf = 0;
+static uint32_t s_bl_saved_rjs = 0, s_bl_saved_rjh = 0, s_bl_saved_olf = 0;  /* NVS 에서 읽어온 값 */
 /* 세션 기준점 — 실제 정의는 아래 g_wake_iter 옆. C 의 tentative definition
  *  이라 두 번 나와도 같은 객체다(이 함수가 정의보다 앞서 나오기 때문). */
 static uint32_t s_wi_sess0[WI_COUNT];
@@ -3042,6 +3071,14 @@ static void _batlog_ls_session_begin(bool resume);   /* 정의는 아래(_batlog
  *  설계상 light sleep 을 끄므로(USB-JTAG 보호) 0 이 정상이다. */
 static volatile int64_t  s_ls_total_us = 0;   /* 부팅 후 누적 light sleep 시간 */
 static volatile uint32_t s_ls_count    = 0;   /* 진입 횟수 */
+/* ★★2026-10-20 **거부된 절전**을 따로 센다 (GPT 재감사 N04). IDF pm_impl.c 는 esp_light_sleep_start() 가 실패해도
+ *  걸린 시간을 재서 종료 콜백을 부른다 — 그래서 위 두 값에 거부가 섞여 있었다(20:10 COM7: 시도의 13%, 들고 움직인
+ *  55초는 66%). 이제 s_ls_count·s_ls_total_us 는 **실제로 잔 것만**(= CPU 깨어남 횟수), 거부는 아래 둘로:
+ *    rej_short : ESP_ERR_SLEEP_TOO_SHORT_SLEEP_DURATION — 다음 타이머가 너무 가까워 안 잤다
+ *    rej_hw    : 그 밖(ESP_ERR_SLEEP_REJECT 등) — 깨우기 신호가 이미 와 있어 하드웨어가 거부
+ *  CONFIG_ESP_SLEEP_DEBUG 가 있어야 결과를 안다(C6 =y). 없는 보드(H2)는 예전처럼 전부 '잤음'으로 센다. */
+static volatile uint32_t s_ls_rej_short = 0;
+static volatile uint32_t s_ls_rej_hw    = 0;
 
 /* ★★★2026-08-20 **수면 길이 히스토그램** — 깨어남이 어디서 오는지 가르는 계측.
  *
@@ -3115,14 +3152,25 @@ static uint32_t s_pd_rej  = 0;      /* 절전 요청이 거부된 횟수 */
 static esp_err_t _ls_exit_cb(int64_t sleep_time_us, void *arg) {
   (void)arg;
   if (sleep_time_us > 0) {
-    s_ls_total_us += sleep_time_us; s_ls_count++;
 #if CONFIG_ESP_SLEEP_DEBUG
     s_pd_last = s_slp_ctx.sleep_flags;   /* ★방금 절전에 하드웨어로 넘어간 전원차단 플래그 */
     s_pd_and &= s_pd_last;
     s_pd_or  |= s_pd_last;
     s_pd_cnt++;
     if (s_slp_ctx.sleep_request_result != ESP_OK) s_pd_rej++;
+    const esp_err_t ls_res = s_slp_ctx.sleep_request_result;
+#else
+    const esp_err_t ls_res = ESP_OK;
 #endif
+    /* ★2026-10-20 거부된 시도는 '잔 것'에서 뺀다(위 s_ls_rej_* 주석). 깬 원인도 처리하지 않는다 — 거부면 원인 레지스터가
+     *  **직전 값 그대로**라, 진동 GPIO 깸을 진동 사건으로 넘기는 지금(btn_handler_vibe_gpio_woke) 거부마다 가짜 진동이 된다.
+     *  거부된 동안의 입력은 ISR 통지(진동)·유휴 훅(LP 버튼)이 따로 알린다. */
+    if (ls_res != ESP_OK) {
+      if (ls_res == ESP_ERR_SLEEP_TOO_SHORT_SLEEP_DURATION) s_ls_rej_short++;
+      else                                                 s_ls_rej_hw++;
+      return ESP_OK;
+    }
+    s_ls_total_us += sleep_time_us; s_ls_count++;
     int b = 0;
     while (b < LS_HIST_N - 1 && sleep_time_us >= s_ls_hist_edge[b]) b++;
     s_ls_hist[b]++;
@@ -3143,8 +3191,15 @@ static esp_err_t _ls_exit_cb(int64_t sleep_time_us, void *arg) {
        *  버튼 태스크 유휴 대기를 1000ms 로 늘렸으므로, 이게 없으면 진동으로 화면 켜기가 최대 1초 늦는다.
        *  C6 의 GPIO 웨이크는 진동 핀뿐이다(CHG_STAT 웨이크는 9/11 에 껐고, PCF ~INT 는 C6 에서 안 건다).
        *  HIGH 고정 고장 센서면 웨이크 폭주가 여기를 계속 부르지만, 그 덕에 표본이 빨리 쌓여 버튼 태스크가
-       *  약 2초 만에 고장으로 판정하고 웨이크를 끊는다(btn_handler _vibration_track). */
+       *  약 2초 만에 고장으로 판정하고 웨이크를 끊는다(btn_handler _vibration_track).
+       * ★2026-10-20 지금은 버튼 태스크가 HIGH 를 보는 즉시 웨이크를 끈다(_vibe_level_service). 그리고 GPIO 깨어남
+       *  자체를 진동 사건으로 넘긴다(btn_handler_vibe_gpio_woke) — C6 은 GPIO 웨이크가 진동 핀뿐이라서.
+       *  H2(BOARD_PCF_INT_ISR)는 `~INT`(버튼)도 GPIO 웨이크라 예전처럼 통지만 한다. */
+#if BOARD_PCF_INT_ISR
       else if (wc == ESP_SLEEP_WAKEUP_GPIO) btn_handler_notify_from_lp();
+#else
+      else if (wc == ESP_SLEEP_WAKEUP_GPIO) btn_handler_vibe_gpio_woke();
+#endif
     }
   }
   return ESP_OK;
@@ -3158,7 +3213,8 @@ static void _ls_stats_init(void) {
   ESP_LOGW(TAG, "[LS] light sleep 계측 등록: %s", esp_err_to_name(e));
 #if CONFIG_ESP_SLEEP_DEBUG
   esp_sleep_set_sleep_context(&s_slp_ctx);
-  ESP_LOGW(TAG, "[PD] 절전 전원 도메인 계측 등록 (배터리 구동 중 60초마다 NVS pmdump/pd*)");
+  /* ★2026-10-20 문구 — 저장 주기가 방전 세션 시작·끝 + 300초로 바뀌었다(N03·N08) */
+  ESP_LOGW(TAG, "[PD] 절전 전원 도메인 계측 등록 (방전 세션 시작·끝 + 300초마다 NVS pmdump/pd*)");
 #endif
 }
 #else
@@ -3189,23 +3245,42 @@ static void _ls_stats_init(void) { ESP_LOGW(TAG, "[LS] PM/tickless 미사용 —
  *  → 배터리 모드 **첫 호출 1회**만 `locks0` 에 남기고, 이후 60초 갱신분은
  *    `locks` 에 쓴다. 둘의 차이가 곧 **순수 배터리 구간**의 값이다.
  *  ※`locks0` 는 부팅마다 새로 쓴다(이전 세션 값이 남아 섞이면 더 나쁘다). */
+/* ★★2026-10-20 기준점을 **방전 세션마다** 다시 잡는다 (GPT 재감사 N03).
+ *  예전: locks0 = "이번 부팅 첫 배터리 저장". USB→배터리→USB→배터리 를 한 부팅 안에서 하면 두 번째 세션의 차분에
+ *  첫 세션 + 그 사이 USB 구간이 섞였고, 저장도 60초 주기라 세션 시작보다 최대 60초 늦었다.
+ *  이제: batlog 세션이 시작(새 세션·재부팅 이어받기)되는 바로 그 순간 locks0 를 쓰고(_pmdump_session_begin),
+ *  세션이 끝나는 순간(USB 연결) 마지막 locks 를 쓴다(_pmdump_session_end). 사이에는 PMDUMP_PERIOD_S 마다.
+ *  각 스냅샷에 batlog 세션 번호·세션 경과초를 같이 남긴다 — 디코더가 "locks0~locks 가 세션 #N 의 몇 초~몇 초"인지,
+ *  다른 세션 것이 섞이지 않았는지 확인한다(sim/tools/pmdump_decode.py).
+ *  ※재부팅 이어받기면 esp_pm 카운터가 0 부터라 locks0 도 그 부팅에서 다시 잡는다(그래서 t0 가 0 이 아닐 수 있다). */
+#define PMDUMP_PERIOD_S 300   /* ★2026-10-20 배터리 중 갱신 주기 60→300초 (사용자 결정 "300초") */
+static bool    s_pm0_done        = false;   /* 이번 세션에서 locks0 를 남겼는가 */
+static int64_t s_pm_last_save_us = 0;
 static void _pmdump_save(void) {
-  static bool s_pm0_done = false;   /* 이번 부팅에서 locks0 를 남겼는가 */
   char  *buf = NULL;
   size_t len = 0;
   FILE  *ms  = open_memstream(&buf, &len);
   if (!ms) return;
   esp_pm_dump_locks(ms);
   fclose(ms);                       /* 여기서 buf/len 이 확정된다 */
+  s_pm_last_save_us = esp_timer_get_time();
   if (buf) {
     nvs_handle_t h;
     if (nvs_open("pmdump", NVS_READWRITE, &h) == ESP_OK) {
       if (len > PMDUMP_MAX - 1) len = PMDUMP_MAX - 1;
       buf[len] = 0;
-      if (!s_pm0_done) {            /* 배터리 진입 직후 = 차분의 기준점 */
-        if (nvs_set_str(h, "locks0", buf) == ESP_OK) s_pm0_done = true;
+      const uint32_t el_s = s_dis_t0_us
+          ? (uint32_t)((esp_timer_get_time() - s_dis_t0_us) / 1000000) : 0;
+      if (!s_pm0_done) {            /* 세션 시작 = 차분의 기준점 */
+        if (nvs_set_str(h, "locks0", buf) == ESP_OK) {
+          s_pm0_done = true;
+          nvs_set_u32(h, "sess0", s_bl_sess);
+          nvs_set_u32(h, "t0",    el_s);
+        }
       }
       nvs_set_str(h, "locks", buf);
+      nvs_set_u32(h, "sess1", s_bl_sess);   /* ★2026-10-20 locks 쪽 세션·경과 — sess0 와 다르면 섞인 것 */
+      nvs_set_u32(h, "t1",    el_s);
 #if CONFIG_ESP_SLEEP_DEBUG
       /* ★2026-10-07 전원 도메인 — 값이 같으면 NVS 가 쓰기를 건너뛰므로 마모 걱정 없음 */
       nvs_set_u32(h, "pdand",  s_pd_and);
@@ -3233,8 +3308,26 @@ static void _pmdump_save(void) {
     free(buf);
   }
 }
+/* ★2026-10-20 세션 경계·주기 — 위 주석. 셋 다 메인 루프에서만 불린다.
+ * ★2026-10-21 세션 끝은 **한 번만** — USB 연결 때 _enable_pm_light_sleep 이 light sleep 을 끄기 직전에 먼저 부르고,
+ *  뒤따르는 batlog 'USB 연결' 분기의 호출은 건너뛴다(그때 찍으면 SLEEP 통계가 빠진 덤프로 덮어쓴다). */
+static bool s_pm_sess_closed = false;
+static void _pmdump_session_begin(void) { s_pm0_done = false; s_pm_sess_closed = false; _pmdump_save(); }
+static void _pmdump_session_end(void) {
+  if (!s_dis_t0_us || s_pm_sess_closed) return;
+  _pmdump_save();
+  s_pm_sess_closed = true;
+}
+static void _pmdump_tick(int64_t now_us) {
+  /* 세션이 있을 때만 — 세션 전(분리 직후 기준점 수렴 중 ~25초)에 쓰면 locks 가 이전 세션의 locks0 와 짝이 된다 */
+  if (_is_usb_powered() || !s_dis_t0_us || s_pm_sess_closed) return;
+  if (now_us - s_pm_last_save_us >= (int64_t)PMDUMP_PERIOD_S * 1000000LL) _pmdump_save();
+}
 #else
 static void _pmdump_save(void) {}
+static void _pmdump_session_begin(void) {}
+static void _pmdump_session_end(void) {}
+static void _pmdump_tick(int64_t now_us) { (void)now_us; }
 #endif
 
 /* 직전 샘플 이후 light sleep 비율(0~100). 호출 시 기준점을 갱신한다. */
@@ -3263,10 +3356,21 @@ static uint8_t _ls_take_pct(int64_t now_us) {
 static void _batlog_save(void) {
   nvs_handle_t h;
   if (nvs_open("batlog", NVS_READWRITE, &h) != ESP_OK) return;
-  nvs_set_u16(h, "n",    s_bl_n);
-  nvs_set_u16(h, "head", s_bl_head);
+  /* ★2026-10-20 바뀐 조각만, n/head 보다 먼저 (s_bl_chunk_dirty 주석) */
+  for (int c = 0; c < BATLOG_NCHUNK; c++) {
+    if (!(s_bl_chunk_dirty & (1u << c))) continue;
+    char key[6];
+    snprintf(key, sizeof(key), "b%d", c);
+    const int first = c * BATLOG_CHUNK;
+    const int cnt   = (BATLOG_MAX - first < BATLOG_CHUNK) ? (BATLOG_MAX - first) : BATLOG_CHUNK;
+    if (nvs_set_blob(h, key, &s_bl_buf[first], sizeof(bat_sample_t) * cnt) == ESP_OK)
+      s_bl_chunk_dirty &= ~(1u << c);
+  }
+  /* ★2026-10-20 n·head 를 **한 항목**으로 (u32 "nh" = n<<16 | head). 따로 쓰던 시절엔 그 사이 전원 차단에
+   *  n=298·head=297 처럼 어긋나 쓴 적 없는 칸(0)이 기록 안에 보였다 — batlog_chunk_sim.py 첫 판에서 잡힘(옛 방식도 같은
+   *  구멍, 차단 1,280회 중 435회). NVS 항목 1개 쓰기는 원자적이다. 옛 "n"/"head" 는 이전이 끝날 때 지운다. */
+  nvs_set_u32(h, "nh", ((uint32_t)s_bl_n << 16) | s_bl_head);
   nvs_set_u32(h, "sess", s_bl_sess);
-  nvs_set_blob(h, "buf", s_bl_buf, sizeof(bat_sample_t) * BATLOG_MAX);
   /* ★세션 상태 — 재부팅 후 이어받기용.
    *  경과시간은 esp_timer 가 리셋되므로 **초 단위 절대 경과**로 저장한다. */
   const uint32_t el_s = s_dis_t0_us
@@ -3279,6 +3383,10 @@ static void _batlog_save(void) {
   nvs_set_u32(h, "ls_cnt", s_dis_ls_base_cnt + (s_ls_count - s_dis_ls_cnt0));
   nvs_set_u64(h, "ls_us",  (uint64_t)(s_dis_ls_base_us +
                                       (s_ls_total_us - s_dis_ls_us0)));
+  /* ★2026-10-20 세션 누적 — 거부된 절전(짧음/하드웨어)·OLED ON/OFF 실패 (위 s_dis_rjs0 주석) */
+  nvs_set_u32(h, "ls_rjs",  s_dis_base_rjs + (s_ls_rej_short - s_dis_rjs0));
+  nvs_set_u32(h, "ls_rjh",  s_dis_base_rjh + (s_ls_rej_hw    - s_dis_rjh0));
+  nvs_set_u32(h, "ol_fail", s_dis_base_olf + (g_oled_onoff_fail_cnt - s_dis_olf0));
   /* ★2026-08-20 수면 길이 히스토그램 + LP 상태 — 깨어남 출처 판별용.
    *  부팅 후 누적(세션 기준 차감 안 함) — 분포의 **모양**만 보면 되므로 충분하다.
    *  blob 한 덩어리로 저장해 NVS 엔트리 낭비를 줄인다(8×u32 = 32B). */
@@ -3298,19 +3406,72 @@ static void _batlog_save(void) {
     nvs_set_u8  (h, "lp_on", btn_handler_lp_active() ? 1 : 0);
     nvs_set_u16 (h, "poll_ms", (uint16_t)btn_handler_poll_ms());
   }
-  nvs_commit(h);
+  /* ★2026-10-20 옛 "buf" 정리 — 조각이 전부 써진 뒤에만(하나라도 실패했으면 다음 저장에 다시) */
+  if (nvs_commit(h) == ESP_OK && s_bl_legacy_buf && s_bl_chunk_dirty == 0) {
+    nvs_erase_key(h, "buf");          /* 이미 없으면 ESP_ERR_NVS_NOT_FOUND — 어느 쪽이든 정리 끝 */
+    nvs_erase_key(h, "n");            /* "nh" 로 바뀐 옛 키 */
+    nvs_erase_key(h, "head");
+    nvs_commit(h);
+    s_bl_legacy_buf = false;
+  }
   nvs_close(h);
 }
 
 static void _batlog_load(void) {
   nvs_handle_t h;
   if (nvs_open("batlog", NVS_READONLY, &h) != ESP_OK) return;
-  size_t len = sizeof(s_bl_buf);
-  if (nvs_get_blob(h, "buf", s_bl_buf, &len) != ESP_OK || len != sizeof(s_bl_buf)) {
+  /* ★2026-10-20 조각 형식("b0".."bN") 우선, 없으면 옛 "buf" (s_bl_chunk_dirty 주석).
+   *  첫 조각 길이가 다르면 표본 구조가 바뀐 것 → 예전처럼 통째로 폐기(오해석 방지). 중간 조각 하나만 없으면
+   *  (이전 도중 전원 차단 등) 그 칸만 비우고 다음 저장 때 다시 쓴다. */
+  bool bl_ok = false;
+  {
+    size_t l0 = 0;
+    const size_t want0 = sizeof(bat_sample_t) * ((BATLOG_MAX < BATLOG_CHUNK) ? BATLOG_MAX : BATLOG_CHUNK);
+    if (nvs_get_blob(h, "b0", NULL, &l0) == ESP_OK) {
+      if (l0 == want0) {
+        bl_ok = true;
+        /* ★이전 도중 끊겼으면 옛 "buf" 가 아직 있다 → 그걸 먼저 바탕으로 깔고, 써진 조각만 덮는다. 바탕 없이 빈 조각을
+         *  0 으로 채우면 옛 기록이 통째로 빈 칸이 된다(batlog_chunk_sim.py 가 잡음). 조각은 임시칸에 먼저 읽어 길이가
+         *  맞을 때만 옮긴다 — 실패한 읽기가 바탕을 덮을 일이 없다. */
+        size_t lb = sizeof(s_bl_buf);
+        const bool base = (nvs_get_blob(h, "buf", s_bl_buf, &lb) == ESP_OK && lb == sizeof(s_bl_buf));
+        if (!base) memset(s_bl_buf, 0, sizeof(s_bl_buf));
+        static bat_sample_t s_tmp[BATLOG_CHUNK];   /* 부팅 1회만 — 스택 대신 정적 220B */
+        for (int c = 0; c < BATLOG_NCHUNK; c++) {
+          char key[6];
+          snprintf(key, sizeof(key), "b%d", c);
+          const int first = c * BATLOG_CHUNK;
+          const int cnt   = (BATLOG_MAX - first < BATLOG_CHUNK) ? (BATLOG_MAX - first) : BATLOG_CHUNK;
+          const size_t want = sizeof(bat_sample_t) * cnt;
+          size_t len = sizeof(s_tmp);
+          if (nvs_get_blob(h, key, s_tmp, &len) == ESP_OK && len == want)
+            memcpy(&s_bl_buf[first], s_tmp, want);
+          else
+            s_bl_chunk_dirty |= (1u << c);   /* 바탕(또는 0) 그대로 두고 다음 저장 때 조각으로 쓴다 */
+        }
+        if (base) s_bl_legacy_buf = true;   /* 이전 도중 끊겼다 — 조각을 다 쓴 뒤 "buf" 를 지운다 */
+      }
+    } else {
+      size_t len = sizeof(s_bl_buf);
+      if (nvs_get_blob(h, "buf", s_bl_buf, &len) == ESP_OK && len == sizeof(s_bl_buf)) {
+        bl_ok = true;
+        s_bl_legacy_buf  = true;
+        s_bl_chunk_dirty = BL_ALL_CHUNKS;   /* 다음 저장에서 전부 조각으로 옮긴다 */
+        ESP_LOGW(TAG, "[BATLOG] 옛 한 덩어리 기록(buf) 발견 — 다음 저장 때 조각 %d개로 옮긴다", BATLOG_NCHUNK);
+      }
+    }
+  }
+  if (!bl_ok) {
     memset(s_bl_buf, 0, sizeof(s_bl_buf)); s_bl_n = 0; s_bl_head = 0;
   } else {
-    nvs_get_u16(h, "n", &s_bl_n);
-    nvs_get_u16(h, "head", &s_bl_head);
+    uint32_t nh = 0;   /* ★2026-10-20 한 항목 "nh" 우선(_batlog_save 주석), 없으면 옛 "n"/"head" */
+    if (nvs_get_u32(h, "nh", &nh) == ESP_OK) {
+      s_bl_n = (uint16_t)(nh >> 16); s_bl_head = (uint16_t)(nh & 0xFFFF);
+    } else {
+      nvs_get_u16(h, "n", &s_bl_n);
+      nvs_get_u16(h, "head", &s_bl_head);
+    }
+    if (s_bl_n > BATLOG_MAX || s_bl_head >= BATLOG_MAX) { s_bl_n = 0; s_bl_head = 0; }   /* 깨진 값 방어 */
     nvs_get_u32(h, "sess", &s_bl_sess);
     /* 세션 상태(있으면) — 실제 이어받기는 _batlog_try_resume 이 판단한다. */
     nvs_get_u8 (h, "dis_on",  &s_bl_saved_on);
@@ -3319,6 +3480,9 @@ static void _batlog_load(void) {
     nvs_get_u8 (h, "dis_pc0", &s_bl_saved_pct0);
     nvs_get_u32(h, "ls_cnt", &s_bl_saved_lscnt);
     nvs_get_u64(h, "ls_us",  &s_bl_saved_lsus);
+    nvs_get_u32(h, "ls_rjs",  &s_bl_saved_rjs);    /* ★2026-10-20 없으면(옛 기록) 0 그대로 */
+    nvs_get_u32(h, "ls_rjh",  &s_bl_saved_rjh);
+    nvs_get_u32(h, "ol_fail", &s_bl_saved_olf);
     /* ★2026-08-20 수면 히스토그램 이어받기 — 선언부 주석의 덮어쓰기 사고 대응 */
     {
       size_t hl = sizeof(s_ls_hist_base);
@@ -3365,6 +3529,7 @@ static bool _batlog_try_resume(bool on_battery)
 static void _batlog_reset(void) {
   s_bl_n = 0; s_bl_head = 0; s_bl_sess++;
   memset(s_bl_buf, 0, sizeof(s_bl_buf));
+  s_bl_chunk_dirty = BL_ALL_CHUNKS;   /* ★2026-10-20 조각 저장 — 지운 것도 전부 써야 한다 */
   _batlog_save();
 }
 
@@ -3385,6 +3550,29 @@ static void _batlog_ls_session_begin(bool resume) {
    *  이게 없어서 -Os 회차 비교가 통째로 틀렸다(부팅 후 누적을 세션 초로 나눠
    *  회/초가 부풀려지고 "남의 몫 -9%" 라는 불가능한 값이 나왔다). */
   for (int i = 0; i < WI_COUNT; i++) s_wi_sess0[i] = g_wake_iter[i];
+  /* ★2026-10-20 거부된 절전·OLED 실패도 같은 시점에 기준을 잡는다 (GPT 재감사 N03·N04) */
+  s_dis_rjs0 = s_ls_rej_short; s_dis_rjh0 = s_ls_rej_hw; s_dis_olf0 = g_oled_onoff_fail_cnt;
+  s_dis_base_rjs = resume ? s_bl_saved_rjs : 0;
+  s_dis_base_rjh = resume ? s_bl_saved_rjh : 0;
+  s_dis_base_olf = resume ? s_bl_saved_olf : 0;
+  /* ★2026-10-20 **이 세션을 만든 펌웨어**를 남긴다 (GPT 재감사 N03 — 측정값을 어느 판의 것인지 모르고 비교한 적이 있다).
+   *  fw0 = 세션을 시작한 판(새 세션 때만), fw = 마지막으로 이어받은 판(매 부팅). 둘이 다르면 세션 도중 판이 바뀐 것
+   *  (배터리 중 OTA). 형식 "버전 sha앞8자리" — 같은 버전 문자열이라도 sha 가 다르면 다른 빌드다. */
+  {
+    const esp_app_desc_t *d = esp_app_get_description();
+    char fw[48];
+    snprintf(fw, sizeof(fw), "%.31s %02x%02x%02x%02x", d->version,
+             d->app_elf_sha256[0], d->app_elf_sha256[1], d->app_elf_sha256[2], d->app_elf_sha256[3]);
+    nvs_handle_t h;
+    if (nvs_open("batlog", NVS_READWRITE, &h) == ESP_OK) {
+      if (!resume) nvs_set_str(h, "fw0", fw);
+      nvs_set_str(h, "fw", fw);
+      nvs_commit(h);
+      nvs_close(h);
+    }
+  }
+  /* ★2026-10-20 PM 락 차분의 기준점도 이 순간 (위 _pmdump_session_begin 주석) */
+  _pmdump_session_begin();
 }
 
 static bool     s_bl_dirty = false;
@@ -3411,6 +3599,7 @@ static void _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int
   e->sp   = s_bat_last_spread;      /* ★A 직전 측정의 ADC 표본 산포 */
   e->ls   = _ls_take_pct(esp_timer_get_time());  /* ★직전 샘플 이후 light sleep 비율 */
   e->rssi = s_last_rssi_cache;                   /* ★부모 RSSI(dBm), 127=불가 */
+  s_bl_chunk_dirty |= 1u << (s_bl_head / BATLOG_CHUNK);   /* ★2026-10-20 이 칸이 든 조각만 다시 쓴다 */
   s_bl_head = (uint16_t)((s_bl_head + 1) % BATLOG_MAX);
   if (s_bl_n < BATLOG_MAX) s_bl_n++;
   s_bl_dirty = true;       /* NVS 반영은 _batlog_flush_if_due 가 합쳐서 한다 */
@@ -3474,20 +3663,35 @@ static void _batlog_reset(void) {}
 static void _batlog_new_session(void) {}
 static void _batlog_ls_session_begin(bool resume) { (void)resume; }
 /* ★2026-10-18 BATLOG=0 빌드가 컴파일되지 않던 것 — [PWR] 줄의 _pmdump_save() 호출은 가드 밖인데
- *  정의(실물·빈 함수 둘 다)가 BATLOG 블록 안에만 있었다(감사 F12 "플래그 하나로 진단 없는 빌드가 안 됨"). */
-static void _pmdump_save(void) {}
+ *  정의(실물·빈 함수 둘 다)가 BATLOG 블록 안에만 있었다(감사 F12 "플래그 하나로 진단 없는 빌드가 안 됨").
+ * ★2026-10-20 호출부가 방전 세션 블록의 _pmdump_tick/_pmdump_session_end 로 바뀌었다(N03·N08) — 스텁도 따라 바꿈. */
+static void _pmdump_session_end(void) {}
+static void _pmdump_tick(int64_t now_us) { (void)now_us; }
 /* ★★2026-10-18 BATLOG 를 꺼도 **버튼 통지는 남긴다** (감사 보고서 F12).
  *  위 BATLOG 블록의 _ls_exit_cb 는 계측과 함께 "ULP 깨움 → 버튼 태스크 통지"(btn_handler_notify_from_lp)
  *  도 하는 유일한 통로다. 예전엔 BATLOG 를 끄면 여기가 빈 함수라 그 통로까지 사라져, LP 가 버튼을
  *  보고 HP 를 깨워도 태스크는 100ms 타임아웃까지 몰랐다(제품 빌드에서 진단을 끄는 순간 반응이 느려짐).
  *  계측은 빼고 통지만 하는 최소 콜백을 등록한다. 지금 두 보드는 BATLOG=1 이라 이 분기를 안 쓴다. */
 #if CONFIG_PM_ENABLE && CONFIG_FREERTOS_USE_TICKLESS_IDLE
+#if CONFIG_ESP_SLEEP_DEBUG
+static esp_sleep_context_t s_slp_ctx_min;   /* ★2026-10-20 거부 여부만 본다 — 위 _ls_exit_cb 와 같은 이유 */
+#endif
 static esp_err_t _ls_exit_cb_min(int64_t sleep_time_us, void *arg) {
   (void)arg;
   if (sleep_time_us > 0) {
+#if CONFIG_ESP_SLEEP_DEBUG
+    /* ★2026-10-20 거부된 시도면 깬 원인이 직전 값 그대로라 처리하지 않는다(가짜 진동 방지, 위 _ls_exit_cb 주석) */
+    if (s_slp_ctx_min.sleep_request_result != ESP_OK) return ESP_OK;
+#endif
     const esp_sleep_wakeup_cause_t wc = esp_sleep_get_wakeup_cause();
     /* ULP = LP 가 본 버튼·로터리, GPIO = 진동(위 _ls_exit_cb 와 같은 규칙) */
-    if (wc == ESP_SLEEP_WAKEUP_ULP || wc == ESP_SLEEP_WAKEUP_GPIO) btn_handler_notify_from_lp();
+    /* ★2026-10-20 GPIO 는 진동 사건으로 넘긴다(C6) — 위 _ls_exit_cb 와 같다 */
+    if (wc == ESP_SLEEP_WAKEUP_ULP) btn_handler_notify_from_lp();
+#if BOARD_PCF_INT_ISR
+    else if (wc == ESP_SLEEP_WAKEUP_GPIO) btn_handler_notify_from_lp();
+#else
+    else if (wc == ESP_SLEEP_WAKEUP_GPIO) btn_handler_vibe_gpio_woke();
+#endif
   }
   return ESP_OK;
 }
@@ -3497,6 +3701,9 @@ static void _ls_stats_init(void) {
       .enter_cb_user_arg = NULL, .exit_cb_user_arg = NULL,
       .enter_cb_prior = 0, .exit_cb_prior = 0 };
   esp_err_t e = esp_pm_light_sleep_register_cbs(&cfg);
+#if CONFIG_ESP_SLEEP_DEBUG
+  esp_sleep_set_sleep_context(&s_slp_ctx_min);
+#endif
   ESP_LOGW(TAG, "[LS] BATLOG 끔 — 계측 없이 ULP→버튼 통지만 등록: %s", esp_err_to_name(e));
 }
 #else
@@ -3801,6 +4008,13 @@ void somfy_app_console_usbsim(int off) {
 
 
 #define BAT_DISP_WIN 9
+/* ★2026-10-20 배터리 구동 + 화면 OFF(절전) 중 배터리 ADC 측정 주기 5→30초 (GPT 재감사 N08, 사용자 결정 "30초").
+ *  아래 표시 파이프라인(중앙값 9·급락 거부 3회·하한 해제 5표본·하락 1%p/회)은 '표본 수'로 세므로 주기를 늘리면 시간이
+ *  6배가 된다. 그래서 사용 지점에서 다음일 때는 5초를 유지한다: 화면 ON·USB / 평활 창이 덜 찼을 때(부팅·전환 직후 45초)
+ *  / batlog 세션 전·시작 120초(BATLOG_FAST_S, 기준점 수렴) / BOARD_BAT_SWAPPED(ADC 가 VBUS 판정).
+ *  검증 sim/tools/bat_adc_period_sim.py: 측정 −82.5%, 화면 ON 중 보이는 오차·오르내림 그대로, 화면 OFF 중 측정 오류 급락은
+ *  오히려 덜 보임(60초 오류 55→77%, 5분 오류 13→57%), 수명 끝 급강하에서 켠 순간 최대 +3%p 늦음. */
+#define BAT_ADC_OFF_IV_S 30
 /* ★2026-08-12 하한(B)·세션 기준점(C)을 걸기 전 필요한 최소 표본수.
  *  중앙값이 이상치 2개를 버틸 수 있는 최소값 = 창의 절반+1 = 5 (=25초).
  *  왜 1이 아닌가: 첫 표본 하나로 하한을 잡으면 그게 저전압 무리에 걸렸을 때
@@ -4010,6 +4224,7 @@ static void     _vibelog_load(void) {}
 static bool     _batlog_try_resume(bool on_battery) { (void)on_battery; return false; }
 static void     _batlog_new_session(void) {}
 static void     _batlog_ls_session_begin(bool resume) { (void)resume; }
+static void     _pmdump_session_end(void) {}   /* ★2026-10-21 _enable_pm_light_sleep 이 부른다(전방 선언) */
 static void     _batlog_flush_if_due(int64_t now_us, bool force) { (void)now_us; (void)force; }
 static void     _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int pm, int ev)
                 { (void)t_s; (void)mv; (void)pct; (void)radio; (void)panel; (void)pm; (void)ev; }
@@ -4133,8 +4348,13 @@ static void _enter_sleep(void) {
   if (s_is_sleeping) return;
   s_is_sleeping = true;
 
+  /* ★2026-10-20 "slow-poll=5s" 하드코딩 → 실제 설정값(GPT 재감사 — 로그가 설정 7000ms 와 달랐다) */
+#ifdef CONFIG_ICD_SLOW_POLL_INTERVAL_MS
   ESP_LOGI(TAG, "절전 모드 진입 — OLED off, PM auto-light-sleep 활성 "
-                "(Thread SED 가 slow-poll=5s 로 Matter 수신 유지)");
+                "(Thread SED 가 slow-poll=%dms 로 Matter 수신 유지)", (int)CONFIG_ICD_SLOW_POLL_INTERVAL_MS);
+#else
+  ESP_LOGI(TAG, "절전 모드 진입 — OLED off, PM auto-light-sleep 활성");
+#endif
 
   /* OLED panel off — 화면만 끄고 state 는 보존 (설정 모드 등 복귀용) */
   if (s_setup_screen == SETUP_NONE) {
@@ -5610,7 +5830,11 @@ void somfy_app_run(void *arg) {
 #define SOMFY_VIBE_WAKE 1
 #endif
 #if SOMFY_VIBE_WAKE
-  _arm_level_wake(VIBE_PIN,        GPIO_INTR_HIGH_LEVEL, "VIBE");
+  /* ★★2026-10-20 _arm_level_wake(VIBE…) → btn_handler_vibe_wake_enable() (GPT 재감사 N01·N02).
+   *  진동 웨이크는 이제 버튼 태스크가 **핀이 LOW 일 때 걸고 HIGH 를 보면 바로 끈다**(button_handler.c
+   *  _vibe_level_service). 여기서 직접 걸면 주인이 둘이 되어 태스크가 상태를 모른다. 부팅 때 HIGH 여도
+   *  첫 LOW 에서 걸리므로 _arm_level_wake 의 '이미 웨이크 레벨이면 건너뜀'으로 영영 안 걸리던 구멍도 막힌다. */
+  btn_handler_vibe_wake_enable();
 #else
   ESP_LOGW(TAG, "[WAKE] VIBE(IO%d) 웨이크 **비활성**(원인 격리 빌드)", (int)VIBE_PIN);
 #endif
@@ -5914,7 +6138,15 @@ void somfy_app_run(void *arg) {
 #endif
     int64_t now_us = esp_timer_get_time();
     static int64_t _dbg_us = -5000000;
-    if (now_us - _dbg_us >= 5LL * 1000 * 1000) {
+    /* ★2026-10-20 배터리 + 화면 OFF 면 30초 (BAT_ADC_OFF_IV_S 주석 — 5초를 유지하는 조건 포함). 화면이 켜지면 조건이 바로
+     *  풀려, 마지막 측정이 5초보다 오래됐으면 이번 회전에 곧장 잰다. */
+    int64_t _bat_iv_us = 5LL * 1000 * 1000;
+#if BOARD_HAS_BAT_ADC && !BOARD_BAT_SWAPPED
+    if (s_is_sleeping && !_is_usb_powered() && s_bat_hist_n >= BAT_DISP_WIN &&
+        s_dis_t0_us && (now_us - s_dis_t0_us) >= (int64_t)BATLOG_FAST_S * 1000000LL)
+      _bat_iv_us = (int64_t)BAT_ADC_OFF_IV_S * 1000000LL;
+#endif
+    if (now_us - _dbg_us >= _bat_iv_us) {
       _dbg_us = now_us;
 #if BOARD_HAS_BAT_ADC
 #if BOARD_BAT_SWAPPED
@@ -6343,6 +6575,7 @@ void somfy_app_run(void *arg) {
                  BAT_FLOOR_MIN_N);
       } else if (!was_usb_pwr && now_usb) {
         ESP_LOGW(TAG, "[BATLOG] 방전 종료 (USB 연결)");
+        _pmdump_session_end();                /* ★2026-10-20 세션 끝 PM 스냅샷 — 마지막 300초 구간을 잃지 않게 (N03) */
         _batlog_flush_if_due(now_us, true);   /* 남은 것 즉시 저장 */
         _bat_smooth_reset();                  /* ★C 대칭 — 배터리 전압을 충전 구간에 끌고 가지 않는다 */
         s_pct_floor = BAT_PCT_UNKNOWN;        /* ★B 하한 해제(충전 중 상승 허용) */
@@ -6391,6 +6624,7 @@ void somfy_app_run(void *arg) {
                                 ? (int64_t)BATLOG_FAST_IV * 1000000LL
                                 : (int64_t)BATLOG_SLOW_IV * 1000000LL;
       _batlog_flush_if_due(now_us, false);   /* 쌓인 기록을 2초 단위로 NVS 반영 */
+      _pmdump_tick(now_us);                  /* ★2026-10-20 PM 락 스냅샷 — 세션 중 300초마다 (N08, 사용자 결정) */
       _vibelog_tick(now_us);                 /* ★진동 진단 기록(창 3초, NVS 는 10초 합침) */
       if (!now_usb && s_dis_t0_us && s_bat_last_sm_mv > 0 &&
           (now_us - s_dis_prev_us) >= _iv_us) {
@@ -6533,7 +6767,8 @@ void somfy_app_run(void *arg) {
          *  표시(chg_percent) / 평활 / 원본 / 하한 / 천장을 한 줄로 본다. */
         /* ★2026-08-24 배터리 구동 중이면 PM 락 보유자를 NVS 에 갱신 (위 주석 참조).
          *  USB 중에는 어차피 light sleep 을 끄므로 의미가 없다. */
-        if (!_is_usb_powered()) _pmdump_save();
+        /* ★2026-10-20 PM 락 저장은 여기서 뺐다 — 60→300초(사용자 결정 "300초", GPT 재감사 N08)로 바꾸면서 메인 루프의
+         *  방전 세션 블록으로 옮겼다(_pmdump_tick, 이 60초 블록 안이면 간격이 300~360초로 어긋난다). */
         ESP_LOGW(TAG, "[PWR2] 표시=%d%%  평활=%dmV  원본=%dmV  하한=%d  천장=%d%%  "
                       "nobat=%d judged=%d",
                  (s_ui.chg_percent == BAT_PCT_UNKNOWN) ? -1 : (int)s_ui.chg_percent,
@@ -6556,7 +6791,8 @@ void somfy_app_run(void *arg) {
           btn_handler_lp_latch_stats(&ntf, &lat);
           if (dt > 0.5)
             ESP_LOGW(TAG, "[LPWAKE] 폴 %.1f회/초  seq 증가(로터리+상태변화) %.2f회/초 "
-                          "(seq +%u / %.0f초)  태스크통지 누적 %u(절전복귀) + %u(유휴훅)  래치 0x%04X",
+                          /* ★2026-10-20 '래치' → '확정대기': 공유 래치가 LP 세대 카운터로 바뀌어(N06) HP 쪽 붙잡은 비트를 보인다 */
+                          "(seq +%u / %.0f초)  태스크통지 누적 %u(절전복귀) + %u(유휴훅)  확정대기 0x%04X",
                      (pc - s_lp_p0) / dt, (sq - s_lp_s0) / dt,
                      (unsigned)(sq - s_lp_s0), dt,
                      (unsigned)ntf, (unsigned)btn_handler_idle_notify_count(), (unsigned)lat);

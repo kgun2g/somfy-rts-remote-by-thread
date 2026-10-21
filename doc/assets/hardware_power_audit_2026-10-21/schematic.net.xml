@@ -1,0 +1,1737 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<export version="E">
+  <design>
+    <source>D:\dev\workspaces\somfy-blinds-things-by-claude\kicad\somfy_blinds_v6.kicad_sch</source>
+    <date>2026-10-21T00:12:47</date>
+    <tool>Eeschema 10.0.6</tool>
+    <sheet number="1" name="/" tstamps="/">
+      <title_block>
+        <title>Somfy RTS Controller By Smartthings (Vertical6)</title>
+        <company>DIY - XIAO ESP32-C6 + CC1101</company>
+        <rev>1.5</rev>
+        <date>2026-08-16</date>
+        <source>somfy_blinds_v6.kicad_sch</source>
+        <comment number="1" value="SIQ-02FVS3 Rotary Encoder"/>
+        <comment number="2" value="PCF8575"/>
+        <comment number="3" value=""/>
+        <comment number="4" value=""/>
+        <comment number="5" value=""/>
+        <comment number="6" value=""/>
+        <comment number="7" value=""/>
+        <comment number="8" value=""/>
+        <comment number="9" value=""/>
+      </title_block>
+    </sheet>
+  </design>
+  <components>
+    <comp ref="BAT1">
+      <value>BAT</value>
+      <footprint>Connector_JST:JST_GH_SM02B-GHS-TB_1x02-1MP_P1.25mm_Horizontal</footprint>
+      <description>JST Connector  2 pins</description>
+      <fields>
+        <field name="Footprint">Connector_JST:JST_GH_SM02B-GHS-TB_1x02-1MP_P1.25mm_Horizontal</field>
+        <field name="Datasheet"/>
+        <field name="Description">JST Connector  2 pins</field>
+      </fields>
+      <libsource lib="PCM_SL_Connectors" part="JST_02" description="JST Connector  2 pins"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="JST 2"/>
+      <property name="ki_fp_filters" value="Connector_JST:JST_EH_S2B-EH_1x02_P2.50mm_Horizontal"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>f5f1c2b2-7de4-4856-8e96-4ae4e0e63c2d</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C1">
+      <value>0.1uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_0402_1005Metric</footprint>
+      <datasheet>https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-25565</field>
+        <field name="Voltage">16V</field>
+        <field name="Tolerance">10%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_0402_1005Metric</field>
+        <field name="Datasheet">https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="0.1uF_0402_16V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-25565"/>
+      <property name="Voltage" value="16V"/>
+      <property name="Tolerance" value="10%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor 100nF"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>77777777-0001-0001-0001-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C2">
+      <value>0.1uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_0402_1005Metric</footprint>
+      <datasheet>https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-25565</field>
+        <field name="Voltage">16V</field>
+        <field name="Tolerance">10%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_0402_1005Metric</field>
+        <field name="Datasheet">https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="0.1uF_0402_16V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-25565"/>
+      <property name="Voltage" value="16V"/>
+      <property name="Tolerance" value="10%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor 100nF"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>77777777-0002-0002-0002-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C3">
+      <value>0.1uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_0402_1005Metric</footprint>
+      <datasheet>https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-25565</field>
+        <field name="Voltage">16V</field>
+        <field name="Tolerance">10%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_0402_1005Metric</field>
+        <field name="Datasheet">https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="0.1uF_0402_16V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-25565"/>
+      <property name="Voltage" value="16V"/>
+      <property name="Tolerance" value="10%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor 100nF"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>77777777-0003-0003-0003-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C4">
+      <value>10uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_0402_1005Metric</footprint>
+      <datasheet>https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-14848</field>
+        <field name="Voltage">6.3V</field>
+        <field name="Tolerance">20%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_0402_1005Metric</field>
+        <field name="Datasheet">https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="10uF_0402_6.3V_20%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-14848"/>
+      <property name="Voltage" value="6.3V"/>
+      <property name="Tolerance" value="20%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>77777777-0004-0004-0004-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C5">
+      <value>0.1uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_0402_1005Metric</footprint>
+      <datasheet>https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-25565</field>
+        <field name="Voltage">16V</field>
+        <field name="Tolerance">10%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_0402_1005Metric</field>
+        <field name="Datasheet">https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="0.1uF_0402_16V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-25565"/>
+      <property name="Voltage" value="16V"/>
+      <property name="Tolerance" value="10%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor 100nF"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>e449a7ab-a1e2-4469-8dd7-857c7f0aa624</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C6">
+      <value>0.1uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_0402_1005Metric</footprint>
+      <datasheet>https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-25565</field>
+        <field name="Voltage">16V</field>
+        <field name="Tolerance">10%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_0402_1005Metric</field>
+        <field name="Datasheet">https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="0.1uF_0402_16V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-25565"/>
+      <property name="Voltage" value="16V"/>
+      <property name="Tolerance" value="10%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor 100nF"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>59bfb322-3abd-42e7-ab6a-c811fb2ce8f5</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C7">
+      <value>220uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_1206_3216Metric</footprint>
+      <datasheet>https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-24990</field>
+        <field name="Voltage">6.3V</field>
+        <field name="Tolerance">20%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_1206_3216Metric</field>
+        <field name="Datasheet">https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="100uF_1206_50V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-24990"/>
+      <property name="Voltage" value="6.3V"/>
+      <property name="Tolerance" value="20%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>66335472-4749-4bb1-9b0b-190533d35b80</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C8">
+      <value>220uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_1206_3216Metric</footprint>
+      <datasheet>https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-24990</field>
+        <field name="Voltage">6.3V</field>
+        <field name="Tolerance">20%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_1206_3216Metric</field>
+        <field name="Datasheet">https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="100uF_1206_50V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-24990"/>
+      <property name="Voltage" value="6.3V"/>
+      <property name="Tolerance" value="20%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>f0380903-7265-4a83-9fa3-a6323d48c320</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C9">
+      <value>220uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_1206_3216Metric</footprint>
+      <datasheet>https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-24990</field>
+        <field name="Voltage">6.3V</field>
+        <field name="Tolerance">20%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_1206_3216Metric</field>
+        <field name="Datasheet">https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="100uF_1206_50V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-24990"/>
+      <property name="Voltage" value="6.3V"/>
+      <property name="Tolerance" value="20%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>6f7f7be4-fde8-41bf-8319-05cdf3e16030</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C10">
+      <value>220uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_1206_3216Metric</footprint>
+      <datasheet>https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-24990</field>
+        <field name="Voltage">6.3V</field>
+        <field name="Tolerance">20%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_1206_3216Metric</field>
+        <field name="Datasheet">https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="100uF_1206_50V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-24990"/>
+      <property name="Voltage" value="6.3V"/>
+      <property name="Tolerance" value="20%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>88a77937-b169-4b9f-8552-ee23b84ca158</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="C11">
+      <value>220uF</value>
+      <footprint>PCM_SparkFun-Capacitor:C_1206_3216Metric</footprint>
+      <datasheet>https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</datasheet>
+      <description>Unpolarized capacitor</description>
+      <fields>
+        <field name="PROD_ID">CAP-24990</field>
+        <field name="Voltage">6.3V</field>
+        <field name="Tolerance">20%</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_1206_3216Metric</field>
+        <field name="Datasheet">https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Capacitor" part="100uF_1206_50V_10%" description="Unpolarized capacitor"/>
+      <property name="PROD_ID" value="CAP-24990"/>
+      <property name="Voltage" value="6.3V"/>
+      <property name="Tolerance" value="20%"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun cap capacitor"/>
+      <property name="ki_fp_filters" value="C_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>170f5ac9-7f2d-4ae4-919c-ef581a52a4a8</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="DOWN1">
+      <value>BTN_DOWN</value>
+      <footprint>Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</footprint>
+      <fields>
+        <field name="Footprint">Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="SomfyBlinds" part="SW_TACTILE" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>c89fc362-a2d1-4396-b9ba-e943a43da4a5</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="ENC1">
+      <value>SIQ-02FVS3</value>
+      <footprint>siq:SIQ-02FVS3</footprint>
+      <fields>
+        <field name="Manufacturer Part">SIQ-02FVS3</field>
+        <field name="Manufacturer">MITSUMI(美上美)</field>
+        <field name="Supplier Part">C2925423</field>
+        <field name="Supplier">LCSC</field>
+        <field name="Footprint">siq:SIQ-02FVS3</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="siq" part="SIQ-02FVS3" description=""/>
+      <property name="Manufacturer Part" value="SIQ-02FVS3"/>
+      <property name="Manufacturer" value="MITSUMI(美上美)"/>
+      <property name="Supplier Part" value="C2925423"/>
+      <property name="Supplier" value="LCSC"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="exclude_from_bom"/>
+      <property name="exclude_from_pos_files"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>f590c8c4-c221-44e9-a896-6f575b096e8f</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="4"/>
+            <pin num="5"/>
+            <pin num="6"/>
+            <pin num="A"/>
+            <pin num="S"/>
+            <pin num="C"/>
+            <pin num="B"/>
+            <pin num="3"/>
+            <pin num="2"/>
+            <pin num="1"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="LEFT1">
+      <value>BTN_LEFT</value>
+      <footprint>Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</footprint>
+      <fields>
+        <field name="Footprint">Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="SomfyBlinds" part="SW_TACTILE" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>3569143b-439b-4747-9ac6-1dee283e6f33</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="PROG1">
+      <value>BTN_PROG</value>
+      <footprint>Button_Switch_SMD:SW_SPST_TL3342</footprint>
+      <fields>
+        <field name="Footprint">Button_Switch_SMD:SW_SPST_TL3342</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="SomfyBlinds" part="SW_TACTILE" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="exclude_from_bom"/>
+      <property name="exclude_from_pos_files"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>55555555-0008-0008-0008-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R1">
+      <value>4.7k</value>
+      <footprint>PCM_SparkFun-Resistor:R_0402_1005Metric</footprint>
+      <datasheet>https://www.vishay.com/docs/20035/dcrcwe3.pdf</datasheet>
+      <description>Resistor</description>
+      <fields>
+        <field name="PROD_ID">RES-15343</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Resistor" part="4.7k_0402" description="Resistor"/>
+      <property name="PROD_ID" value="RES-15343"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun R res resistor"/>
+      <property name="ki_fp_filters" value="R_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>66666666-0001-0001-0001-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R2">
+      <value>4.7k</value>
+      <footprint>PCM_SparkFun-Resistor:R_0402_1005Metric</footprint>
+      <datasheet>https://www.vishay.com/docs/20035/dcrcwe3.pdf</datasheet>
+      <description>Resistor</description>
+      <fields>
+        <field name="PROD_ID">RES-15343</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Resistor" part="4.7k_0402" description="Resistor"/>
+      <property name="PROD_ID" value="RES-15343"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun R res resistor"/>
+      <property name="ki_fp_filters" value="R_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>66666666-0002-0002-0002-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R3">
+      <value>10k</value>
+      <footprint>PCM_SparkFun-Resistor:R_0402_1005Metric</footprint>
+      <datasheet>https://www.vishay.com/docs/20035/dcrcwe3.pdf</datasheet>
+      <description>Resistor</description>
+      <fields>
+        <field name="PROD_ID">RES-25567</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Resistor" part="10k_0402" description="Resistor"/>
+      <property name="PROD_ID" value="RES-25567"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun R res resistor"/>
+      <property name="ki_fp_filters" value="R_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>6d8d940e-f977-4d8c-8942-ac062cd2158b</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R4">
+      <value>100k</value>
+      <footprint>PCM_SparkFun-Resistor:R_0402_1005Metric</footprint>
+      <datasheet>https://www.vishay.com/docs/20035/dcrcwe3.pdf</datasheet>
+      <description>Resistor</description>
+      <fields>
+        <field name="PROD_ID">RES-25013</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Resistor" part="100k_0402" description="Resistor"/>
+      <property name="PROD_ID" value="RES-25013"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun R res resistor"/>
+      <property name="ki_fp_filters" value="R_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>dc92b633-10c2-410d-91f1-319b0ddfa916</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R5">
+      <value>100k</value>
+      <footprint>PCM_SparkFun-Resistor:R_0402_1005Metric</footprint>
+      <datasheet>https://www.vishay.com/docs/20035/dcrcwe3.pdf</datasheet>
+      <description>Resistor</description>
+      <fields>
+        <field name="PROD_ID">RES-25013</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Resistor" part="100k_0402" description="Resistor"/>
+      <property name="PROD_ID" value="RES-25013"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun R res resistor"/>
+      <property name="ki_fp_filters" value="R_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>8c70b8b9-a8a5-41d2-b482-b849b5dd90f7</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R6">
+      <value>100k</value>
+      <footprint>PCM_SparkFun-Resistor:R_0402_1005Metric</footprint>
+      <datasheet>https://www.vishay.com/docs/20035/dcrcwe3.pdf</datasheet>
+      <description>Resistor</description>
+      <fields>
+        <field name="PROD_ID">RES-25013</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Resistor" part="100k_0402" description="Resistor"/>
+      <property name="PROD_ID" value="RES-25013"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun R res resistor"/>
+      <property name="ki_fp_filters" value="R_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>58d0ea1e-1076-42c7-8303-9d9bd254ea8b</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R7">
+      <value>150k</value>
+      <footprint>PCM_SparkFun-Resistor:R_0402_1005Metric</footprint>
+      <datasheet>https://www.vishay.com/docs/20035/dcrcwe3.pdf</datasheet>
+      <description>Resistor</description>
+      <fields>
+        <field name="PROD_ID">RES-15093</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Resistor" part="150k_0402" description="Resistor"/>
+      <property name="PROD_ID" value="RES-15093"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun R res resistor"/>
+      <property name="ki_fp_filters" value="R_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>11b6e697-3785-4a87-b2a2-e0793c9fa02d</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R8">
+      <value>4.7k</value>
+      <footprint>PCM_SparkFun-Resistor:R_0402_1005Metric</footprint>
+      <datasheet>https://www.vishay.com/docs/20035/dcrcwe3.pdf</datasheet>
+      <description>Resistor</description>
+      <fields>
+        <field name="PROD_ID">RES-15343</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Resistor" part="4.7k_0402" description="Resistor"/>
+      <property name="PROD_ID" value="RES-15343"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun R res resistor"/>
+      <property name="ki_fp_filters" value="R_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>a80e10ba-6938-4d47-adb1-3b94446428d9</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="R9">
+      <value>4.7k</value>
+      <footprint>PCM_SparkFun-Resistor:R_0402_1005Metric</footprint>
+      <datasheet>https://www.vishay.com/docs/20035/dcrcwe3.pdf</datasheet>
+      <description>Resistor</description>
+      <fields>
+        <field name="PROD_ID">RES-15343</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+      </fields>
+      <libsource lib="PCM_SparkFun-Resistor" part="4.7k_0402" description="Resistor"/>
+      <property name="PROD_ID" value="RES-15343"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="SparkFun R res resistor"/>
+      <property name="ki_fp_filters" value="R_*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>bb1303b6-cd6d-44f0-97c3-2c9cc2c7e110</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="RIGHT1">
+      <value>BTN_RIGHT</value>
+      <footprint>Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</footprint>
+      <description>Auxiliary tactile button (parallel to rotary click)</description>
+      <fields>
+        <field name="Footprint">Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</field>
+        <field name="Datasheet"/>
+        <field name="Description">Auxiliary tactile button (parallel to rotary click)</field>
+      </fields>
+      <libsource lib="SomfyBlinds" part="SW_TACTILE" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>96f7f94d-c03f-4cb9-a54b-68cdf7daf192</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="SELECT1">
+      <value>BTN_SELECT</value>
+      <footprint>Button_Switch_SMD:SW_SPST_TL3342</footprint>
+      <fields>
+        <field name="Footprint">Button_Switch_SMD:SW_SPST_TL3342</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="SomfyBlinds" part="SW_TACTILE" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="exclude_from_bom"/>
+      <property name="exclude_from_pos_files"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>55555555-0007-0007-0007-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="SETUP1">
+      <value>BTN_SETUP</value>
+      <footprint>Button_Switch_SMD:SW_SPST_TL3342</footprint>
+      <fields>
+        <field name="Footprint">Button_Switch_SMD:SW_SPST_TL3342</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="SomfyBlinds" part="SW_TACTILE" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="exclude_from_bom"/>
+      <property name="exclude_from_pos_files"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>fb58e982-21cb-4bc2-9aff-28b96e9dcfa2</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="STOP1">
+      <value>BTN_STOP</value>
+      <footprint>Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</footprint>
+      <description>Auxiliary tactile button (parallel to rotary click)</description>
+      <fields>
+        <field name="Footprint">Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</field>
+        <field name="Datasheet"/>
+        <field name="Description">Auxiliary tactile button (parallel to rotary click)</field>
+      </fields>
+      <libsource lib="SomfyBlinds" part="SW_TACTILE" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>e7c05e55-b15a-4826-a854-553dc6beb39b</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="SW_I2C1">
+      <value>CAS-220TB1</value>
+      <footprint>CAS:CAS-220TB1</footprint>
+      <datasheet>file://D:\dev\workspaces\somfy-blinds-things-by-claude\kicad\libs\cas\CAS-220TB1.pdf</datasheet>
+      <fields>
+        <field name="Footprint">CAS:CAS-220TB1</field>
+        <field name="Datasheet">file://D:\dev\workspaces\somfy-blinds-things-by-claude\kicad\libs\cas\CAS-220TB1.pdf</field>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="CAS" part="CAS-220TB1" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>bc2bf9f3-942e-48f6-8094-dce327867ad4</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="4"/>
+            <pin num="1"/>
+            <pin num="5"/>
+            <pin num="2"/>
+            <pin num="6"/>
+            <pin num="3"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="U1">
+      <value>XIAO-ESP32-C6-SMD_HOLE</value>
+      <footprint>xiao:XIAO-ESP32-C6-SMD_HOLE</footprint>
+      <datasheet>https://www.espressif.com/sites/default/files/documentation/esp32-h2_datasheet_en.pdf</datasheet>
+      <description>"RF Module, ESP32-H2 SoC, Bluetooth 5.2 (LE), IEEE 802.15.4, 32-bit, 3.3V, SMD, onboard antenna."</description>
+      <fields>
+        <field name="Footprint">xiao:XIAO-ESP32-C6-SMD_HOLE</field>
+        <field name="Datasheet">https://www.espressif.com/sites/default/files/documentation/esp32-h2_datasheet_en.pdf</field>
+        <field name="Description">"RF Module, ESP32-H2 SoC, Bluetooth 5.2 (LE), IEEE 802.15.4, 32-bit, 3.3V, SMD, onboard antenna."</field>
+      </fields>
+      <libsource lib="Seeed_Studio_XIAO_Series" part="XIAO-ESP32-C6-SMD_HOLE" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="exclude_from_bom"/>
+      <property name="exclude_from_pos_files"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>11111111-0001-0001-0001-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+            <pin num="3"/>
+            <pin num="4"/>
+            <pin num="5"/>
+            <pin num="6"/>
+            <pin num="7"/>
+            <pin num="15"/>
+            <pin num="16"/>
+            <pin num="17"/>
+            <pin num="23"/>
+            <pin num="18"/>
+            <pin num="19"/>
+            <pin num="24"/>
+            <pin num="20"/>
+            <pin num="21"/>
+            <pin num="22"/>
+            <pin num="14"/>
+            <pin num="13"/>
+            <pin num="12"/>
+            <pin num="11"/>
+            <pin num="10"/>
+            <pin num="9"/>
+            <pin num="8"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="U2">
+      <value>OLED 0.96" I2C</value>
+      <footprint>SomfyBlinds:OLED_0.96_I2C_4PIN_NOHOLE</footprint>
+      <datasheet>kicad-embed://128x64_oled_4pin.png</datasheet>
+      <description>SSD1315 OLED module, 0.96 inch, 128x64, I2C</description>
+      <fields>
+        <field name="Footprint">SomfyBlinds:OLED_0.96_I2C_4PIN_NOHOLE</field>
+        <field name="Datasheet">kicad-embed://128x64_oled_4pin.png</field>
+        <field name="Description">SSD1315 OLED module, 0.96 inch, 128x64, I2C</field>
+      </fields>
+      <libsource lib="SomfyBlinds" part="OLEDM0.96_1x-I2C" description="SSD1315 OLED module, 0.96 inch, 128x64, I2C"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="exclude_from_bom"/>
+      <property name="exclude_from_pos_files"/>
+      <property name="ki_keywords" value="OLED 0.96 I2C"/>
+      <property name="ki_fp_filters" value="ER?OLEDM0.91?1x?I2C*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>04d1d719-710c-4254-af95-d47f8e9d3c61</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="3"/>
+            <pin num="4"/>
+            <pin num="2"/>
+            <pin num="1"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="U3">
+      <value>PCF8575DBR</value>
+      <footprint>Package_SO:SSOP-24_5.3x8.2mm_P0.65mm</footprint>
+      <datasheet>https://www.ti.com/lit/ds/symlink/pcf8575.pdf</datasheet>
+      <description>16 Bits Port/Expander to I2C Bus, SSOP-24</description>
+      <fields>
+        <field name="Footprint">Package_SO:SSOP-24_5.3x8.2mm_P0.65mm</field>
+        <field name="Datasheet">https://www.ti.com/lit/ds/symlink/pcf8575.pdf</field>
+        <field name="Description">16 Bits Port/Expander to I2C Bus, SSOP-24</field>
+      </fields>
+      <libsource lib="Interface_Expansion" part="PCF8575DBR" description="16 Bits Port/Expander to I2C Bus, SSOP-24"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="I2C Expander"/>
+      <property name="ki_fp_filters" value="SSOP*5.3x8.2mm*P0.65mm*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>33333333-0003-0003-0003-000000000001</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="22"/>
+            <pin num="23"/>
+            <pin num="21"/>
+            <pin num="2"/>
+            <pin num="3"/>
+            <pin num="1"/>
+            <pin num="24"/>
+            <pin num="12"/>
+            <pin num="4"/>
+            <pin num="5"/>
+            <pin num="6"/>
+            <pin num="7"/>
+            <pin num="8"/>
+            <pin num="9"/>
+            <pin num="10"/>
+            <pin num="11"/>
+            <pin num="13"/>
+            <pin num="14"/>
+            <pin num="15"/>
+            <pin num="16"/>
+            <pin num="17"/>
+            <pin num="18"/>
+            <pin num="19"/>
+            <pin num="20"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="U5">
+      <value>E07-400MM10S</value>
+      <footprint>cc1101:E07-400MM10S</footprint>
+      <datasheet>kicad-embed://E07-400MM10S_E07-900MM10S_UserManual_EN_v1.0.pdf</datasheet>
+      <description>CC1101 433MHz SPI (10mm X 10mm)</description>
+      <fields>
+        <field name="Footprint">cc1101:E07-400MM10S</field>
+        <field name="Datasheet">kicad-embed://E07-400MM10S_E07-900MM10S_UserManual_EN_v1.0.pdf</field>
+        <field name="Description">CC1101 433MHz SPI (10mm X 10mm)</field>
+      </fields>
+      <libsource lib="SomfyBlinds" part="E07-400MM10S" description="CC1101 433MHz SPI (10mm X 10mm)"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="ki_keywords" value="CC1101"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>04fece3b-0464-4cac-adb1-d91662f8b028</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+            <pin num="3"/>
+            <pin num="4"/>
+            <pin num="5"/>
+            <pin num="20"/>
+            <pin num="6"/>
+            <pin num="19"/>
+            <pin num="7"/>
+            <pin num="18"/>
+            <pin num="8"/>
+            <pin num="17"/>
+            <pin num="9"/>
+            <pin num="16"/>
+            <pin num="10"/>
+            <pin num="15"/>
+            <pin num="14"/>
+            <pin num="13"/>
+            <pin num="12"/>
+            <pin num="11"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="UP1">
+      <value>BTN_UP</value>
+      <footprint>Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</footprint>
+      <fields>
+        <field name="Footprint">Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <libsource lib="SomfyBlinds" part="SW_TACTILE" description=""/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>fc75f4da-1cba-49d6-a17f-cf78ec3f261a</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+    <comp ref="VS1">
+      <value>C06</value>
+      <footprint>SomfyBlinds:Vibration_SMD_0805_2012Metric</footprint>
+      <datasheet>kicad-embed://C06_C08_VIE.png</datasheet>
+      <description>C06 Vibration SMD 0805 (2012)</description>
+      <fields>
+        <field name="Footprint">SomfyBlinds:Vibration_SMD_0805_2012Metric</field>
+        <field name="Datasheet">kicad-embed://C06_C08_VIE.png</field>
+        <field name="Description">C06 Vibration SMD 0805 (2012)</field>
+      </fields>
+      <libsource lib="Sensor_Temperature" part="KTY85" description="KTY85 series silicon temperature sensors, polarized, SOD80"/>
+      <property name="Sheetname" value="somfy_blinds_v6"/>
+      <property name="Sheetfile" value="somfy_blinds_v6.kicad_sch"/>
+      <property name="exclude_from_bom"/>
+      <property name="exclude_from_pos_files"/>
+      <property name="ki_keywords" value="silicon temperature sensor diode"/>
+      <property name="ki_fp_filters" value="SOD80*"/>
+      <sheetpath names="/" tstamps="/"/>
+      <tstamps>a471cded-ada2-48b0-b153-bf0f73304338</tstamps>
+      <units>
+        <unit name="A">
+          <pins>
+            <pin num="1"/>
+            <pin num="2"/>
+          </pins>
+        </unit>
+      </units>
+    </comp>
+  </components>
+  <libparts>
+    <libpart lib="CAS" part="CAS-220TB1">
+      <docs>file://D:\dev\workspaces\somfy-blinds-things-by-claude\kicad\libs\cas\CAS-220TB1.pdf</docs>
+      <fields>
+        <field name="Reference">SW</field>
+        <field name="Value">CAS-220TB1</field>
+        <field name="Footprint">CAS:CAS-220TB1</field>
+        <field name="Datasheet">file://D:\dev\workspaces\somfy-blinds-things-by-claude\kicad\libs\cas\CAS-220TB1.pdf</field>
+        <field name="Description"/>
+      </fields>
+      <pins>
+        <pin num="1" name="1" type="unspecified"/>
+        <pin num="2" name="2" type="unspecified"/>
+        <pin num="3" name="3" type="unspecified"/>
+        <pin num="4" name="4" type="unspecified"/>
+        <pin num="5" name="5" type="unspecified"/>
+        <pin num="6" name="6" type="unspecified"/>
+      </pins>
+    </libpart>
+    <libpart lib="Interface_Expansion" part="PCF8575DBR">
+      <description>16 Bits Port/Expander to I2C Bus, SSOP-24</description>
+      <docs>https://www.ti.com/lit/ds/symlink/pcf8575.pdf</docs>
+      <footprints>
+        <fp>SSOP*5.3x8.2mm*P0.65mm*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">U</field>
+        <field name="Value">PCF8575DBR</field>
+        <field name="Footprint">Package_SO:SSOP-24_5.3x8.2mm_P0.65mm</field>
+        <field name="Datasheet">https://www.ti.com/lit/ds/symlink/pcf8575.pdf</field>
+        <field name="Description">16 Bits Port/Expander to I2C Bus, SSOP-24</field>
+      </fields>
+      <pins>
+        <pin num="1" name="~{INT}" type="open_collector"/>
+        <pin num="2" name="A1" type="input"/>
+        <pin num="3" name="A2" type="input"/>
+        <pin num="4" name="P0" type="bidirectional"/>
+        <pin num="5" name="P1" type="bidirectional"/>
+        <pin num="6" name="P2" type="bidirectional"/>
+        <pin num="7" name="P3" type="bidirectional"/>
+        <pin num="8" name="P4" type="bidirectional"/>
+        <pin num="9" name="P5" type="bidirectional"/>
+        <pin num="10" name="P6" type="bidirectional"/>
+        <pin num="11" name="P7" type="bidirectional"/>
+        <pin num="12" name="GND" type="power_in"/>
+        <pin num="13" name="P10" type="bidirectional"/>
+        <pin num="14" name="P11" type="bidirectional"/>
+        <pin num="15" name="P12" type="bidirectional"/>
+        <pin num="16" name="P13" type="bidirectional"/>
+        <pin num="17" name="P14" type="bidirectional"/>
+        <pin num="18" name="P15" type="bidirectional"/>
+        <pin num="19" name="P16" type="bidirectional"/>
+        <pin num="20" name="P17" type="bidirectional"/>
+        <pin num="21" name="A0" type="input"/>
+        <pin num="22" name="SCL" type="input"/>
+        <pin num="23" name="SDA" type="bidirectional"/>
+        <pin num="24" name="VCC" type="power_in"/>
+      </pins>
+    </libpart>
+    <libpart lib="PCM_SL_Connectors" part="JST_02">
+      <description>JST Connector  2 pins</description>
+      <footprints>
+        <fp>Connector_JST:JST_EH_S2B-EH_1x02_P2.50mm_Horizontal</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">J</field>
+        <field name="Value">JST_02</field>
+        <field name="Footprint">Connector_JST:JST_EH_B2B-EH-A_1x02_P2.50mm_Vertical</field>
+        <field name="Datasheet"/>
+        <field name="Description">JST Connector  2 pins</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="PCM_SparkFun-Capacitor" part="0.1uF_0402_16V_10%">
+      <description>Unpolarized capacitor</description>
+      <docs>https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</docs>
+      <footprints>
+        <fp>C_*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">C</field>
+        <field name="Value">0.1uF</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_0402_1005Metric</field>
+        <field name="Datasheet">https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+        <field name="PROD_ID">CAP-25565</field>
+        <field name="Voltage">16V</field>
+        <field name="Tolerance">10%</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="PCM_SparkFun-Capacitor" part="100uF_1206_50V_10%">
+      <description>Unpolarized capacitor</description>
+      <docs>https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</docs>
+      <footprints>
+        <fp>C_*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">C</field>
+        <field name="Value">100uF</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_1206_3216Metric</field>
+        <field name="Datasheet">https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/7134/c02e.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+        <field name="PROD_ID">CAP-24990</field>
+        <field name="Voltage">10V</field>
+        <field name="Tolerance">20%</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="PCM_SparkFun-Capacitor" part="10uF_0402_6.3V_20%">
+      <description>Unpolarized capacitor</description>
+      <docs>https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</docs>
+      <footprints>
+        <fp>C_*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">C</field>
+        <field name="Value">10uF</field>
+        <field name="Footprint">PCM_SparkFun-Capacitor:C_0402_1005Metric</field>
+        <field name="Datasheet">https://cdn.sparkfun.com/assets/8/a/4/a/5/Kemet_Capacitor_Datasheet.pdf</field>
+        <field name="Description">Unpolarized capacitor</field>
+        <field name="PROD_ID">CAP-14848</field>
+        <field name="Voltage">6.3V</field>
+        <field name="Tolerance">20%</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="PCM_SparkFun-Resistor" part="100k_0402">
+      <description>Resistor</description>
+      <docs>https://www.vishay.com/docs/20035/dcrcwe3.pdf</docs>
+      <footprints>
+        <fp>R_*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">R</field>
+        <field name="Value">100k</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+        <field name="PROD_ID">RES-25013</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="PCM_SparkFun-Resistor" part="10k_0402">
+      <description>Resistor</description>
+      <docs>https://www.vishay.com/docs/20035/dcrcwe3.pdf</docs>
+      <footprints>
+        <fp>R_*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">R</field>
+        <field name="Value">10k</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+        <field name="PROD_ID">RES-25567</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="PCM_SparkFun-Resistor" part="150k_0402">
+      <description>Resistor</description>
+      <docs>https://www.vishay.com/docs/20035/dcrcwe3.pdf</docs>
+      <footprints>
+        <fp>R_*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">R</field>
+        <field name="Value">150k</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+        <field name="PROD_ID">RES-15093</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="PCM_SparkFun-Resistor" part="4.7k_0402">
+      <description>Resistor</description>
+      <docs>https://www.vishay.com/docs/20035/dcrcwe3.pdf</docs>
+      <footprints>
+        <fp>R_*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">R</field>
+        <field name="Value">4.7k</field>
+        <field name="Footprint">PCM_SparkFun-Resistor:R_0402_1005Metric</field>
+        <field name="Datasheet">https://www.vishay.com/docs/20035/dcrcwe3.pdf</field>
+        <field name="Description">Resistor</field>
+        <field name="PROD_ID">RES-15343</field>
+      </fields>
+      <pins>
+        <pin num="1" name="" type="passive"/>
+        <pin num="2" name="" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="Seeed_Studio_XIAO_Series" part="XIAO-ESP32-C6-SMD_HOLE">
+      <fields>
+        <field name="Reference">U</field>
+        <field name="Value">XIAO-ESP32-C6-SMD_HOLE</field>
+        <field name="Footprint">xiao:XIAO-ESP32-C6-SMD_HOLE</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <pins>
+        <pin num="1" name="GPIO0_A0_D0" type="passive"/>
+        <pin num="2" name="GPIO1_A1_D1" type="passive"/>
+        <pin num="3" name="GPIO2_A2_D2" type="passive"/>
+        <pin num="4" name="GPIO21_D3" type="passive"/>
+        <pin num="5" name="GPIO22_D4_SDA" type="passive"/>
+        <pin num="6" name="GPIO23_D5_SCL" type="passive"/>
+        <pin num="7" name="GPIO16_D6_TX" type="passive"/>
+        <pin num="8" name="GPIO17_D7_RX" type="passive"/>
+        <pin num="9" name="GPIO19_D8_SCK" type="passive"/>
+        <pin num="10" name="GPIO20_D9_MISO" type="passive"/>
+        <pin num="11" name="GPIO18_D10_MOSI" type="passive"/>
+        <pin num="12" name="3V3" type="passive"/>
+        <pin num="13" name="GND" type="passive"/>
+        <pin num="14" name="VBUS" type="passive"/>
+        <pin num="15" name="GPIO5_MTDI" type="passive"/>
+        <pin num="16" name="GPIO7_MTDO" type="passive"/>
+        <pin num="17" name="CHIP_EN" type="passive"/>
+        <pin num="18" name="GND" type="passive"/>
+        <pin num="19" name="GPIO4_MTMS" type="passive"/>
+        <pin num="20" name="GPIO6_MTCK" type="passive"/>
+        <pin num="21" name="GPIO9_BOOT" type="passive"/>
+        <pin num="22" name="3V3" type="passive"/>
+        <pin num="23" name="BAT" type="passive"/>
+        <pin num="24" name="GND" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="Sensor_Temperature" part="KTY85">
+      <description>KTY85 series silicon temperature sensors, polarized, SOD80</description>
+      <docs>http://www.nxp.com/documents/other/SC17_GENERAL_TEMP_1996_3.pdf</docs>
+      <footprints>
+        <fp>SOD80*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">TH</field>
+        <field name="Value">KTY85</field>
+        <field name="Footprint">Diode_SMD:D_MiniMELF</field>
+        <field name="Datasheet">http://www.nxp.com/documents/other/SC17_GENERAL_TEMP_1996_3.pdf</field>
+        <field name="Description">KTY85 series silicon temperature sensors, polarized, SOD80</field>
+      </fields>
+      <pins>
+        <pin num="1" name="K" type="passive"/>
+        <pin num="2" name="A" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="SomfyBlinds" part="E07-400MM10S">
+      <description>CC1101 433MHz SPI (10mm X 10mm)</description>
+      <docs>kicad-embed://E07-400MM10S_E07-900MM10S_UserManual_EN_v1.0.pdf</docs>
+      <fields>
+        <field name="Reference">U</field>
+        <field name="Value">E07-400MM10S</field>
+        <field name="Footprint">cc1101:E07-400MM10S</field>
+        <field name="Datasheet">kicad-embed://E07-400MM10S_E07-900MM10S_UserManual_EN_v1.0.pdf</field>
+        <field name="Description">CC1101 433MHz SPI (10mm X 10mm)</field>
+      </fields>
+      <pins>
+        <pin num="1" name="VCC" type="power_in"/>
+        <pin num="2" name="GND" type="power_in"/>
+        <pin num="3" name="NC" type="no_connect"/>
+        <pin num="4" name="NC" type="no_connect"/>
+        <pin num="5" name="NC" type="no_connect"/>
+        <pin num="6" name="ANT" type="bidirectional"/>
+        <pin num="7" name="GND" type="power_in"/>
+        <pin num="8" name="NC" type="no_connect"/>
+        <pin num="9" name="NC" type="no_connect"/>
+        <pin num="10" name="NC" type="no_connect"/>
+        <pin num="11" name="NC" type="no_connect"/>
+        <pin num="12" name="MISO/GD01" type="output"/>
+        <pin num="13" name="MOSI" type="input"/>
+        <pin num="14" name="CSN" type="input"/>
+        <pin num="15" name="SCK" type="input"/>
+        <pin num="16" name="GND" type="power_in"/>
+        <pin num="17" name="NC" type="no_connect"/>
+        <pin num="18" name="GD00" type="bidirectional"/>
+        <pin num="19" name="NC" type="no_connect"/>
+        <pin num="20" name="GD02" type="bidirectional"/>
+      </pins>
+    </libpart>
+    <libpart lib="SomfyBlinds" part="OLEDM0.96_1x-I2C">
+      <description>SSD1315 OLED module, 0.96 inch, 128x64, I2C</description>
+      <docs>kicad-embed://128x64_oled_4pin.png</docs>
+      <footprints>
+        <fp>ER?OLEDM0.91?1x?I2C*</fp>
+      </footprints>
+      <fields>
+        <field name="Reference">U</field>
+        <field name="Value">OLED 0.96{dblquote} I2C</field>
+        <field name="Footprint">SomfyBlinds:OLED_0.96_I2C_4PIN</field>
+        <field name="Datasheet">kicad-embed://128x64_oled_4pin.png</field>
+        <field name="Description">SSD1315 OLED module, 0.96 inch, 128x64, I2C</field>
+      </fields>
+      <pins>
+        <pin num="1" name="GND" type="power_in"/>
+        <pin num="2" name="VCC" type="power_in"/>
+        <pin num="3" name="SCL" type="input"/>
+        <pin num="4" name="SDA" type="bidirectional"/>
+      </pins>
+    </libpart>
+    <libpart lib="SomfyBlinds" part="SW_TACTILE">
+      <fields>
+        <field name="Reference">SW</field>
+        <field name="Value">SW_Tactile</field>
+        <field name="Footprint">Button_Switch_THT:SW_Tactile_SPST_Angled_PTS645</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+      </fields>
+      <pins>
+        <pin num="1" name="A" type="passive"/>
+        <pin num="2" name="B" type="passive"/>
+      </pins>
+    </libpart>
+    <libpart lib="siq" part="SIQ-02FVS3">
+      <fields>
+        <field name="Reference">ENC</field>
+        <field name="Value">SIQ-02FVS3</field>
+        <field name="Footprint">siq:SIQ-02FVS3</field>
+        <field name="Datasheet"/>
+        <field name="Description"/>
+        <field name="Manufacturer Part">SIQ-02FVS3</field>
+        <field name="Manufacturer">MITSUMI(美上美)</field>
+        <field name="Supplier Part">C2925423</field>
+        <field name="Supplier">LCSC</field>
+      </fields>
+      <pins>
+        <pin num="1" name="EH" type="unspecified"/>
+        <pin num="2" name="EH" type="unspecified"/>
+        <pin num="3" name="EH" type="unspecified"/>
+        <pin num="4" name="EH" type="unspecified"/>
+        <pin num="5" name="EH" type="unspecified"/>
+        <pin num="6" name="EH" type="unspecified"/>
+        <pin num="A" name="A" type="unspecified"/>
+        <pin num="B" name="B" type="unspecified"/>
+        <pin num="C" name="C" type="unspecified"/>
+        <pin num="S" name="S" type="unspecified"/>
+      </pins>
+    </libpart>
+  </libparts>
+  <libraries>
+    <library logical="CAS">
+      <uri>${KIPRJMOD}/libs/cas/CAS.kicad_sym</uri>
+    </library>
+    <library logical="Interface_Expansion">
+      <uri>${KICAD10_SYMBOL_DIR}/Interface_Expansion.kicad_sym</uri>
+    </library>
+    <library logical="Seeed_Studio_XIAO_Series">
+      <uri>${KIPRJMOD}/libs/xiao/Seeed_Studio_XIAO_Series.kicad_sym</uri>
+    </library>
+    <library logical="Sensor_Temperature">
+      <uri>${KICAD10_SYMBOL_DIR}/Sensor_Temperature.kicad_sym</uri>
+    </library>
+    <library logical="SomfyBlinds">
+      <uri>${KIPRJMOD}/somfy_blinds.kicad_sym</uri>
+    </library>
+    <library logical="siq">
+      <uri>${KIPRJMOD}/libs/siq/siq.kicad_sym</uri>
+    </library>
+  </libraries>
+  <nets>
+    <net code="1" name="+3V3" class="Default">
+      <node ref="C1" pin="1" pintype="passive"/>
+      <node ref="C2" pin="1" pintype="passive"/>
+      <node ref="C3" pin="1" pintype="passive"/>
+      <node ref="C4" pin="1" pintype="passive"/>
+      <node ref="C5" pin="1" pintype="passive"/>
+      <node ref="R1" pin="2" pintype="passive"/>
+      <node ref="R2" pin="2" pintype="passive"/>
+      <node ref="R3" pin="2" pintype="passive"/>
+      <node ref="R8" pin="1" pintype="passive"/>
+      <node ref="R9" pin="1" pintype="passive"/>
+      <node ref="U1" pin="12" pinfunction="3V3_12" pintype="passive"/>
+      <node ref="U1" pin="22" pinfunction="3V3_22" pintype="passive"/>
+      <node ref="U2" pin="2" pinfunction="VCC_2" pintype="power_in"/>
+      <node ref="U3" pin="24" pinfunction="VCC_24" pintype="power_in"/>
+      <node ref="U5" pin="1" pinfunction="VCC_1" pintype="power_in"/>
+    </net>
+    <net code="2" name="+5V" class="Default">
+      <node ref="R6" pin="1" pintype="passive"/>
+      <node ref="U1" pin="14" pinfunction="VBUS_14" pintype="passive"/>
+    </net>
+    <net code="3" name="ANT_447M" class="Default">
+      <node ref="U5" pin="6" pinfunction="ANT_6" pintype="bidirectional"/>
+    </net>
+    <net code="4" name="BAT+" class="Default">
+      <node ref="BAT1" pin="1" pintype="passive"/>
+      <node ref="C10" pin="1" pintype="passive"/>
+      <node ref="C11" pin="1" pintype="passive"/>
+      <node ref="C7" pin="1" pintype="passive"/>
+      <node ref="C8" pin="1" pintype="passive"/>
+      <node ref="C9" pin="1" pintype="passive"/>
+      <node ref="R4" pin="1" pintype="passive"/>
+      <node ref="U1" pin="23" pinfunction="BAT_23" pintype="passive"/>
+    </net>
+    <net code="5" name="BAT-" class="Default">
+      <node ref="BAT1" pin="2" pintype="passive"/>
+      <node ref="C10" pin="2" pintype="passive"/>
+      <node ref="C11" pin="2" pintype="passive"/>
+      <node ref="C7" pin="2" pintype="passive"/>
+      <node ref="C8" pin="2" pintype="passive"/>
+      <node ref="C9" pin="2" pintype="passive"/>
+      <node ref="U1" pin="24" pinfunction="GND_24" pintype="passive"/>
+    </net>
+    <net code="6" name="BAT_ADC" class="Default">
+      <node ref="C6" pin="1" pintype="passive"/>
+      <node ref="R4" pin="2" pintype="passive"/>
+      <node ref="R5" pin="1" pintype="passive"/>
+      <node ref="U1" pin="2" pinfunction="GPIO1_A1_D1_2" pintype="passive"/>
+    </net>
+    <net code="7" name="BTN_DOWN" class="Default">
+      <node ref="DOWN1" pin="2" pinfunction="B_2" pintype="passive"/>
+      <node ref="U3" pin="9" pinfunction="P5_9" pintype="bidirectional"/>
+    </net>
+    <net code="8" name="BTN_LEFT" class="Default">
+      <node ref="LEFT1" pin="2" pinfunction="B_2" pintype="passive"/>
+      <node ref="U3" pin="13" pinfunction="P10_13" pintype="bidirectional"/>
+    </net>
+    <net code="9" name="BTN_PROG" class="Default">
+      <node ref="PROG1" pin="2" pinfunction="B_2" pintype="passive"/>
+      <node ref="U3" pin="11" pinfunction="P7_11" pintype="bidirectional"/>
+    </net>
+    <net code="10" name="BTN_RIGHT" class="Default">
+      <node ref="RIGHT1" pin="2" pinfunction="B_2" pintype="passive"/>
+      <node ref="U3" pin="14" pinfunction="P11_14" pintype="bidirectional"/>
+    </net>
+    <net code="11" name="BTN_SELECT" class="Default">
+      <node ref="SELECT1" pin="2" pinfunction="B_2" pintype="passive"/>
+      <node ref="U3" pin="10" pinfunction="P6_10" pintype="bidirectional"/>
+    </net>
+    <net code="12" name="BTN_SETUP" class="Default">
+      <node ref="SETUP1" pin="2" pinfunction="B_2" pintype="passive"/>
+      <node ref="U3" pin="7" pinfunction="P3_7" pintype="bidirectional"/>
+    </net>
+    <net code="13" name="BTN_STOP" class="Default">
+      <node ref="STOP1" pin="2" pinfunction="B_2" pintype="passive"/>
+      <node ref="U3" pin="6" pinfunction="P2_6" pintype="bidirectional"/>
+    </net>
+    <net code="14" name="BTN_UP" class="Default">
+      <node ref="U3" pin="8" pinfunction="P4_8" pintype="bidirectional"/>
+      <node ref="UP1" pin="2" pinfunction="B_2" pintype="passive"/>
+    </net>
+    <net code="15" name="CC1101_GD0" class="Default">
+      <node ref="U1" pin="7" pinfunction="GPIO16_D6_TX_7" pintype="passive"/>
+      <node ref="U5" pin="18" pinfunction="GD00_18" pintype="bidirectional"/>
+    </net>
+    <net code="16" name="CHG_STAT" class="Default">
+      <node ref="R6" pin="2" pintype="passive"/>
+      <node ref="R7" pin="1" pintype="passive"/>
+      <node ref="U1" pin="8" pinfunction="GPIO17_D7_RX_8" pintype="passive"/>
+    </net>
+    <net code="17" name="GND" class="Default">
+      <node ref="C1" pin="2" pintype="passive"/>
+      <node ref="C2" pin="2" pintype="passive"/>
+      <node ref="C3" pin="2" pintype="passive"/>
+      <node ref="C4" pin="2" pintype="passive"/>
+      <node ref="C5" pin="2" pintype="passive"/>
+      <node ref="C6" pin="2" pintype="passive"/>
+      <node ref="DOWN1" pin="1" pinfunction="A_1" pintype="passive"/>
+      <node ref="ENC1" pin="1" pinfunction="EH_1" pintype="unspecified"/>
+      <node ref="ENC1" pin="2" pinfunction="EH_2" pintype="unspecified"/>
+      <node ref="ENC1" pin="3" pinfunction="EH_3" pintype="unspecified"/>
+      <node ref="ENC1" pin="4" pinfunction="EH_4" pintype="unspecified"/>
+      <node ref="ENC1" pin="5" pinfunction="EH_5" pintype="unspecified"/>
+      <node ref="ENC1" pin="6" pinfunction="EH_6" pintype="unspecified"/>
+      <node ref="ENC1" pin="C" pinfunction="C_C" pintype="unspecified"/>
+      <node ref="LEFT1" pin="1" pinfunction="A_1" pintype="passive"/>
+      <node ref="PROG1" pin="1" pinfunction="A_1" pintype="passive"/>
+      <node ref="R5" pin="2" pintype="passive"/>
+      <node ref="R7" pin="2" pintype="passive"/>
+      <node ref="RIGHT1" pin="1" pinfunction="A_1" pintype="passive"/>
+      <node ref="SELECT1" pin="1" pinfunction="A_1" pintype="passive"/>
+      <node ref="SETUP1" pin="1" pinfunction="A_1" pintype="passive"/>
+      <node ref="STOP1" pin="1" pinfunction="A_1" pintype="passive"/>
+      <node ref="U1" pin="13" pinfunction="GND_13" pintype="passive"/>
+      <node ref="U1" pin="18" pinfunction="GND_18" pintype="passive"/>
+      <node ref="U2" pin="1" pinfunction="GND_1" pintype="power_in"/>
+      <node ref="U3" pin="12" pinfunction="GND_12" pintype="power_in"/>
+      <node ref="U3" pin="2" pinfunction="A1_2" pintype="input"/>
+      <node ref="U3" pin="21" pinfunction="A0_21" pintype="input"/>
+      <node ref="U3" pin="3" pinfunction="A2_3" pintype="input"/>
+      <node ref="U5" pin="16" pinfunction="GND_16" pintype="power_in"/>
+      <node ref="U5" pin="2" pinfunction="GND_2" pintype="power_in"/>
+      <node ref="U5" pin="7" pinfunction="GND_7" pintype="power_in"/>
+      <node ref="UP1" pin="1" pinfunction="A_1" pintype="passive"/>
+      <node ref="VS1" pin="2" pinfunction="A_2" pintype="passive"/>
+    </net>
+    <net code="18" name="I2C_SCL" class="Default">
+      <node ref="R8" pin="2" pintype="passive"/>
+      <node ref="SW_I2C1" pin="4" pinfunction="4_4" pintype="unspecified"/>
+      <node ref="U1" pin="6" pinfunction="GPIO23_D5_SCL_6" pintype="passive"/>
+      <node ref="U2" pin="3" pinfunction="SCL_3" pintype="input"/>
+    </net>
+    <net code="19" name="I2C_SDA" class="Default">
+      <node ref="R9" pin="2" pintype="passive"/>
+      <node ref="SW_I2C1" pin="1" pinfunction="1_1" pintype="unspecified"/>
+      <node ref="U1" pin="5" pinfunction="GPIO22_D4_SDA_5" pintype="passive"/>
+      <node ref="U2" pin="4" pinfunction="SDA_4" pintype="bidirectional"/>
+    </net>
+    <net code="20" name="LP_I2C_SCL" class="Default">
+      <node ref="R1" pin="1" pintype="passive"/>
+      <node ref="SW_I2C1" pin="6" pinfunction="6_6" pintype="unspecified"/>
+      <node ref="U1" pin="16" pinfunction="GPIO7_MTDO_16" pintype="passive"/>
+    </net>
+    <net code="21" name="LP_I2C_SDA" class="Default">
+      <node ref="R2" pin="1" pintype="passive"/>
+      <node ref="SW_I2C1" pin="3" pinfunction="3_3" pintype="unspecified"/>
+      <node ref="U1" pin="20" pinfunction="GPIO6_MTCK_20" pintype="passive"/>
+    </net>
+    <net code="22" name="PCF_INT" class="Default">
+      <node ref="R3" pin="1" pintype="passive"/>
+      <node ref="U1" pin="3" pinfunction="GPIO2_A2_D2_3" pintype="passive"/>
+      <node ref="U3" pin="1" pinfunction="~{INT}_1" pintype="open_collector"/>
+    </net>
+    <net code="23" name="ROT_A" class="Default">
+      <node ref="ENC1" pin="A" pinfunction="A_A" pintype="unspecified"/>
+      <node ref="U3" pin="4" pinfunction="P0_4" pintype="bidirectional"/>
+    </net>
+    <net code="24" name="ROT_B" class="Default">
+      <node ref="ENC1" pin="B" pinfunction="B_B" pintype="unspecified"/>
+      <node ref="U3" pin="5" pinfunction="P1_5" pintype="bidirectional"/>
+    </net>
+    <net code="25" name="ROT_SW" class="Default">
+      <node ref="ENC1" pin="S" pinfunction="S_S" pintype="unspecified"/>
+      <node ref="U3" pin="15" pinfunction="P12_15" pintype="bidirectional"/>
+    </net>
+    <net code="26" name="SPI_CS" class="Default">
+      <node ref="U1" pin="4" pinfunction="GPIO21_D3_4" pintype="passive"/>
+      <node ref="U5" pin="14" pinfunction="CSN_14" pintype="input"/>
+    </net>
+    <net code="27" name="SPI_MISO" class="Default">
+      <node ref="U1" pin="10" pinfunction="GPIO20_D9_MISO_10" pintype="passive"/>
+      <node ref="U5" pin="12" pinfunction="MISO/GD01_12" pintype="output"/>
+    </net>
+    <net code="28" name="SPI_MOSI" class="Default">
+      <node ref="U1" pin="11" pinfunction="GPIO18_D10_MOSI_11" pintype="passive"/>
+      <node ref="U5" pin="13" pinfunction="MOSI_13" pintype="input"/>
+    </net>
+    <net code="29" name="SPI_SCK" class="Default">
+      <node ref="U1" pin="9" pinfunction="GPIO19_D8_SCK_9" pintype="passive"/>
+      <node ref="U5" pin="15" pinfunction="SCK_15" pintype="input"/>
+    </net>
+    <net code="30" name="SW_I2C_SCL" class="Default">
+      <node ref="SW_I2C1" pin="5" pinfunction="5_5" pintype="unspecified"/>
+      <node ref="U3" pin="22" pinfunction="SCL_22" pintype="input"/>
+    </net>
+    <net code="31" name="SW_I2C_SDA" class="Default">
+      <node ref="SW_I2C1" pin="2" pinfunction="2_2" pintype="unspecified"/>
+      <node ref="U3" pin="23" pinfunction="SDA_23" pintype="bidirectional"/>
+    </net>
+    <net code="32" name="VIBRATION" class="Default">
+      <node ref="U1" pin="1" pinfunction="GPIO0_A0_D0_1" pintype="passive"/>
+      <node ref="VS1" pin="1" pinfunction="K_1" pintype="passive"/>
+    </net>
+    <net code="33" name="unconnected-(U1-CHIP_EN-Pad17)" class="Default">
+      <node ref="U1" pin="17" pinfunction="CHIP_EN_17" pintype="passive+no_connect"/>
+    </net>
+    <net code="34" name="unconnected-(U1-GPIO4_MTMS-Pad19)" class="Default">
+      <node ref="U1" pin="19" pinfunction="GPIO4_MTMS_19" pintype="passive+no_connect"/>
+    </net>
+    <net code="35" name="unconnected-(U1-GPIO5_MTDI-Pad15)" class="Default">
+      <node ref="U1" pin="15" pinfunction="GPIO5_MTDI_15" pintype="passive+no_connect"/>
+    </net>
+    <net code="36" name="unconnected-(U1-GPIO9_BOOT-Pad21)" class="Default">
+      <node ref="U1" pin="21" pinfunction="GPIO9_BOOT_21" pintype="passive+no_connect"/>
+    </net>
+    <net code="37" name="unconnected-(U3-P13-Pad16)" class="Default">
+      <node ref="U3" pin="16" pinfunction="P13_16" pintype="bidirectional+no_connect"/>
+    </net>
+    <net code="38" name="unconnected-(U3-P14-Pad17)" class="Default">
+      <node ref="U3" pin="17" pinfunction="P14_17" pintype="bidirectional+no_connect"/>
+    </net>
+    <net code="39" name="unconnected-(U3-P15-Pad18)" class="Default">
+      <node ref="U3" pin="18" pinfunction="P15_18" pintype="bidirectional+no_connect"/>
+    </net>
+    <net code="40" name="unconnected-(U3-P16-Pad19)" class="Default">
+      <node ref="U3" pin="19" pinfunction="P16_19" pintype="bidirectional+no_connect"/>
+    </net>
+    <net code="41" name="unconnected-(U3-P17-Pad20)" class="Default">
+      <node ref="U3" pin="20" pinfunction="P17_20" pintype="bidirectional+no_connect"/>
+    </net>
+    <net code="42" name="unconnected-(U5-GD02-Pad20)" class="Default">
+      <node ref="U5" pin="20" pinfunction="GD02_20" pintype="bidirectional+no_connect"/>
+    </net>
+    <net code="43" name="unconnected-(U5-NC-Pad3)" class="Default">
+      <node ref="U5" pin="3" pinfunction="NC_3" pintype="no_connect"/>
+    </net>
+    <net code="44" name="unconnected-(U5-NC-Pad4)" class="Default">
+      <node ref="U5" pin="4" pinfunction="NC_4" pintype="no_connect"/>
+    </net>
+    <net code="45" name="unconnected-(U5-NC-Pad5)" class="Default">
+      <node ref="U5" pin="5" pinfunction="NC_5" pintype="no_connect"/>
+    </net>
+    <net code="46" name="unconnected-(U5-NC-Pad8)" class="Default">
+      <node ref="U5" pin="8" pinfunction="NC_8" pintype="no_connect"/>
+    </net>
+    <net code="47" name="unconnected-(U5-NC-Pad9)" class="Default">
+      <node ref="U5" pin="9" pinfunction="NC_9" pintype="no_connect"/>
+    </net>
+    <net code="48" name="unconnected-(U5-NC-Pad10)" class="Default">
+      <node ref="U5" pin="10" pinfunction="NC_10" pintype="no_connect"/>
+    </net>
+    <net code="49" name="unconnected-(U5-NC-Pad11)" class="Default">
+      <node ref="U5" pin="11" pinfunction="NC_11" pintype="no_connect"/>
+    </net>
+    <net code="50" name="unconnected-(U5-NC-Pad17)" class="Default">
+      <node ref="U5" pin="17" pinfunction="NC_17" pintype="no_connect"/>
+    </net>
+    <net code="51" name="unconnected-(U5-NC-Pad19)" class="Default">
+      <node ref="U5" pin="19" pinfunction="NC_19" pintype="no_connect"/>
+    </net>
+  </nets>
+</export>

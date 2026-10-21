@@ -48,8 +48,31 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700, base_ns=None):
     if not ns:
         print('batlog 네임스페이스가 없다'); return 1
     buf = ns.get('buf')
+    # ★2026-10-20 (GPT 재감사 N08) 새 판은 링을 20표본 조각 "b0".."bN" 으로 나눠 바뀐 조각만 쓴다.
+    #  조각이 있으면 그걸 이어 붙인다(옛 "buf" 가 함께 남아 있으면 이전 도중 — 펌웨어가 다음 저장 때 지운다).
+    if isinstance(ns.get('b0'), (bytes, bytearray)):
+        have = [i for i in range(32) if isinstance(ns.get('b%d' % i), (bytes, bytearray))]
+        full = len(ns['b0'])                       # 첫 조각 = 꽉 찬 조각 크기(20표본)
+        base = ns.get('buf') if isinstance(ns.get('buf'), (bytes, bytearray)) else None
+        nch = max(max(have) + 1, (len(base) + full - 1) // full if base else 0)
+        parts = []
+        for i in range(nch):                       # 빠진 조각은 펌웨어와 같이 옛 buf(이전 도중) 또는 0
+            if i in have:
+                parts.append(ns['b%d' % i])
+            elif base:
+                parts.append(base[i * full:(i + 1) * full])
+            else:
+                parts.append(b'\x00' * full)
+        buf = b''.join(parts)
+        gaps = [i for i in range(nch) if i not in have]
+        print('(조각 형식: %d조각%s%s)' % (len(parts),
+              (', ★빠진 조각 %s 는 %s 으로 채움(다음 저장 때 펌웨어가 다시 쓴다)' % (gaps, '옛 buf' if base else '0'))
+              if gaps else '',
+              ', 옛 buf 도 남아 있음 — 이전 중' if base else ''))
     n = ns.get('n', 0)
     head = ns.get('head', 0)
+    if isinstance(ns.get('nh'), int):              # ★2026-10-20 새 판: n·head 한 항목(원자적)
+        n, head = ns['nh'] >> 16, ns['nh'] & 0xFFFF
     sess = ns.get('sess', 0)
     if not isinstance(buf, (bytes, bytearray)):
         print('buf blob 을 못 찾았다 (키: %s)' % ', '.join(ns)); return 1
@@ -59,6 +82,19 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700, base_ns=None):
     print('세션상태: dis_on=%s  경과=%ss  기준=%smV %s%%' %
           (ns.get('dis_on'), ns.get('dis_el'), ns.get('dis_mv0'),
            ns.get('dis_pc0')))
+    # ★2026-10-20 (GPT 재감사 N03) 이 세션을 만든 펌웨어 — 판을 모르고 비교하면 안 된다.
+    def _s(v):
+        return v.split(b'\x00')[0].decode('utf-8', 'replace') if isinstance(v, (bytes, bytearray)) else v
+    fw0, fw = _s(ns.get('fw0')), _s(ns.get('fw'))
+    if fw0 or fw:
+        print('펌웨어: 세션 시작 %s / 마지막 부팅 %s%s'
+              % (fw0 or '(기록 없음 — 10/20 이전 판이 시작한 세션)', fw or '?',
+                 '' if (not fw0 or fw0 == fw) else '   ★★세션 도중 판이 바뀌었다(배터리 중 OTA?) — 앞뒤를 섞어 보지 말 것'))
+    else:
+        print('펌웨어: 기록 없음 (10/20 이전 판 — 어느 빌드의 세션인지 이 덤프로는 모른다)')
+    if ns.get('ol_fail') is not None:
+        print('OLED ON/OFF 명령 실패(세션): %s회  (정상 0 — 0 이 아니면 화면이 실제로는 안 꺼졌을 수 있다)'
+              % ns.get('ol_fail'))
     if not n:
         print('(비어 있음)'); return 0
 
@@ -112,6 +148,16 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700, base_ns=None):
         awake = el_us - us
         print()
         print('── light sleep 계측 ──')
+        # ★2026-10-20 (GPT 재감사 N04) ls_rjs/ls_rjh 가 있으면 새 판 — ls_cnt 는 **실제로 잔 것만**이다.
+        #  없으면 옛 판 — IDF 가 거부된 시도에도 종료 콜백을 불러 ls_cnt·ls_us 에 거부가 섞여 있다
+        #  (10/18 COM7: 정지 13%, 들고 움직인 55초 66%). 옛 판 값을 '깨어남 횟수'로 읽으면 부풀려진다.
+        rjs, rjh = ns.get('ls_rjs'), ns.get('ls_rjh')
+        if rjs is not None and rjh is not None:
+            att = cnt + rjs + rjh
+            print('  잔 횟수(성공) %d회 / 거부 %d회 = 짧음 %d + 하드웨어 %d  (시도의 %.1f%%)'
+                  % (cnt, rjs + rjh, rjs, rjh, 100.0 * (rjs + rjh) / att if att else 0))
+        else:
+            print('  ★옛 판 기록 — 아래 "진입"에는 **거부된 시도가 섞여 있다**(성공 횟수 아님, N04)')
         print('  세션 경과 %.1f초 / 잔 시간 %.1f초 (%.1f%%) / 진입 %d회'
               % (el, us / 1e6, 100.0 * us / el_us, cnt))
         print('  깨어남 1회당: 잠 %.1fms  +  깨어있음 %.2fms'

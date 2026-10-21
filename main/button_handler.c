@@ -38,12 +38,22 @@ static const char *TAG = "BTN";
 
 /* ─── 내부 helper 전방 선언 ──────────────────────────── */
 static void _vibration_track(bool vibe_active);
+static void _vibe_level_service(bool high_now);   /* ★2026-10-20 진동 인터럽트·웨이크 레벨 관리(정의는 _vibration_track 뒤) */
 static void IRAM_ATTR _vibe_isr_handler(void *arg);
 /* 진동 ISR 카운터 / disable 플래그 — 정의는 아래 진동 섹션 */
 static volatile uint32_t s_vibe_isr_count;
 static volatile bool     s_vibe_isr_disabled_flag;
 /* ★2026-10-18 ISR 이 스스로 끈 시각(FreeRTOS tick, 1kHz = ms) — 재활성을 반복 횟수가 아니라 시간으로(감사 F09) */
 static volatile TickType_t s_vibe_isr_off_tick;
+/* ★★2026-10-20 진동 인터럽트·웨이크 '레벨 기준' 관리 (GPT 재감사 N01·N02 — _vibe_level_service 주석).
+ *  s_vibe_irq_armed  : 태스크가 인터럽트를 켰고 아직 안 걸렸다(ISR 이 false 로 내린다)
+ *  s_vibe_wake_on    : 절전 HIGH 레벨 웨이크가 지금 켜져 있다(태스크만 바꾼다)
+ *  s_vibe_wake_allow : somfy_app 이 진동 웨이크를 쓰겠다고 했다(btn_handler_vibe_wake_enable — SOMFY_VIBE_WAKE)
+ *  s_vibe_gpio_woke  : 절전에서 GPIO(=진동 핀뿐) 로 깼다 — ISR 이 늦어도 두드림을 놓치지 않게 사건으로 친다 */
+static volatile bool     s_vibe_irq_armed;
+static bool              s_vibe_wake_on;
+static volatile bool     s_vibe_wake_allow;
+static volatile bool     s_vibe_gpio_woke;
 /* 진동센서 고장(한쪽 고정) 판정. 정의는 _vibration_track 쪽이지만 ②의 ISR 통지
  * 게이트가 앞서 참조하므로 선언을 여기로 올렸다. */
 static volatile bool     s_vibe_stuck = false;
@@ -344,6 +354,9 @@ static btn_state_t s_btns[] = {
  *    로터리 버튼은 디바운스 없이 즉시 처리하므로(아래 rot_pressed) 붙잡지 않는다.
  *  ★글리치 방어는 그대로다 — LP 래치는 5ms 간격 **2연속** 눌림만 세므로 한 번짜리 오독은 안 걸린다. */
 static uint32_t s_lat_hold = 0;      /* HP 폴링 경로(H2 등)에서는 늘 0 — 해제 코드만 공통으로 돈다 */
+/* ★2026-10-20 LP 세대 카운터(ulp_press_gen0/1)의 HP 쪽 사본 — LP 기동 확인 순간 현재값으로 맞춘다(_lp_core_try_start).
+ *  HP 는 공유 RAM 에 쓰지 않는다(N06, lp_core/pcf_poll.c press_gen 주석). */
+static uint32_t s_gen_seen0 = 0, s_gen_seen1 = 0;
 
 #if SOMFY_LP_CORE_PATH
 static uint32_t _btn_unconfirmed_mask(void) {
@@ -715,13 +728,22 @@ static pcf_state_t _pcf8574_read(void) {
        *  ★소비 규약은 rot_delta 와 동일 — **본 것만 차감**한다. 통째로 0 을 쓰면
        *    읽기와 쓰기 사이에 LP 가 OR 한 비트를 잃는다. */
       const uint32_t rot_mask = (1u << PCF8574_BIT_ROT_A) | (1u << PCF8574_BIT_ROT_B);
-      uint32_t lat = ulp_press_latch & ~rot_mask;
+      /* ★★2026-10-20 래치 RMW → **LP 세대 카운터를 읽기만** (GPT 재감사 N06, lp_core/pcf_poll.c press_gen 주석).
+       *  예전 `ulp_press_latch &= ~lat` 는 아래 10/18 주석대로 경합이 있었다(다른 버튼 손실·헛누름). 이제 HP 는 공유 RAM 에
+       *  **아무것도 쓰지 않는다** — 버튼별 4비트 칸이 자기 사본과 다르면 "그동안 새로 눌렸음". 사본은 이 함수만 쓴다.
+       *  (옛 주석, 이력) ★2026-10-18 (감사 F08) 이 `&=` 는 읽고-고쳐-쓰기라 … 세대 번호 규약이 필요해 두었다. */
+      uint32_t lat = 0;
+      {
+        const uint32_t g0 = ulp_press_gen0, g1 = ulp_press_gen1;
+        const uint32_t d0 = g0 ^ s_gen_seen0, d1 = g1 ^ s_gen_seen1;
+        s_gen_seen0 = g0; s_gen_seen1 = g1;
+        for (int i = 0; i < 8; i++) {
+          if ((d0 >> (i * 4)) & 0xFu) lat |= 1u << i;
+          if ((d1 >> (i * 4)) & 0xFu) lat |= 1u << (i + 8);
+        }
+        lat &= ~rot_mask;
+      }
       if (lat) {
-        /* ★2026-10-18 (감사 F08) 이 `&=` 는 읽고-고쳐-쓰기라, 그 몇 명령(수십 ns) 사이에 LP 가 **다른** 버튼
-         *  비트를 OR 하면 그 비트가 사라질 수 있다. LP 는 5ms 마다 한 번 쓰므로 확률은 10만 분의 1 수준이고,
-         *  사라져도 그 버튼이 다음 LP 폴까지 눌려 있으면 다시 래치된다. 막으려면 LP 프로그램까지 바꾸는
-         *  세대 번호 규약이 필요해, 위험 대비 이득이 작아 두었다(로터리는 위처럼 HP 쪽만으로 해결). */
-        ulp_press_latch &= ~lat;   /* 본 것만 차감 */
         st &= ~lat;                /* 래치된 비트를 눌림(0)으로 */
         s_lat_hold |= lat & _btn_unconfirmed_mask();   /* ★2026-10-18 확정까지 붙잡기(위 s_lat_hold) */
       }
@@ -1085,12 +1107,9 @@ static void _btn_task(void *pvParam) {
 
       /* ISR 재활성(chatter 폭주 cap) — ★2026-10-18 **시간 기준**(감사 F09): 끈 뒤 VIBE_REARM_MS 가
        *  지나면 켠다. 예전엔 "3폴 뒤"였는데 폴 간격이 10ms 를 전제했다 — 유휴 1000ms 에서는 3초가 된다.
-       *  이 시각은 아래 단일 대기가 시한으로 잡아 깨운다. */
-      if (s_vibe_isr_disabled_flag &&
-          (uint32_t)((xTaskGetTickCount() - s_vibe_isr_off_tick) * portTICK_PERIOD_MS) >= VIBE_REARM_MS) {
-        s_vibe_isr_disabled_flag = false;
-        gpio_intr_enable(VIBE_PIN);
-      }
+       *  이 시각은 아래 단일 대기가 시한으로 잡아 깨운다.
+       * ★★2026-10-20 '시간이 지나면 켠다' → '**LOW 일 때만** 켠다'(GPT 재감사 N01) — _vibe_level_service 주석. */
+      _vibe_level_service(lvl == 1);
     }
 
     /* ★2026-08-11 배터리 절약(C안): 화면이 꺼져 있으면 사용자가 보고 있지 않으므로
@@ -1286,6 +1305,8 @@ static void _lp_core_try_start(void)
     ESP_LOGW(TAG, "[LP] 기동했으나 폴링이 안 돈다(poll_cnt 고정) — HP 폴링 유지");
     return;
   }
+  s_gen_seen0 = ulp_press_gen0;   /* ★2026-10-20 세대 사본 기준점 — 기동 전 누름을 '새 누름'으로 오인하지 않게 */
+  s_gen_seen1 = ulp_press_gen1;
   s_lp_active = true;
   /* ★★★2026-08-23 **ULP 를 light sleep 깨움 소스로 등록**한다.
    *  이게 없으면 LP 가 `ulp_lp_core_wakeup_main_processor()` 를 불러도
@@ -1415,17 +1436,25 @@ void btn_handler_init(btn_event_cb_t cb, void *user_data) {
 
   /* ★ IO16 any-edge GPIO 인터럽트 — JYX-1210-X160 의 짧은 contact 변화
    *  (수 ms)를 폴링이 놓치지 않게 ISR 로 즉시 잡는다. polarity 와 무관 —
-   *  진동만 감지하면 되므로 ANY_EDGE 사용. */
-  gpio_set_intr_type(VIBE_PIN, GPIO_INTR_ANYEDGE);
+   *  진동만 감지하면 되므로 ANY_EDGE 사용.
+   * ★★2026-10-20 **HIGH 레벨**로 바꿨다 (GPT 재감사 N01). ANY_EDGE 는 처음부터 유지되지 않았다 —
+   *  somfy_app 이 절전 웨이크를 걸 때 부르는 gpio_wakeup_enable(VIBE, HIGH_LEVEL) 이 ESP-IDF 5.5.5 에서
+   *  gpio_hal_set_intr_type() 으로 **일반 인터럽트 유형까지 HIGH 레벨로 덮어쓴다**(gpio.c, disable 은 안 되돌림).
+   *  그래서 지금까지 이 ISR 은 '엣지'가 아니라 "켜져 있는 동안 HIGH 면 걸림"이었고, 30ms 마다 레벨과 무관하게
+   *  다시 켜서 HIGH 가 이어지면 초당 33회 재발화했다(07-24 "HIGH 고정 + ISR 33회/초" 의 정체 = 1/30ms).
+   *  → 어차피 레벨이니 명시하고, 켜는 것은 **핀이 LOW 일 때만** 한다(_vibe_level_service). 한 번 켜면 한 번만 걸린다. */
+  gpio_set_intr_type(VIBE_PIN, GPIO_INTR_HIGH_LEVEL);
   esp_err_t isr_err = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
   if (isr_err != ESP_OK && isr_err != ESP_ERR_INVALID_STATE) {
     ESP_LOGW(TAG, "gpio_install_isr_service: %s", esp_err_to_name(isr_err));
   }
+  s_vibe_irq_armed = true;    /* ★2026-10-20 handler_add 가 바로 켠다 — HIGH 면 곧 걸려 ISR 이 false 로 내린다 */
   esp_err_t add_err = gpio_isr_handler_add(VIBE_PIN, _vibe_isr_handler, NULL);
   if (add_err != ESP_OK) {
+    s_vibe_irq_armed = false;
     ESP_LOGW(TAG, "gpio_isr_handler_add(VIBE): %s", esp_err_to_name(add_err));
   } else {
-    ESP_LOGI(TAG, "[VIBE] IO%d any-edge ISR 등록 완료", VIBE_PIN);
+    ESP_LOGI(TAG, "[VIBE] IO%d HIGH 레벨 ISR 등록 완료 (LOW 일 때만 켬 — _vibe_level_service)", VIBE_PIN);
   }
 
   /* ★★2026-08-13 (②) PCF8574 `~INT` ISR 등록 — **제거함. 다시 넣지 말 것.**
@@ -1581,9 +1610,19 @@ static void IRAM_ATTR _vibe_isr_handler(void *arg) {
      *   · 고장(C6: HIGH 고정 + 잡음 33회/초) → s_vibe_stuck=1 이라 통지 안 함.
      *  이 게이트가 없으면 ② 의 절전이 C6 에서 0 이 된다. */
     s_vibe_isr_disabled_flag = true;
+    s_vibe_irq_armed = false;            /* ★2026-10-20 태스크가 LOW 를 본 뒤에만 다시 켠다(_vibe_level_service) */
     s_vibe_isr_count++;
     /* ★2026-08-13 ② 되돌림과 함께 통지도 뺀다 — 10ms 고정 폴링으로 복귀했으므로
      *  깨울 대상이 없다. 통지를 남기면 H2(정상 센서)에서 헛깨움만 된다. */
+    /* ★★2026-10-20 통지를 **다시 넣는다** (GPT 재감사 N02). 위 두 번의 '통지 폭풍'은 30ms 마다 레벨과 무관하게
+     *  다시 켜서 HIGH 동안 초당 33회 재발화하던 탓이었다(N01). 이제 LOW 를 본 뒤에만 켜므로 한 번 켜면 한 번만
+     *  걸린다 = 실제 접점 열림 1회당 통지 1회. 이게 없으면 CPU 가 다른 일로 깨어 있을 때(절전 복귀 콜백이 안 도는 때)
+     *  온 두드림이 버튼 태스크 유휴 대기(1초)를 다 기다렸다(시뮬 최대 852ms → 0.1ms). */
+    if (s_btn_task_h) {
+      BaseType_t hpw = pdFALSE;
+      vTaskNotifyGiveFromISR(s_btn_task_h, &hpw);
+      if (hpw) portYIELD_FROM_ISR();
+    }
 }
 
 bool btn_handler_is_vibrating(void) {
@@ -1659,26 +1698,29 @@ bool btn_handler_vibe_stuck(void) { return s_vibe_stuck; }
  *      · 헛깨움 — 정지 0회 / LOW고정 0회 / C6 HIGH고정은 판정 후 0회 */
 static void _vibration_track(bool high_now) {
   static uint32_t s_isr_prev = 0;
-  /* ★2026-10-18 HIGH duty 창을 시간으로(F09) — 앞 HIGH 표본의 시각. 예전 s_win_cnt/s_win_high(30폴). */
-  static bool     s_hi1    = false;
-  static uint32_t s_hi1_ms = 0;
-  static uint32_t s_stuck_since_ms = 0;   /* ★2026-10-18 고장 판정 시각 — 아래 고장 분기의 60초 인정 창 */
+  /* ★2026-10-18 HIGH duty 창을 시간으로(F09) — 앞 HIGH 표본의 시각. 예전 s_win_cnt/s_win_high(30폴).
+   * ★2026-10-20 duty 경로(s_hi1)는 없앴다 — 'HIGH 표본 = 움직임'(아래 ③)이 대신한다. */
+  /* ★2026-10-20 지금 이어지는 HIGH 의 첫 표본 시각 — 고장 판정과 '판정 뒤 60초 인정' 둘 다 이것으로 잰다 */
+  static bool     s_in_high = false;
+  static uint32_t s_high0_ms = 0;
   /* ── 고장(stuck) 감지 ── ★2026-10-18 **시간 기준**(감사 F09).
    *  예전: VIBE_STUCK_WIN(200) 표본 창이 전부 HIGH 면 고장 — 10ms 폴링을 전제한 2초였는데 폴 간격이
    *  유휴 1000ms 가 되면 200초가 된다. 이제: 마지막 LOW 표본 뒤 VIBE_STUCK_MS 동안 HIGH 만, 그리고
    *  HIGH 표본이 VIBE_STUCK_MIN_N 개 이상이면 고장. LOW 가 한 번이라도 보이면 바로 정상 복귀.
    *  ★HIGH 고정 센서는 레벨 웨이크를 계속 일으키고, 그 웨이크가 이제 이 태스크를 깨우므로
    *    (somfy_app.c _ls_exit_cb 의 GPIO 원인 통지) 표본이 빨리 쌓여 약 2초에 잡힌다. */
+  const uint32_t t_ms = _ms_now();
+  uint32_t high_run_ms = 0;
   {
-    static uint32_t s_low_ms = 0;
     static uint32_t s_high_n = 0;
-    static bool     s_init   = false;
-    const uint32_t  t_ms     = _ms_now();
-    if (!s_init) { s_init = true; s_low_ms = t_ms; }
-    if (!high_now) { s_low_ms = t_ms; s_high_n = 0; }
-    else if (s_high_n < 0xFFFFu) { s_high_n++; }
+    if (!high_now) { s_in_high = false; s_high_n = 0; }
+    else {
+      if (!s_in_high) { s_in_high = true; s_high0_ms = t_ms; }
+      if (s_high_n < 0xFFFFu) s_high_n++;
+      high_run_ms = (uint32_t)(t_ms - s_high0_ms);
+    }
     {
-      const bool stuck = high_now && (uint32_t)(t_ms - s_low_ms) >= VIBE_STUCK_MS
+      const bool stuck = high_now && high_run_ms >= VIBE_STUCK_MS
                                   && s_high_n >= VIBE_STUCK_MIN_N;   /* ★전부 HIGH 만 고장(all-LOW 는 정상 대기) */
       if (stuck != s_vibe_stuck) {
         s_vibe_stuck = stuck;
@@ -1692,14 +1734,13 @@ static void _vibration_track(bool high_now) {
          *  지금까지는 고장을 감지해 **소프트웨어에서 무시하기만** 하고 웨이크는
          *  그대로 걸어 뒀다. 감지해 놓고 원인은 안 끊은 셈이다.
          *  ※`~INT`(somfy_app.c) 와 **정확히 같은 유형**의 버그다.
-         *  ※복귀하면 다시 건다 — 진동으로 깨우는 기능은 그대로 살린다. */
-        if (stuck) gpio_wakeup_disable(VIBE_PIN);
-        else       gpio_wakeup_enable(VIBE_PIN, GPIO_INTR_HIGH_LEVEL);
-        if (stuck) s_stuck_since_ms = t_ms;   /* ★2026-10-18 60초 인정 창 시작(아래 고장 분기) */
-        ESP_LOGW(TAG, "[VIBE] %s (마지막 LOW 뒤 %lums, HIGH 표본 %lu개) — 진동 %s, 웨이크 %s",
-                 stuck ? "센서 고장 판정(핀 HIGH 고정)" : "정상 복귀",
-                 (unsigned long)(t_ms - s_low_ms), (unsigned long)s_high_n,
-                 stuck ? "엣지만 60초 인정" : "다시 인정", stuck ? "해제" : "재등록");
+         *  ※복귀하면 다시 건다 — 진동으로 깨우는 기능은 그대로 살린다.
+         * ★★2026-10-20 웨이크는 여기서 만지지 않는다 — _vibe_level_service 가 **HIGH 를 보는 즉시** 끄고 LOW 에서 켠다
+         *  (2초를 기다리지 않는다, GPT 재감사 N01). 이 판정은 이제 로그와 '판정 뒤 60초 인정' 기준일 뿐이다. */
+        ESP_LOGW(TAG, "[VIBE] %s (HIGH 이어진 %lums, HIGH 표본 %lu개) — %s",
+                 stuck ? "HIGH 고정 판정(열린 채 또는 고장)" : "정상 복귀(LOW)",
+                 (unsigned long)high_run_ms, (unsigned long)s_high_n,
+                 stuck ? "판정 뒤 60초까지만 진동으로 인정" : "다시 인정");
       }
     }
   }
@@ -1723,38 +1764,76 @@ static void _vibration_track(bool high_now) {
    *  HIGH duty 경로(②)는 고장 중엔 쓰지 않는다 — 핀이 HIGH 로 붙어 있으면 의미가 없다.
    *  시뮬(sim/tools/vibe_stuck_edge_sim.py, 1시간): 움직이는데 화면 꺼짐 옛 19~51회 → 0회(실측형 구간),
    *    깨끗한 고장·잡음 고장 판정 2.0초·웨이크 폭주 2초 그대로, 잡음 고장 뒤 화면 켜짐 10 → 70초(60초+유휴). */
-  if (s_vibe_stuck) {
-    if ((uint32_t)(_ms_now() - s_stuck_since_ms) < VIBE_STUCK_RECOG_MS && isr_delta >= VIBE_ISR_TRIGGER) {
+  /* ★★2026-10-20 위 10/18 설계의 전제가 틀렸다 (GPT 재감사 N01): 07-24 의 "잡음 엣지 33회/초"는 잡음이 아니라
+   *  **HIGH 레벨 인터럽트를 30ms 마다 다시 켜서 생긴 재발화**였다(1/30ms = 33.3회). 이 ISR 은 처음부터 레벨이었다
+   *  (초기화 주석). 그래서 '고장 뒤 엣지 60초 인정'은 실제로는 그 재발화를 셌고, 60초가 지나도 30ms 루프는 남았다.
+   *  이제 진동(움직임)은 세 가지로 본다 — 모두 실제 접점 움직임에서만 생긴다:
+   *    ① ISR 증가 — LOW 를 본 뒤에만 켜므로(_vibe_level_service) 한 번 = 실제 접점 열림 1회
+   *    ② 절전에서 GPIO 로 깸 — C6 의 GPIO 웨이크는 진동 핀뿐. ISR 이 늦게 걸려도 두드림을 놓치지 않게
+   *    ③ HIGH 표본 — 흔드는 동안은 대부분 열려 있어 ①이 안 생긴다(꺼 둔 채라). 그래서 HIGH 자체를 움직임으로 친다.
+   *       단 HIGH 가 VIBE_STUCK_MS(2초) + VIBE_STUCK_RECOG_MS(60초, 사용자 결정) 넘게 이어지면 그만 친다
+   *       (열린 채 내려놓았거나 고장) → 화면은 그 뒤 유휴 시간에 꺼진다.
+   *  HIGH 동안 버튼 태스크는 평소 주기(유휴 1초)로만 깬다 — 예전처럼 30ms 마다가 아니다. */
+  {
+    const bool woke = s_vibe_gpio_woke;
+    if (woke) s_vibe_gpio_woke = false;
+    bool act = (isr_delta >= VIBE_ISR_TRIGGER) || woke;
+    if (high_now && high_run_ms < (uint32_t)(VIBE_STUCK_MS + VIBE_STUCK_RECOG_MS)) act = true;
+    if (act) {
       s_last_vibration_us = esp_timer_get_time();
-      s_hi1 = false;
-      somfy_app_vibe_kick();
+      somfy_app_vibe_kick();          /* ★2026-10-18 화면 켜기를 기다리지 않게(F10) — 화면 ON 이면 1초 1회(위 extern 주석) */
     }
-    return;
   }
+}
 
-  /* ★① any-edge ISR — 접점 폭과 무관. 정지 시 0.00회/초라 1개면 충분하다. */
-  if (isr_delta >= VIBE_ISR_TRIGGER) {
-    s_last_vibration_us = esp_timer_get_time();
-    s_hi1 = false;
-    somfy_app_vibe_kick();            /* ★2026-10-18 화면 켜기를 기다리지 않게(F10) — 화면 ON 이면 1초 1회(위 extern 주석) */
-    return;
+/* ★★2026-10-20 진동 인터럽트·웨이크 **레벨 기준** 관리 (GPT 재감사 N01·N02, 사용자 "1번 진행").
+ *  진동 ISR 과 절전 웨이크는 둘 다 HIGH 레벨이다(초기화 주석 — gpio_wakeup_enable 이 덮어쓴다).
+ *  레벨 신호는 "**비활성(LOW)으로 돌아온 걸 본 뒤에만** 다시 켠다"가 정답이다 — H2 `~INT` 가 이미 그렇게 한다
+ *  (_btn_task 의 BOARD_PCF_INT_ISR 블록).
+ *  예전: 인터럽트는 ISR 30ms 뒤 레벨과 무관하게 다시 켰고, 웨이크는 '고장'(HIGH 2초) 판정 때만 껐다.
+ *    → HIGH 가 이어지면 ① 30ms 마다 재발화 — 버튼 태스크 초당 ~33회 기상, 고장 판정 뒤에도 끝없이
+ *       ② 웨이크가 켜진 채 HIGH 라 자려는 즉시 깸 — 실기 들고 움직인 55초: 절전 시도 66% 거부, GPIO 깨어남 ~90회/초.
+ *  지금: HIGH 를 보면 웨이크를 즉시 끄고 인터럽트는 꺼 둔 채 둔다. LOW 를 보면 둘 다 켠다.
+ *    ISR 뒤 VIBE_REARM_MS(30ms) 창은 그대로 — 접점 떨림을 초당 33회 이하로 묶는다. 창이 끝났는데 HIGH 면 30ms 시한을
+ *    더 잡지 않는다(단일 대기 시한에서 빠진다) — LOW 는 평소 주기로 기다린다.
+ *    부팅 때 HIGH 라 웨이크를 못 걸었어도 첫 LOW 에서 건다(N02 예외 — 옛 코드는 2초 안에 LOW 로 돌아오면 영영 안 걸어
+ *    화면 OFF 에서 두드림이 안 먹었다).
+ *  버튼 태스크만 부른다(회전마다 1번). 웨이크는 somfy_app 이 허락했을 때만(btn_handler_vibe_wake_enable).
+ *  시뮬(sim/tools/vibe_level_sim.py, 1시간): 정지 3.54→3.49/s, 들고 움직임(열림) 74.5→5.8/s, 열린 채 내려놓음 35.0→3.1/s,
+ *    HIGH 고정 33.5→2.3/s, 부팅 HIGH 뒤 두드림 안 켜짐 → 0.1ms, 깨어 있을 때 두드림 최대 852 → 0.1ms,
+ *    움직이는 동안 화면 꺼짐 0(둘 다). */
+static void _vibe_level_service(bool high_now) {
+  if (s_vibe_isr_disabled_flag &&
+      (uint32_t)((xTaskGetTickCount() - s_vibe_isr_off_tick) * portTICK_PERIOD_MS) >= VIBE_REARM_MS) {
+    s_vibe_isr_disabled_flag = false;        /* 30ms 창 끝 — 이제 레벨로만 판단(시한 반복 없음) */
   }
-
-  /* ★② 기존 HIGH duty-cycle 경로도 남긴다 — 폭이 긴 접점에서 보조로 동작하고,
-   *  ISR 등록이 실패한 개체에서도 최소 동작이 유지된다.
-   *  ★2026-10-18 창을 시간으로(F09): HIGH 표본 2개가 VIBE_DUTY_WIN_MS 안에 오면 진동.
-   *  (예전: 30폴 창 안에 HIGH 2개 — 10ms 폴링 전제의 300ms) */
   if (high_now) {
-    const uint32_t t_ms = _ms_now();
-    if (s_hi1 && (uint32_t)(t_ms - s_hi1_ms) <= VIBE_DUTY_WIN_MS) {
-      s_last_vibration_us = esp_timer_get_time();   /* 임계값 도달 — 즉시 timestamp 갱신 */
-      s_hi1 = false;
-      somfy_app_vibe_kick();                         /* ★2026-10-18 F10 (위와 같음) */
-    } else {
-      s_hi1 = true;
-      s_hi1_ms = t_ms;
-    }
+    if (s_vibe_wake_on) { gpio_wakeup_disable(VIBE_PIN); s_vibe_wake_on = false; }
+    return;                                  /* 인터럽트는 꺼진 채 — 켜져 있었다면 HIGH 라 이미 걸려 꺼졌다 */
   }
+  if (s_vibe_isr_disabled_flag) return;      /* LOW 지만 30ms 창 안 — 떨림 상한 */
+  if (!s_vibe_irq_armed) { s_vibe_irq_armed = true; gpio_intr_enable(VIBE_PIN); }
+  if (s_vibe_wake_allow && !s_vibe_wake_on) {
+    gpio_wakeup_enable(VIBE_PIN, GPIO_INTR_HIGH_LEVEL);
+    s_vibe_wake_on = true;
+  }
+}
+
+/* ★2026-10-20 somfy_app 이 절전 진동 웨이크를 쓰겠다고 알린다(예전 _arm_level_wake(VIBE…) 자리). 실제로 거는 것은
+ *  버튼 태스크가 LOW 를 본 순간이다 — 웨이크 상태의 주인을 하나로(_vibe_level_service). 태스크가 이미 돌면 바로 맞추게 깨운다. */
+void btn_handler_vibe_wake_enable(void) {
+  s_vibe_wake_allow = true;
+  ESP_LOGI(TAG, "[WAKE] VIBE(IO%d) 웨이크 허락 — 버튼 태스크가 핀이 LOW 일 때 건다(지금 %d)",
+           (int)VIBE_PIN, gpio_get_level(VIBE_PIN));
+  if (s_btn_task_h) xTaskNotifyGive(s_btn_task_h);
+}
+
+/* ★2026-10-20 절전에서 GPIO 로 깼다(somfy_app _ls_exit_cb) — C6 의 GPIO 웨이크는 진동 핀뿐이라 그 자체가 진동 사건이다.
+ *  ISR 이 깨어남보다 늦게 걸리거나 두드림이 이미 끝나 있어도 놓치지 않게 표시해 두고 태스크를 깨운다.
+ *  절전 종료 콜백(임계구역 안)에서 불리므로 IRAM·FromISR 만 쓴다(btn_handler_notify_from_lp 와 같다). */
+void IRAM_ATTR btn_handler_vibe_gpio_woke(void) {
+  s_vibe_gpio_woke = true;
+  btn_handler_notify_from_lp();
 }
 
 /* ★2026-08-20 LP 코어 폴링 상태 노출 — 절전 진단용.
@@ -1776,7 +1855,8 @@ void btn_handler_lp_latch_stats(uint32_t *notify_cnt, uint32_t *latch_now) {
   extern uint32_t g_btn_lp_notify_cnt;
   if (notify_cnt) *notify_cnt = g_btn_lp_notify_cnt;
 #if SOMFY_LP_CORE_PATH
-  if (latch_now) *latch_now = s_lp_active ? ulp_press_latch : 0;
+  /* ★2026-10-20 공유 래치가 없어져(N06) 대신 HP 쪽 '확정 대기' 비트(s_lat_hold)를 보인다 — 유휴면 0 이어야 정상 */
+  if (latch_now) *latch_now = s_lp_active ? s_lat_hold : 0;
 #else
   if (latch_now) *latch_now = 0;
 #endif

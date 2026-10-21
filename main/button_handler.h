@@ -206,6 +206,12 @@ SemaphoreHandle_t btn_handler_get_i2c_mutex(void);
 /* ★2026-08-20 절전 진단: LP 코어 폴링이 실제로 붙었는지 / 현재 폴 주기(ms). */
 /* ★2026-08-23 light sleep 복귀 콜백이 ULP 깨움일 때 호출 — 버튼 태스크 즉시 깨움 */
 void btn_handler_notify_from_lp(void);
+/* ★2026-10-20 진동 웨이크 레벨 관리(GPT 재감사 N01·N02 — button_handler.c _vibe_level_service 주석).
+ *  vibe_wake_enable: somfy_app 이 진동 절전 웨이크를 쓰겠다고 알림(예전 _arm_level_wake(VIBE…) 자리). 실제 등록은
+ *                    버튼 태스크가 핀이 LOW 일 때 한다(HIGH 인 채 걸면 자려는 즉시 깨는 폭주).
+ *  vibe_gpio_woke  : 절전 복귀 콜백이 GPIO 원인일 때(C6 은 진동 핀뿐) — 진동 사건으로 치고 태스크를 깨움. IRAM. */
+void btn_handler_vibe_wake_enable(void);
+void btn_handler_vibe_gpio_woke(void);
 
 bool btn_handler_lp_active(void);
 /* ★2026-10-18 F05 유휴 훅(HP 가 깨어 있는 동안의 LP 변화) 통지 누적 — LP 경로 없으면 0 */

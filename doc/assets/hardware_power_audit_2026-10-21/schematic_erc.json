@@ -1,0 +1,1635 @@
+{
+    "$schema": "https://schemas.kicad.org/erc.v1.json",
+    "coordinate_units": "mm",
+    "date": "2026-10-21T00:18:57",
+    "ignored_checks": [
+        {
+            "description": "Global label only appears once in the schematic",
+            "key": "single_global_label"
+        },
+        {
+            "description": "Four connection points are joined together",
+            "key": "four_way_junction"
+        },
+        {
+            "description": "SPICE model issue",
+            "key": "simulation_model_issue"
+        },
+        {
+            "description": "Assigned footprint doesn't match footprint filters",
+            "key": "footprint_filter"
+        }
+    ],
+    "included_severities": [
+        "error",
+        "warning"
+    ],
+    "kicad_version": "10.0.6",
+    "sheets": [
+        {
+            "path": "/",
+            "uuid_path": "/84352003-3909-4cc7-a7bd-e3d9e7e75899",
+            "violations": [
+                {
+                    "description": "Input pin not driven by any Output pins",
+                    "items": [
+                        {
+                            "description": "Symbol U3 핀 22 [SCL, Input, Line]",
+                            "pos": {
+                                "x": 2.1717,
+                                "y": 0.762
+                            },
+                            "uuid": "a94f9a83-a404-4489-948f-65fb27f18152"
+                        }
+                    ],
+                    "severity": "error",
+                    "type": "pin_not_driven"
+                },
+                {
+                    "description": "Input Power pin not driven by any Output Power pins",
+                    "items": [
+                        {
+                            "description": "Symbol #PWR015 핀 1 [Power input, Line]",
+                            "pos": {
+                                "x": 2.2733,
+                                "y": 0.6731
+                            },
+                            "uuid": "b0000015-0000-0000-0001-000000000001"
+                        }
+                    ],
+                    "severity": "error",
+                    "type": "power_pin_not_driven"
+                },
+                {
+                    "description": "심볼 '+5V'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR032 [+5V]",
+                            "pos": {
+                                "x": 0.3302,
+                                "y": 2.7051
+                            },
+                            "uuid": "69120b68-05a5-4fdc-a48c-03566501e404"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "Unspecified 및 Unspecified 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 4 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.3683,
+                                "y": 0.9017
+                            },
+                            "uuid": "aa314288-b43c-432a-9dbd-afe17920b550"
+                        },
+                        {
+                            "description": "Symbol ENC1 핀 5 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.3683,
+                                "y": 0.9271
+                            },
+                            "uuid": "a3012fc3-a2ea-4236-9314-d24727291d54"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Unspecified 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 5 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.3683,
+                                "y": 0.9271
+                            },
+                            "uuid": "a3012fc3-a2ea-4236-9314-d24727291d54"
+                        },
+                        {
+                            "description": "Symbol ENC1 핀 6 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.3683,
+                                "y": 0.9525
+                            },
+                            "uuid": "07880529-423b-47d2-b1ff-cb06caeecd06"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Unspecified 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 6 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.3683,
+                                "y": 0.9525
+                            },
+                            "uuid": "07880529-423b-47d2-b1ff-cb06caeecd06"
+                        },
+                        {
+                            "description": "Symbol ENC1 핀 C [C, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.5207,
+                                "y": 1.0541
+                            },
+                            "uuid": "2aaa805e-0bb1-4346-99c3-0e9eaf98ab7a"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Bidirectional 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 A [A, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.4445,
+                                "y": 1.0541
+                            },
+                            "uuid": "d49950c5-b9e0-49d5-8f40-69528a229992"
+                        },
+                        {
+                            "description": "Symbol U3 핀 4 [P0, Bidirectional, Line]",
+                            "pos": {
+                                "x": 2.3749,
+                                "y": 0.762
+                            },
+                            "uuid": "33333333-0003-0003-0003-100000000004"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Bidirectional 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 S [S, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.4699,
+                                "y": 1.0541
+                            },
+                            "uuid": "064c6528-2ae6-4895-ac12-8c72a1f4a68c"
+                        },
+                        {
+                            "description": "Symbol U3 핀 15 [P12, Bidirectional, Line]",
+                            "pos": {
+                                "x": 2.3749,
+                                "y": 1.0414
+                            },
+                            "uuid": "33333333-0003-0003-0003-100000000015"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR033 [GND]",
+                            "pos": {
+                                "x": 0.4699,
+                                "y": 2.7051
+                            },
+                            "uuid": "f6e2f277-d651-4e20-8e5e-621d1366b8a0"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "Unspecified 및 Power input 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 C [C, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.5207,
+                                "y": 1.0541
+                            },
+                            "uuid": "2aaa805e-0bb1-4346-99c3-0e9eaf98ab7a"
+                        },
+                        {
+                            "description": "Symbol #PWR07 핀 1 [Power input, Line]",
+                            "pos": {
+                                "x": 0.5207,
+                                "y": 1.2446
+                            },
+                            "uuid": "f3287317-396f-4d94-9220-6fc4210a0d3c"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR07 [GND]",
+                            "pos": {
+                                "x": 0.5207,
+                                "y": 1.2446
+                            },
+                            "uuid": "261e95ec-1eb2-4468-869b-2b28bd81f5ed"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "Unspecified 및 Bidirectional 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 B [B, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.5461,
+                                "y": 1.0541
+                            },
+                            "uuid": "6e2d0e01-3b93-4d43-b727-c10fd46734ad"
+                        },
+                        {
+                            "description": "Symbol U3 핀 5 [P1, Bidirectional, Line]",
+                            "pos": {
+                                "x": 2.3749,
+                                "y": 0.7874
+                            },
+                            "uuid": "33333333-0003-0003-0003-100000000005"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Unspecified 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 3 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.6223,
+                                "y": 0.9017
+                            },
+                            "uuid": "160bf319-b455-46c0-aea4-b0829eda0694"
+                        },
+                        {
+                            "description": "Symbol ENC1 핀 C [C, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.5207,
+                                "y": 1.0541
+                            },
+                            "uuid": "2aaa805e-0bb1-4346-99c3-0e9eaf98ab7a"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Unspecified 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 2 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.6223,
+                                "y": 0.9271
+                            },
+                            "uuid": "fcedec42-02b2-478b-b088-689be4e15694"
+                        },
+                        {
+                            "description": "Symbol ENC1 핀 3 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.6223,
+                                "y": 0.9017
+                            },
+                            "uuid": "160bf319-b455-46c0-aea4-b0829eda0694"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Unspecified 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol ENC1 핀 1 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.6223,
+                                "y": 0.9525
+                            },
+                            "uuid": "2a658225-1f64-4b3a-b863-baf8a91df5f9"
+                        },
+                        {
+                            "description": "Symbol ENC1 핀 2 [EH, Unspecified, Line]",
+                            "pos": {
+                                "x": 0.6223,
+                                "y": 0.9271
+                            },
+                            "uuid": "fcedec42-02b2-478b-b088-689be4e15694"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR031 [GND]",
+                            "pos": {
+                                "x": 0.6223,
+                                "y": 1.8923
+                            },
+                            "uuid": "2d9257ee-bc67-4bc4-9d2c-6c5340579627"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR036 [GND]",
+                            "pos": {
+                                "x": 0.9906,
+                                "y": 1.905
+                            },
+                            "uuid": "5178c70e-b008-4d53-b269-d0e35d186fac"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C3 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 1.0541,
+                                "y": 1.8415
+                            },
+                            "uuid": "77777777-0003-0003-0003-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C3 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 1.0541,
+                                "y": 1.8415
+                            },
+                            "uuid": "77777777-0003-0003-0003-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C7 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.0668,
+                                "y": 2.667
+                            },
+                            "uuid": "66335472-4749-4bb1-9b0b-190533d35b80"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C7 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.0668,
+                                "y": 2.667
+                            },
+                            "uuid": "66335472-4749-4bb1-9b0b-190533d35b80"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C4 [10uF_0402_6.3V_20%]",
+                            "pos": {
+                                "x": 1.143,
+                                "y": 1.8415
+                            },
+                            "uuid": "77777777-0004-0004-0004-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C4 [10uF_0402_6.3V_20%]",
+                            "pos": {
+                                "x": 1.143,
+                                "y": 1.8415
+                            },
+                            "uuid": "77777777-0004-0004-0004-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C8 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.1684,
+                                "y": 2.667
+                            },
+                            "uuid": "f0380903-7265-4a83-9fa3-a6323d48c320"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C8 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.1684,
+                                "y": 2.667
+                            },
+                            "uuid": "f0380903-7265-4a83-9fa3-a6323d48c320"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "심볼 '+3V3'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR035 [+3V3]",
+                            "pos": {
+                                "x": 1.2065,
+                                "y": 1.7526
+                            },
+                            "uuid": "51767640-76d4-4913-890a-ae362ab7b00e"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C9 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.27,
+                                "y": 2.667
+                            },
+                            "uuid": "6f7f7be4-fde8-41bf-8319-05cdf3e16030"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C9 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.27,
+                                "y": 2.667
+                            },
+                            "uuid": "6f7f7be4-fde8-41bf-8319-05cdf3e16030"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "Label connected to only one pin",
+                    "items": [
+                        {
+                            "description": "전역 라벨 'ANT_447M'",
+                            "pos": {
+                                "x": 1.3081,
+                                "y": 2.159
+                            },
+                            "uuid": "646083db-45f2-49dd-ba7a-3cba1cbb7ad7"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "isolated_pin_label"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR038 [GND]",
+                            "pos": {
+                                "x": 1.3335,
+                                "y": 2.0955
+                            },
+                            "uuid": "b754cac4-71c1-4b21-84a6-6f839abd4da9"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR013 [GND]",
+                            "pos": {
+                                "x": 1.3462,
+                                "y": 0.762
+                            },
+                            "uuid": "1e49f783-4f93-4fad-88ef-0d3b0e13fa8d"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C10 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.3716,
+                                "y": 2.667
+                            },
+                            "uuid": "88a77937-b169-4b9f-8552-ee23b84ca158"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C10 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.3716,
+                                "y": 2.667
+                            },
+                            "uuid": "88a77937-b169-4b9f-8552-ee23b84ca158"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR039 [GND]",
+                            "pos": {
+                                "x": 1.4097,
+                                "y": 1.7526
+                            },
+                            "uuid": "ba640c9f-be7c-4aed-b0ac-37b3eadd8423"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C11 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.4732,
+                                "y": 2.667
+                            },
+                            "uuid": "170f5ac9-7f2d-4ae4-919c-ef581a52a4a8"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C11 [100uF_1206_50V_10%]",
+                            "pos": {
+                                "x": 1.4732,
+                                "y": 2.667
+                            },
+                            "uuid": "170f5ac9-7f2d-4ae4-919c-ef581a52a4a8"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "심볼 '+3V3'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR034 [+3V3]",
+                            "pos": {
+                                "x": 1.4986,
+                                "y": 0.762
+                            },
+                            "uuid": "b15d43dd-97f2-41ac-bfad-bd2b5a6fd145"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 '+5V'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR016 [+5V]",
+                            "pos": {
+                                "x": 1.6002,
+                                "y": 0.9779
+                            },
+                            "uuid": "c0000016-0000-0000-0000-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 '+3V3'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR042 [+3V3]",
+                            "pos": {
+                                "x": 1.6002,
+                                "y": 1.0541
+                            },
+                            "uuid": "0d91fee7-9e13-4eb2-a505-5dcc910cdd6e"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SL_Connectors'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 BAT1 [JST_02]",
+                            "pos": {
+                                "x": 1.6002,
+                                "y": 2.667
+                            },
+                            "uuid": "f5f1c2b2-7de4-4856-8e96-4ae4e0e63c2d"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR02 [GND]",
+                            "pos": {
+                                "x": 1.651,
+                                "y": 1.016
+                            },
+                            "uuid": "244e4a01-2466-44fc-adb3-749c60fcb830"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR03 [GND]",
+                            "pos": {
+                                "x": 2.0574,
+                                "y": 0.8382
+                            },
+                            "uuid": "a0000003-0000-0000-0000-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 R3 [10k_0402]",
+                            "pos": {
+                                "x": 2.0701,
+                                "y": 0.6985
+                            },
+                            "uuid": "6d8d940e-f977-4d8c-8942-ac062cd2158b"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Resistor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 R3 [10k_0402]",
+                            "pos": {
+                                "x": 2.0701,
+                                "y": 0.6985
+                            },
+                            "uuid": "6d8d940e-f977-4d8c-8942-ac062cd2158b"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR04 [GND]",
+                            "pos": {
+                                "x": 2.1082,
+                                "y": 0.8636
+                            },
+                            "uuid": "a0000004-0000-0000-0000-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 '+5V'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR017 [+5V]",
+                            "pos": {
+                                "x": 2.1209,
+                                "y": 2.7305
+                            },
+                            "uuid": "f8c472a6-fd5f-48a2-a77e-6ecb36b4b2bc"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR05 [GND]",
+                            "pos": {
+                                "x": 2.1463,
+                                "y": 0.889
+                            },
+                            "uuid": "a0000005-0000-0000-0000-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 R4 [100k_0402]",
+                            "pos": {
+                                "x": 2.2606,
+                                "y": 2.5146
+                            },
+                            "uuid": "dc92b633-10c2-410d-91f1-319b0ddfa916"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Resistor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 R4 [100k_0402]",
+                            "pos": {
+                                "x": 2.2606,
+                                "y": 2.5146
+                            },
+                            "uuid": "dc92b633-10c2-410d-91f1-319b0ddfa916"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 R6 [100k_0402]",
+                            "pos": {
+                                "x": 2.2606,
+                                "y": 2.7305
+                            },
+                            "uuid": "58d0ea1e-1076-42c7-8303-9d9bd254ea8b"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Resistor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 R6 [100k_0402]",
+                            "pos": {
+                                "x": 2.2606,
+                                "y": 2.7305
+                            },
+                            "uuid": "58d0ea1e-1076-42c7-8303-9d9bd254ea8b"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "심볼 '+3V3'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR015 [+3V3]",
+                            "pos": {
+                                "x": 2.2733,
+                                "y": 0.6731
+                            },
+                            "uuid": "b0000015-0000-0000-0000-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR06 [GND]",
+                            "pos": {
+                                "x": 2.2733,
+                                "y": 1.27
+                            },
+                            "uuid": "a0000006-0000-0000-0000-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 '+3V3'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR040 [+3V3]",
+                            "pos": {
+                                "x": 2.3114,
+                                "y": 1.7653
+                            },
+                            "uuid": "ba96a284-db83-4226-a4b5-b7fac5f4204d"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR041 [GND]",
+                            "pos": {
+                                "x": 2.3114,
+                                "y": 2.0701
+                            },
+                            "uuid": "926315ab-9aaf-4229-8859-de5fedfd22db"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C6 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 2.4892,
+                                "y": 2.4384
+                            },
+                            "uuid": "59bfb322-3abd-42e7-ab6a-c811fb2ce8f5"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C6 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 2.4892,
+                                "y": 2.4384
+                            },
+                            "uuid": "59bfb322-3abd-42e7-ab6a-c811fb2ce8f5"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 R5 [100k_0402]",
+                            "pos": {
+                                "x": 2.4892,
+                                "y": 2.5146
+                            },
+                            "uuid": "8c70b8b9-a8a5-41d2-b482-b849b5dd90f7"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Resistor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 R5 [100k_0402]",
+                            "pos": {
+                                "x": 2.4892,
+                                "y": 2.5146
+                            },
+                            "uuid": "8c70b8b9-a8a5-41d2-b482-b849b5dd90f7"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 R7 [150k_0402]",
+                            "pos": {
+                                "x": 2.4892,
+                                "y": 2.7305
+                            },
+                            "uuid": "11b6e697-3785-4a87-b2a2-e0793c9fa02d"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Resistor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 R7 [150k_0402]",
+                            "pos": {
+                                "x": 2.4892,
+                                "y": 2.7305
+                            },
+                            "uuid": "11b6e697-3785-4a87-b2a2-e0793c9fa02d"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C5 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 2.6035,
+                                "y": 1.9304
+                            },
+                            "uuid": "e449a7ab-a1e2-4469-8dd7-857c7f0aa624"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C5 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 2.6035,
+                                "y": 1.9304
+                            },
+                            "uuid": "e449a7ab-a1e2-4469-8dd7-857c7f0aa624"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR014 [GND]",
+                            "pos": {
+                                "x": 2.6162,
+                                "y": 2.5146
+                            },
+                            "uuid": "2fdc3669-0039-4767-80df-ed9934b9afce"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR028 [GND]",
+                            "pos": {
+                                "x": 2.6162,
+                                "y": 2.7305
+                            },
+                            "uuid": "450822c6-c7aa-45c8-9439-c52101724b4a"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C1 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 2.6543,
+                                "y": 0.9652
+                            },
+                            "uuid": "77777777-0001-0001-0001-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C1 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 2.6543,
+                                "y": 0.9652
+                            },
+                            "uuid": "77777777-0001-0001-0001-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Capacitor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 C2 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 2.7559,
+                                "y": 0.9652
+                            },
+                            "uuid": "77777777-0002-0002-0002-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Capacitor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 C2 [0.1uF_0402_16V_10%]",
+                            "pos": {
+                                "x": 2.7559,
+                                "y": 0.9652
+                            },
+                            "uuid": "77777777-0002-0002-0002-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "심볼 '+3V3'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR043 [+3V3]",
+                            "pos": {
+                                "x": 3.175,
+                                "y": 1.9558
+                            },
+                            "uuid": "788f0404-0824-4249-8c0b-7c85a35c9314"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR09 [GND]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 0.4699
+                            },
+                            "uuid": "66af6a18-fcf3-4852-8aff-f2a3485e7312"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR08 [GND]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 0.5842
+                            },
+                            "uuid": "82292b70-fba5-41d3-91f0-e96994f2bc45"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR010 [GND]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 0.6985
+                            },
+                            "uuid": "7d7e2eee-ee2b-485c-a572-d7949154899e"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR019 [GND]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 0.8509
+                            },
+                            "uuid": "65beac8a-b225-4df8-b1b3-1ce3ff3d86bd"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR020 [GND]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 0.9652
+                            },
+                            "uuid": "00b4c15c-7f15-4c3e-a88c-90b86199d491"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR011 [GND]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 1.1684
+                            },
+                            "uuid": "a0000011-0000-0000-0000-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR012 [GND]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 1.2954
+                            },
+                            "uuid": "a0000012-0000-0000-0000-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "심볼 'GND'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR_SW6 [GND]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 1.4097
+                            },
+                            "uuid": "0399d431-faa9-4e21-aa99-01db94800ce9"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 R8 [4.7k_0402]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 1.8415
+                            },
+                            "uuid": "a80e10ba-6938-4d47-adb1-3b94446428d9"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Resistor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 R8 [4.7k_0402]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 1.8415
+                            },
+                            "uuid": "a80e10ba-6938-4d47-adb1-3b94446428d9"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 R9 [4.7k_0402]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 2.0701
+                            },
+                            "uuid": "bb1303b6-cd6d-44f0-97c3-2c9cc2c7e110"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Resistor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 R9 [4.7k_0402]",
+                            "pos": {
+                                "x": 3.2893,
+                                "y": 2.0701
+                            },
+                            "uuid": "bb1303b6-cd6d-44f0-97c3-2c9cc2c7e110"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "Unspecified 및 Passive 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol SW_I2C1 핀 4 [4, Unspecified, Line]",
+                            "pos": {
+                                "x": 3.3655,
+                                "y": 1.8415
+                            },
+                            "uuid": "bbd5dab9-27bd-4f63-8905-23241edb23a7"
+                        },
+                        {
+                            "description": "Symbol R8 핀 2 [Passive, Line]",
+                            "pos": {
+                                "x": 3.3147,
+                                "y": 1.8415
+                            },
+                            "uuid": "f46d4522-701f-4a4d-ada2-1ed65857afa7"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Passive 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol SW_I2C1 핀 1 [1, Unspecified, Line]",
+                            "pos": {
+                                "x": 3.3655,
+                                "y": 2.0701
+                            },
+                            "uuid": "a4ac659a-bc7b-4a55-a1c1-32f64c5d7e53"
+                        },
+                        {
+                            "description": "Symbol R9 핀 2 [Passive, Line]",
+                            "pos": {
+                                "x": 3.3147,
+                                "y": 2.0701
+                            },
+                            "uuid": "bc1f8f3d-85c2-4db8-8b8c-326932a64e01"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Input 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol SW_I2C1 핀 5 [5, Unspecified, Line]",
+                            "pos": {
+                                "x": 3.4417,
+                                "y": 1.8415
+                            },
+                            "uuid": "6a9a4cc2-4e4a-43de-b034-151db560b8f3"
+                        },
+                        {
+                            "description": "Symbol U3 핀 22 [SCL, Input, Line]",
+                            "pos": {
+                                "x": 2.1717,
+                                "y": 0.762
+                            },
+                            "uuid": "a94f9a83-a404-4489-948f-65fb27f18152"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Bidirectional 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol SW_I2C1 핀 2 [2, Unspecified, Line]",
+                            "pos": {
+                                "x": 3.4417,
+                                "y": 2.0701
+                            },
+                            "uuid": "0c1c5b4b-1954-4bd1-bc6a-b57c5991adc7"
+                        },
+                        {
+                            "description": "Symbol U3 핀 23 [SDA, Bidirectional, Line]",
+                            "pos": {
+                                "x": 2.1717,
+                                "y": 0.7874
+                            },
+                            "uuid": "14c9fcca-9838-4560-b5e8-abd67716544e"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Passive 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol SW_I2C1 핀 6 [6, Unspecified, Line]",
+                            "pos": {
+                                "x": 3.5179,
+                                "y": 1.8415
+                            },
+                            "uuid": "f1045fe2-b18f-42b4-9ab0-2a41f7f8b426"
+                        },
+                        {
+                            "description": "Symbol R1 핀 1 [Passive, Line]",
+                            "pos": {
+                                "x": 3.5687,
+                                "y": 1.8415
+                            },
+                            "uuid": "66666666-0001-0001-0001-100000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Unspecified 및 Passive 유형의 핀이 연결됨",
+                    "items": [
+                        {
+                            "description": "Symbol SW_I2C1 핀 3 [3, Unspecified, Line]",
+                            "pos": {
+                                "x": 3.5179,
+                                "y": 2.0701
+                            },
+                            "uuid": "19f132d3-45e0-4245-8dea-f44ad3c13ab1"
+                        },
+                        {
+                            "description": "Symbol R2 핀 1 [Passive, Line]",
+                            "pos": {
+                                "x": 3.5687,
+                                "y": 2.0701
+                            },
+                            "uuid": "66666666-0002-0002-0002-100000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "pin_to_pin"
+                },
+                {
+                    "description": "Symbol pin or wire end off connection grid",
+                    "items": [
+                        {
+                            "description": "수평 도선, 길이 0.0738 mm",
+                            "pos": {
+                                "x": 3.4544,
+                                "y": 0.4699
+                            },
+                            "uuid": "b28f6880-af08-4c09-a0d6-54aa65f3fc34"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "endpoint_off_grid"
+                },
+                {
+                    "description": "Symbol pin or wire end off connection grid",
+                    "items": [
+                        {
+                            "description": "수평 도선, 길이 0.0738 mm",
+                            "pos": {
+                                "x": 3.4544,
+                                "y": 0.6985
+                            },
+                            "uuid": "2d7789b9-48ad-4bb3-9d38-e17805bf328a"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "endpoint_off_grid"
+                },
+                {
+                    "description": "Symbol pin or wire end off connection grid",
+                    "items": [
+                        {
+                            "description": "수평 도선, 길이 0.0738 mm",
+                            "pos": {
+                                "x": 3.4544,
+                                "y": 0.8509
+                            },
+                            "uuid": "1a67d696-1fe6-48e1-8ef8-e7cc62778a59"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "endpoint_off_grid"
+                },
+                {
+                    "description": "Symbol pin or wire end off connection grid",
+                    "items": [
+                        {
+                            "description": "수평 도선, 길이 0.0738 mm",
+                            "pos": {
+                                "x": 3.4544,
+                                "y": 1.1684
+                            },
+                            "uuid": "c60c41d3-4cb6-4471-8544-6112c84de014"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "endpoint_off_grid"
+                },
+                {
+                    "description": "Symbol pin or wire end off connection grid",
+                    "items": [
+                        {
+                            "description": "수평 도선, 길이 0.0738 mm",
+                            "pos": {
+                                "x": 3.4544,
+                                "y": 1.2954
+                            },
+                            "uuid": "5d36a4e8-f0ec-45a8-861e-f8354ea5e22e"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "endpoint_off_grid"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 R1 [4.7k_0402]",
+                            "pos": {
+                                "x": 3.5941,
+                                "y": 1.8415
+                            },
+                            "uuid": "66666666-0001-0001-0001-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Resistor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 R1 [4.7k_0402]",
+                            "pos": {
+                                "x": 3.5941,
+                                "y": 1.8415
+                            },
+                            "uuid": "66666666-0001-0001-0001-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "현재 구성에 풋프린트 라이브러리 'PCM_SparkFun-Resistor'이(가) 포함되어 있지 않습니다",
+                    "items": [
+                        {
+                            "description": "심볼 R2 [4.7k_0402]",
+                            "pos": {
+                                "x": 3.5941,
+                                "y": 2.0701
+                            },
+                            "uuid": "66666666-0002-0002-0002-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "footprint_link_issues"
+                },
+                {
+                    "description": "현재 설정에 심볼 라이브러리 'PCM_SparkFun-Resistor'가 포함되어 있지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 R2 [4.7k_0402]",
+                            "pos": {
+                                "x": 3.5941,
+                                "y": 2.0701
+                            },
+                            "uuid": "66666666-0002-0002-0002-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_issues"
+                },
+                {
+                    "description": "심볼 '+3V3'가 라이브러리 'power'의 복사본과 일치하지 않음",
+                    "items": [
+                        {
+                            "description": "심볼 #PWR018 [+3V3]",
+                            "pos": {
+                                "x": 3.7211,
+                                "y": 1.9558
+                            },
+                            "uuid": "b0000018-0000-0000-0000-000000000001"
+                        }
+                    ],
+                    "severity": "warning",
+                    "type": "lib_symbol_mismatch"
+                }
+            ]
+        }
+    ],
+    "source": "somfy_blinds_v6.kicad_sch"
+}

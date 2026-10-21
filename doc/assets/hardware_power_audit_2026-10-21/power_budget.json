@@ -1,0 +1,172 @@
+{
+  "battery": {
+    "nominal_mAh": 700,
+    "usable_fraction_assumed": 0.8,
+    "usable_mAh": 560,
+    "target_days": 15,
+    "target_total_mA": 1.5555555555555556
+  },
+  "conversion_assumptions": {
+    "battery_V": 3.7,
+    "rail_V": 3.3,
+    "efficiency": 0.9
+  },
+  "rail_currents_mA": {
+    "module_R21_gpio3_low": 0.33,
+    "module_R24_gpio14_high": 0.6470588235294117,
+    "carrier_R3_int_low": 0.33,
+    "carrier_one_i2c_low": 0.7021276595744681,
+    "carrier_bat_div": 0.018500000000000003,
+    "carrier_usb_div_usb_on": 0.02,
+    "vibration_closed_assumed_45k": 0.07333333333333333
+  },
+  "cases": [
+    {
+      "base_idle_mA_assumed": 1.5,
+      "uses": 20,
+      "rail_modification_saving_battery_mA_assumed": 0,
+      "remaining_idle_mA": 1.5,
+      "days": 14.441260744985673
+    },
+    {
+      "base_idle_mA_assumed": 1.5,
+      "uses": 20,
+      "rail_modification_saving_battery_mA_assumed": 0.6412294647588764,
+      "remaining_idle_mA": 0.8587705352411236,
+      "days": 23.943625803430486
+    },
+    {
+      "base_idle_mA_assumed": 1.5,
+      "uses": 20,
+      "rail_modification_saving_battery_mA_assumed": 0.9682564917859036,
+      "remaining_idle_mA": 0.5317435082140964,
+      "days": 36.03691266775644
+    },
+    {
+      "base_idle_mA_assumed": 1.5,
+      "uses": 50,
+      "rail_modification_saving_battery_mA_assumed": 0,
+      "remaining_idle_mA": 1.5,
+      "days": 13.040103492884864
+    },
+    {
+      "base_idle_mA_assumed": 1.5,
+      "uses": 50,
+      "rail_modification_saving_battery_mA_assumed": 0.6412294647588764,
+      "remaining_idle_mA": 0.8587705352411236,
+      "days": 20.32303663411085
+    },
+    {
+      "base_idle_mA_assumed": 1.5,
+      "uses": 50,
+      "rail_modification_saving_battery_mA_assumed": 0.9682564917859036,
+      "remaining_idle_mA": 0.5317435082140964,
+      "days": 28.417324549805347
+    },
+    {
+      "base_idle_mA_assumed": 2,
+      "uses": 20,
+      "rail_modification_saving_battery_mA_assumed": 0,
+      "remaining_idle_mA": 2,
+      "days": 11.028446389496718
+    },
+    {
+      "base_idle_mA_assumed": 2,
+      "uses": 20,
+      "rail_modification_saving_battery_mA_assumed": 0.6412294647588764,
+      "remaining_idle_mA": 1.3587705352411237,
+      "days": 15.82445228694224
+    },
+    {
+      "base_idle_mA_assumed": 2,
+      "uses": 20,
+      "rail_modification_saving_battery_mA_assumed": 0.9682564917859036,
+      "remaining_idle_mA": 1.0317435082140964,
+      "days": 20.334338667032707
+    },
+    {
+      "base_idle_mA_assumed": 2,
+      "uses": 50,
+      "rail_modification_saving_battery_mA_assumed": 0,
+      "remaining_idle_mA": 2,
+      "days": 10.19211324570273
+    },
+    {
+      "base_idle_mA_assumed": 2,
+      "uses": 50,
+      "rail_modification_saving_battery_mA_assumed": 0.6412294647588764,
+      "remaining_idle_mA": 1.3587705352411237,
+      "days": 14.1575246571886
+    },
+    {
+      "base_idle_mA_assumed": 2,
+      "uses": 50,
+      "rail_modification_saving_battery_mA_assumed": 0.9682564917859036,
+      "remaining_idle_mA": 1.0317435082140964,
+      "days": 17.662111334770373
+    },
+    {
+      "base_idle_mA_assumed": 3,
+      "uses": 20,
+      "rail_modification_saving_battery_mA_assumed": 0,
+      "remaining_idle_mA": 3,
+      "days": 7.4888558692422
+    },
+    {
+      "base_idle_mA_assumed": 3,
+      "uses": 20,
+      "rail_modification_saving_battery_mA_assumed": 0.6412294647588764,
+      "remaining_idle_mA": 2.3587705352411237,
+      "days": 9.429471411107178
+    },
+    {
+      "base_idle_mA_assumed": 3,
+      "uses": 20,
+      "rail_modification_saving_battery_mA_assumed": 0.9682564917859036,
+      "remaining_idle_mA": 2.031743508214096,
+      "days": 10.865426996584247
+    },
+    {
+      "base_idle_mA_assumed": 3,
+      "uses": 50,
+      "rail_modification_saving_battery_mA_assumed": 0,
+      "remaining_idle_mA": 3,
+      "days": 7.093596059113301
+    },
+    {
+      "base_idle_mA_assumed": 3,
+      "uses": 50,
+      "rail_modification_saving_battery_mA_assumed": 0.6412294647588764,
+      "remaining_idle_mA": 2.3587705352411237,
+      "days": 8.811274526834813
+    },
+    {
+      "base_idle_mA_assumed": 3,
+      "uses": 50,
+      "rail_modification_saving_battery_mA_assumed": 0.9682564917859036,
+      "remaining_idle_mA": 2.031743508214096,
+      "days": 10.052724991303407
+    }
+  ],
+  "rf": {
+    "external_rail_mA": 0.9770588235294118,
+    "external_battery_mA_assumed": 0.9682564917859036,
+    "external_mAh_day_assumed": 23.238155802861684,
+    "external_15day_mAh_assumed": 348.57233704292526,
+    "internal_rail_mA": 0.33,
+    "raise_both_to_100k_saving_rail_mA": 0.9110588235294118
+  },
+  "capacitors": {
+    "count": 5,
+    "each_uF": 220,
+    "total_uF": 1100,
+    "one_charge_4p2V_mAh": 0.0012833333333333336
+  },
+  "lp_i2c_example": {
+    "polls_s_assumed": 200,
+    "clock_Hz": 400000,
+    "scl_clocks_per_read": 27,
+    "scl_low_duty_assumed": 0.5,
+    "scl_external_pullup_avg_uA": 4.739361702127659
+  }
+}
