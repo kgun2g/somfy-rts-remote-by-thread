@@ -3059,6 +3059,8 @@ static uint64_t s_bl_saved_lsus   = 0;
 static uint32_t s_dis_rjs0 = 0, s_dis_rjh0 = 0, s_dis_olf0 = 0;          /* 세션 시작 시점 값 */
 static uint32_t s_dis_base_rjs = 0, s_dis_base_rjh = 0, s_dis_base_olf = 0;
 static uint32_t s_bl_saved_rjs = 0, s_bl_saved_rjh = 0, s_bl_saved_olf = 0;  /* NVS 에서 읽어온 값 */
+/* ★2026-10-29 끝난 세션의 마지막 경과(초) — 세션이 없을 때 _batlog_save 가 dis_el 로 쓴다(_batlog_close_session 주석) */
+static uint32_t s_dis_end_el = 0;
 /* 세션 기준점 — 실제 정의는 아래 g_wake_iter 옆. C 의 tentative definition
  *  이라 두 번 나와도 같은 객체다(이 함수가 정의보다 앞서 나오기 때문). */
 static uint32_t s_wi_sess0[WI_COUNT];
@@ -3373,8 +3375,9 @@ static void _batlog_save(void) {
   nvs_set_u32(h, "sess", s_bl_sess);
   /* ★세션 상태 — 재부팅 후 이어받기용.
    *  경과시간은 esp_timer 가 리셋되므로 **초 단위 절대 경과**로 저장한다. */
+  /* ★2026-10-29 세션이 없으면 끝난 세션의 마지막 경과를 남긴다(예전엔 0) — 디코더가 그 값으로 회/초를 낸다 */
   const uint32_t el_s = s_dis_t0_us
-      ? (uint32_t)((esp_timer_get_time() - s_dis_t0_us) / 1000000) : 0;
+      ? (uint32_t)((esp_timer_get_time() - s_dis_t0_us) / 1000000) : s_dis_end_el;
   nvs_set_u8 (h, "dis_on",  s_dis_t0_us ? 1 : 0);
   nvs_set_u32(h, "dis_el",  el_s);
   nvs_set_u32(h, "dis_mv0", (uint32_t)s_dis_mv0);
@@ -3476,6 +3479,7 @@ static void _batlog_load(void) {
     /* 세션 상태(있으면) — 실제 이어받기는 _batlog_try_resume 이 판단한다. */
     nvs_get_u8 (h, "dis_on",  &s_bl_saved_on);
     nvs_get_u32(h, "dis_el",  &s_bl_saved_el);
+    s_dis_end_el = s_bl_saved_el;   /* ★2026-10-29 세션 없이 저장돼도 지난 세션 경과를 0 으로 덮지 않게 */
     uint32_t _mv = 0; nvs_get_u32(h, "dis_mv0", &_mv); s_bl_saved_mv0 = (int)_mv;
     nvs_get_u8 (h, "dis_pc0", &s_bl_saved_pct0);
     nvs_get_u32(h, "ls_cnt", &s_bl_saved_lscnt);
@@ -3587,6 +3591,35 @@ static void _batlog_flush_if_due(int64_t now_us, bool force) {
   s_bl_last_save_us = now_us;
 }
 
+/* ★★2026-10-29 방전 세션을 **NVS 에서도** 닫는다 — 끝난 세션을 배터리 재부팅이 이어받던 버그.
+ *  실기(10/23~29 COM7): 10/22 에 USB 를 꽂아 세션 #70 이 끝났는데, 10/23 분리 순간 배터리 재부팅이 나자
+ *  #70 을 이어받았다. batlog 기준점이 10/22 값(4094mV/98%)이 됐고 경과가 그 뒤로 이어 붙어 6일 기록이 틀렸다.
+ *  원인: USB 연결 분기는 저장(_batlog_flush_if_due) **뒤에** s_dis_t0_us = 0 을 해서 NVS dis_on 이 1 로 남았다
+ *  (그 뒤로는 dirty 가 없어 다시 저장되지 않는다). _batlog_try_resume 은 "배터리 부팅 + dis_on=1" 이면 이어받는다.
+ *  → 세션을 끝낼 때 dis_on=0 을 바로 저장한다. dis_el 은 0 이 아니라 **마지막 경과로 보존**한다(s_dis_end_el) —
+ *    0 으로 덮으면 디코더가 끝난 세션의 절전 통계(회/초)를 못 낸다.
+ *  USB 로 부팅했는데 dis_on=1 이 남아 있으면(옛 펌웨어가 남긴 것) 그것도 여기서 닫는다.
+ *  검증 sim/tools/batlog_session_end_sim.py: 무작위 2,000열 — 옛 방식 잘못 이어받기 2,573회 → 0, 누락 0, 경과 소실 0,
+ *  실기 사고(USB 종료 → 덤프 리셋 → 분리 순간 재부팅) 재현·해소. */
+static void _batlog_close_session(int64_t now_us)
+{
+  if (s_dis_t0_us) {
+    s_dis_end_el = (uint32_t)((now_us - s_dis_t0_us) / 1000000);
+  } else if (s_bl_saved_on) {                             /* USB 부팅 — 옛 펌웨어가 남긴 진행 중 표시 */
+    s_dis_end_el = s_bl_saved_el;
+    s_dis_mv0    = s_bl_saved_mv0;                        /* 기준점도 보존 — 안 하면 0 으로 덮인다(10/29 실기) */
+    s_dis_pct0   = s_bl_saved_pct0;
+  } else {
+    return;                                               /* 닫을 세션이 없다 */
+  }
+  s_dis_t0_us   = 0;
+  s_bl_saved_on = 0;
+  s_bl_dirty    = true;
+  _batlog_flush_if_due(now_us, true);                     /* dis_on=0, dis_el=마지막 경과 */
+  ESP_LOGW(TAG, "[BATLOG] 세션 #%u 닫음 — NVS 진행 중 표시 해제(경과 %us 보존)",
+           (unsigned)s_bl_sess, (unsigned)s_dis_end_el);
+}
+
 static void _batlog_add_ev(int t_s, int mv, int pct, bool radio, bool panel, int pm,
                            int ev) {
   bat_sample_t *e = &s_bl_buf[s_bl_head];
@@ -3659,6 +3692,7 @@ void somfy_app_batlog_clear(void) { _batlog_reset(); ESP_LOGW(TAG, "[BATLOG] 기
 #else  /* !BOARD_BATLOG_ENABLE — 방전 로그 링버퍼·NVS 저장 전부 제외(heap 확보) */
 static void _batlog_load(void) {}
 static void _batlog_flush_if_due(int64_t now_us, bool force) { (void)now_us; (void)force; }
+static void _batlog_close_session(int64_t now_us) { (void)now_us; s_dis_t0_us = 0; }   /* ★2026-10-29 */
 static void _batlog_reset(void) {}
 static void _batlog_new_session(void) {}
 static void _batlog_ls_session_begin(bool resume) { (void)resume; }
@@ -6628,6 +6662,8 @@ void somfy_app_run(void *arg) {
             dis_seq0    = s_bat_sm_seq;
             ESP_LOGW(TAG, "[BATLOG] 배터리로 부팅 — 이어받을 세션 없음, 새로 시작");
           }
+        } else {
+          _batlog_close_session(now_us);      /* ★2026-10-29 USB 부팅인데 진행 중 표시가 남아 있으면 닫는다 */
         }
       } else if (was_usb_pwr && !now_usb) {
         /* ★★2026-08-12 (C) USB → 배터리: **평활을 비우고 기준점은 미룬다.**
@@ -6645,6 +6681,7 @@ void somfy_app_run(void *arg) {
         ESP_LOGW(TAG, "[BATLOG] 방전 종료 (USB 연결)");
         _pmdump_session_end();                /* ★2026-10-20 세션 끝 PM 스냅샷 — 마지막 300초 구간을 잃지 않게 (N03) */
         _batlog_flush_if_due(now_us, true);   /* 남은 것 즉시 저장 */
+        _batlog_close_session(now_us);        /* ★2026-10-29 NVS dis_on=0 — 끝난 세션을 재부팅이 이어받지 않게 */
         _bat_smooth_reset();                  /* ★C 대칭 — 배터리 전압을 충전 구간에 끌고 가지 않는다 */
         s_pct_floor = BAT_PCT_UNKNOWN;        /* ★B 하한 해제(충전 중 상승 허용) */
         s_disp_reseed = true;                 /* ★2026-09-02 대칭 — 다시 뽑을 때 끌고 가지 않게 */
