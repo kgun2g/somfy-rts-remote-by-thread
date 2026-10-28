@@ -441,6 +441,61 @@ extern "C" int  somfy_app_early_bat_capture(void);   /* ★2026-09-28 무선 시
 /* ★2026-10-13 얕은잠 바닥 전류 대조군(`lsfloor`) — somfy_app.c 의 긴 주석 참조 */
 extern "C" void somfy_app_lsfloor_boot_hook(void);
 extern "C" void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, int fac);
+
+#if BOARD_HAS_RF_ANT_SW
+/* ═══ RF 안테나 스위치 (XIAO ESP32C6 온보드 FM8625H) — app_main 과 lsfloor ant 가 부른다 ═══
+ *  GPIO3 = 스위치 전원(Q3 PMOS 게이트, 0=ON) / GPIO14 = 포트 선택(0=내장 RF1, 1=외장 RF2).
+ *
+ * ★★2026-10-21 **얕은잠 중에는 두 핀을 놓는다** (doc/HARDWARE_POWER_AUDIT_V6_2026-10-21.md §3).
+ *  XIAO 모듈 **안에** R21 10k(3.3V→GPIO3 풀업)와 R24 5.1k(GPIO14→GND 풀다운)가 있다(Seeed v1.0 회로도
+ *  5쪽, doc/esp32/XIAO/ 로 직접 확인 — R22·R23 은 미실장). 그래서 GPIO3 을 LOW, GPIO14 를 HIGH 로 **구동하는
+ *  동안** 3.3/10k + 3.3/5.1k = 0.33 + 0.65 = **0.98mA** 가 저항으로 그냥 흐른다(외장 모드. 내장도 0.33mA).
+ *  9/02 이후 이 전류가 얕은잠 내내 흘렀다 — 아래 옛 주석의 gpio_sleep_sel_dis 가 절전 중에도 핀을 구동했다.
+ *  ★그 옛 근거("SED 는 자면서 폴링한다")는 틀렸다. ESP OpenThread 는 라디오가 SLEEP 일 때만 ot_sleep PM 락을
+ *   놓으므로(esp-idf components/openthread/src/port/esp_openthread_sleep.c) **라디오가 켜진 동안은 얕은잠에
+ *   들 수 없다**. 절전 설정은 칩이 실제로 자는 구간에만 걸리고 깨는 순간 하드웨어가 원래 구동으로 되돌리므로,
+ *   송수신은 언제나 외장 안테나로 한다.
+ *  → 절전 중 설정 = IDF 격리값과 같은 '입출력 끔 + 풀 없음'. 그러면 GPIO3 은 R21 이 HIGH 로(스위치 꺼짐),
+ *    GPIO14 는 R24 가 LOW 로 당겨 **두 저항 모두 양 끝 전위가 같아져 전류 0**. 스위치 자체 전원도 끊긴다.
+ *  측정: `lsfloor ant` (fac=4, ABACA — B 가 옛 동작, C 가 CC1101 IDLE 1.7mA 교정). BOARD_RF_ANT_SLEEP_RELEASE=0
+ *  으로 빌드하면 옛 동작(절전 중에도 구동)으로 돌아간다.
+ *  (옛 주석, 이력) ★CONFIG_PM_SLP_DISABLE_GPIO=y 라 자동 절전 때 GPIO 가 통째로 꺼진다. 그대로 두면 수면
+ *   구간마다 안테나가 내장으로 되돌아간다(SED 는 자면서 폴링하므로 치명적). 이 두 핀만 그 기능에서 빼둔다. */
+#ifndef BOARD_RF_ANT_SLEEP_RELEASE
+#define BOARD_RF_ANT_SLEEP_RELEASE 1
+#endif
+extern "C" void board_rf_ant_apply(void)
+{
+    const gpio_num_t _en  = (gpio_num_t)BOARD_PIN_RF_SW_EN;
+    const gpio_num_t _sel = (gpio_num_t)BOARD_PIN_RF_ANT_SEL;
+    gpio_config_t _ac = {
+        .pin_bit_mask = (1ULL << _en) | (1ULL << _sel),
+        .mode         = GPIO_MODE_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&_ac);
+    gpio_set_level(_en, 0);                    /* LOW = 스위치 제어 활성 */
+    vTaskDelay(pdMS_TO_TICKS(100));            /* Seeed 예제와 동일한 여유 */
+    gpio_set_level(_sel, BOARD_RF_EXT_ANT ? 1 : 0);
+#if BOARD_RF_ANT_SLEEP_RELEASE
+    gpio_sleep_set_direction(_en,  GPIO_MODE_DISABLE);
+    gpio_sleep_set_pull_mode(_en,  GPIO_FLOATING);
+    gpio_sleep_set_direction(_sel, GPIO_MODE_DISABLE);
+    gpio_sleep_set_pull_mode(_sel, GPIO_FLOATING);
+    gpio_sleep_sel_en(_en);
+    gpio_sleep_sel_en(_sel);
+#else
+    gpio_sleep_sel_dis(_en);
+    gpio_sleep_sel_dis(_sel);
+#endif
+    ESP_LOGW("MAIN", "[ANT] RF 스위치: EN(IO%d)=LOW, SEL(IO%d)=%s → **%s 안테나**  (얕은잠 중: %s)",
+             (int)_en, (int)_sel, BOARD_RF_EXT_ANT ? "HIGH" : "LOW",
+             BOARD_RF_EXT_ANT ? "외장(u.FL)" : "내장(세라믹)",
+             BOARD_RF_ANT_SLEEP_RELEASE ? "핀을 놓음 — 모듈 내부 바이어스 저항 전류 0" : "계속 구동(옛 동작)");
+}
+#endif
 extern "C" void somfy_app_batlog_dump(void);
 extern "C" void somfy_app_batlog_clear(void);
 extern "C" void somfy_app_console_usbsim(int off);
@@ -609,7 +664,8 @@ static int scmd_lsfloor(int argc, char **argv){
         const int sp = (argc >= 4) ? atoi(argv[3]) : 10;
         const int fc = (argc >= 5 && strcmp(argv[4], "top")  == 0) ? 1 :
                        (argc >= 5 && strcmp(argv[4], "lp")   == 0) ? 2 :
-                       (argc >= 5 && strcmp(argv[4], "wake") == 0) ? 3 : 0;
+                       (argc >= 5 && strcmp(argv[4], "wake") == 0) ? 3 :
+                       (argc >= 5 && strcmp(argv[4], "ant")  == 0) ? 4 : 0;   /* ★2026-10-21 */
         somfy_app_console_lsfloor(ph, 60, sp, 1, fc);
         return 0;
     }
@@ -617,6 +673,7 @@ static int scmd_lsfloor(int argc, char **argv){
     if (strcmp(argv[1], "top") == 0) { fac = 1; a = 2; }
     else if (strcmp(argv[1], "lp") == 0) { fac = 2; a = 2; }   /* ★2026-10-16 LP 폴링 켬/끔 */
     else if (strcmp(argv[1], "wake") == 0) { fac = 3; a = 2; } /* ★2026-10-16 깨어남 비용 + 교정 */
+    else if (strcmp(argv[1], "ant") == 0)  { fac = 4; a = 2; } /* ★2026-10-21 XIAO 안테나 바이어스 저항 + 교정 */
     if (argc <= a) { somfy_app_console_lsfloor(-1, 0, 0, 0, 0); return 0; }
     const int m  = atoi(argv[a]);                               /* 단계(분). 0 = 취소 */
     const int st = (argc >= a + 2) ? atoi(argv[a + 1]) : 60;    /* 정착(분) */
@@ -929,30 +986,7 @@ extern "C" void app_main()
 #endif
 
 #if BOARD_HAS_RF_ANT_SW
-    {
-        const gpio_num_t _en  = (gpio_num_t)BOARD_PIN_RF_SW_EN;
-        const gpio_num_t _sel = (gpio_num_t)BOARD_PIN_RF_ANT_SEL;
-        gpio_config_t _ac = {
-            .pin_bit_mask = (1ULL << _en) | (1ULL << _sel),
-            .mode         = GPIO_MODE_OUTPUT,
-            .pull_up_en   = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type    = GPIO_INTR_DISABLE,
-        };
-        gpio_config(&_ac);
-        gpio_set_level(_en, 0);                    /* LOW = 스위치 제어 활성 */
-        vTaskDelay(pdMS_TO_TICKS(100));            /* Seeed 예제와 동일한 여유 */
-        gpio_set_level(_sel, BOARD_RF_EXT_ANT ? 1 : 0);
-        /* ★CONFIG_PM_SLP_DISABLE_GPIO=y 라 자동 절전 때 GPIO 가 통째로 꺼진다.
-         *  그대로 두면 **수면 구간마다 안테나가 내장으로 되돌아간다**(SED 는 자면서
-         *  폴링하므로 치명적). 이 두 핀만 그 기능에서 빼둔다(Kconfig 도움말이
-         *  안내하는 방법). */
-        gpio_sleep_sel_dis(_en);
-        gpio_sleep_sel_dis(_sel);
-        ESP_LOGW("MAIN", "[ANT] RF 스위치: EN(IO%d)=LOW, SEL(IO%d)=%s → **%s 안테나**",
-                 (int)_en, (int)_sel, BOARD_RF_EXT_ANT ? "HIGH" : "LOW",
-                 BOARD_RF_EXT_ANT ? "외장(u.FL)" : "내장(세라믹)");
-    }
+    board_rf_ant_apply();   /* ★2026-10-21 함수로 뺐다 — lsfloor ant 가 측정 뒤 같은 상태로 되돌린다 */
 #endif
 
     /* Initialize the ESP NVS layer */
@@ -1250,7 +1284,7 @@ extern "C" void app_main()
       esp_console_cmd_register(&tmc);
       const esp_console_cmd_t dsc={ .command="dsleep", .help="깊은잠 대조군 dsleep <측정분> [정착분] (정착=셀 완화 대기, 기본 1분)", .hint=NULL, .func=&scmd_dsleep, .argtable=NULL };
       esp_console_cmd_register(&dsc);
-      const esp_console_cmd_t lsc={ .command="lsfloor", .help="얕은잠 바닥 전류 대조군 lsfloor [top|lp|wake] <단계분> [정착분] [표본초] / lsfloor dry <단계초> <표본초> [top|lp|wake] / lsfloor 0", .hint=NULL, .func=&scmd_lsfloor, .argtable=NULL };
+      const esp_console_cmd_t lsc={ .command="lsfloor", .help="얕은잠 바닥 전류 대조군 lsfloor [top|lp|wake|ant] <단계분> [정착분] [표본초] / lsfloor dry <단계초> <표본초> [top|lp|wake|ant] / lsfloor 0", .hint=NULL, .func=&scmd_lsfloor, .argtable=NULL };
       esp_console_cmd_register(&lsc);
       const esp_console_cmd_t ccf={ .command="ccfix", .help="ccfix [0|1] 절전 중 CC1101 CSn 풀업 + 수면 탐침 통계", .hint=NULL, .func=&scmd_ccfix, .argtable=NULL };
       esp_console_cmd_register(&ccf);

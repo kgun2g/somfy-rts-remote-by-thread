@@ -57,11 +57,11 @@ MARC_IDLE, MARC_SLEEP = 0x01, 0x00
 
 
 def nph_of(fac):
-    return len(WAKE_PATS[5]) if fac == 3 else PHASES
+    return len(WAKE_PATS[5]) if fac in (3, 4) else PHASES        # ★2026-10-21 fac=4(ANT) 도 ABACA
 
 
 def kind_of(fac, p):
-    return WAKE_PATS[5][p] if fac == 3 else ('X' if phase_wants_pd(p) else 'A')
+    return WAKE_PATS[5][p] if fac in (3, 4) else ('X' if phase_wants_pd(p) else 'A')
 
 
 class Reset(Exception):
@@ -100,6 +100,10 @@ class Dev:
         self.cc_wake_fail = False          # SIDLE 로 안 깨어남(SPI 고장) → MARCSTATE 0x00
         self.cc_spwd_fail = False          # C 끝의 SPWD 가 안 먹음 → IDLE 로 남는다
         self.wake_rate = WAKE_RATE         # B 단계 실제 깨어남 속도(고장 주입: 0)
+        # ★2026-10-21 ANT 측정(fac=4) — XIAO 안테나 핀 상태와 고장 주입
+        self.ant = 'prod'                  # 'prod'(깨어 구동·절전 놓음) / 'drive'(옛 동작) / 'release'(놓음)
+        self.ant_res = True                # 모듈 안에 R21·R24 가 있다(False = 놓은 단계 읽힘이 반대로 나온다)
+        self.ant_drive_fail = False        # 구동이 안 먹음(핀이 다른 기능에 묶임 등) → B 읽힘이 틀린다
 
     # ── 콘솔 ──────────────────────────────────────────────────────────
     def cmd(self, phase_s, settle_s=SETTLE_DEF_S, samp_s=300, dry=0, fac=0):
@@ -115,7 +119,7 @@ class Dev:
         lo = PHASE_MIN_DRY_S if dry else PHASE_MIN_S
         if not (lo <= phase_s <= PHASE_MAX_S) or not (SAMP_MIN_S <= samp_s <= SAMP_MAX_S):
             return 'RANGE'
-        if not 0 <= fac <= 3:
+        if not 0 <= fac <= 4:
             fac = 0
         nph = nph_of(fac)
         n_per = phase_s // samp_s
@@ -170,6 +174,7 @@ class Dev:
         # ★app_main 이 맨 앞에서 측정이 붙잡았을 수 있는 핀을 **전부** 푼다. 측정 도중 리셋되면
         #  hold 가 리셋을 넘어 남는데, 안 풀면 SPI·RMT 핀이 굳어 RF 가 통째로 죽는다.
         self.holds = set()
+        self.ant = 'prod'                  # ★2026-10-21 app_main 맨 앞의 board_rf_ant_apply — 측정 도중 리셋돼도 평소 설정
         # ★app_main Phase 2 의 cc1101_init 이 훅보다 **먼저** 돈다 — 레지스터를 다시 쓰고 SPWD 로 재운다.
         #  그래서 C 단계(IDLE) 도중 리셋돼도 다음 부팅에서 1.7mA 가 남지 않는다.
         self.cc_state = 'SPWD'
@@ -224,11 +229,11 @@ class Dev:
         self.ram_armed = 0
         fac = nv.get('fac', 0)
         nph = nph_of(fac)
-        if fac in (1, 2, 3):               # TOP·LP·WAKE 측정: CPU 리텐션(평소처럼 CPU 도 꺼지게)
+        if fac in (1, 2, 3, 4):            # TOP·LP·WAKE·ANT 측정: CPU 리텐션(평소처럼 CPU 도 꺼지게)
             self.cpu_ret = True
         if fac == 1:                       # TOP 측정만 핀 고정 — LP·WAKE 측정은 TOP 이 켜진 채다
             self.holds = set(HOLD_PINS)
-        adc_resident = fac in (2, 3)       # ★LP·WAKE 는 ADC 유닛을 평소처럼 상주(MODEM·TOP 켜짐)
+        adc_resident = fac in (2, 3, 4)    # ★LP·WAKE·ANT 는 ADC 유닛을 평소처럼 상주(MODEM·TOP 켜짐)
         lp0 = self.lp_cnt
         n_per = phase_s // samp_s
         idx, stop, t = 0, False, 0
@@ -239,10 +244,17 @@ class Dev:
         nv['n'] = idx
         for p in range(nph):
             kind = kind_of(fac, p)
-            pd = (kind != 'A') if fac == 3 else phase_wants_pd(p)
+            pd = (kind != 'A') if fac in (3, 4) else phase_wants_pd(p)
             if fac == 2:                   # 단계 시작 때 LP 코어를 멈추거나 다시 돌린다(모의 실행도 같다)
                 nv['lpk%d' % p] = 1 if (self._lp_pause() if pd else self._lp_resume()) else 0
-            if fac == 3 and kind == 'C':   # 교정 부하: CC1101 SIDLE → IDLE, MARCSTATE 를 값으로 남긴다
+            if fac == 4:                   # ★2026-10-21 안테나: B 만 구동(옛 동작), A·C 는 놓음 — 읽힘을 an%d 에
+                if kind == 'B':
+                    self.ant = 'drive'
+                    nv['an%d' % p] = 4 | (0 if self.ant_drive_fail else 2)        # EN=0, SEL=1
+                else:
+                    self.ant = 'release'
+                    nv['an%d' % p] = 1 if self.ant_res else 2                     # 반대 풀 걸고: EN=1, SEL=0
+            if fac in (3, 4) and kind == 'C':   # 교정 부하: CC1101 SIDLE → IDLE, MARCSTATE 를 값으로 남긴다
                 if not self.cc_wake_fail:
                     self.cc_state = 'IDLE'
                 nv['cs%d' % p] = MARC_IDLE if self.cc_state == 'IDLE' else MARC_SLEEP
@@ -252,7 +264,7 @@ class Dev:
                 self.sleeps.append((p, self.adc_unit))
                 if dry:
                     flags = FLAGS_NONE
-                elif fac in (1, 2, 3):
+                elif fac in (1, 2, 3, 4):
                     # PERIPHERAL_PD 설정에서 ADC 유닛은 MODEM 과 TOP 을 둘 다 붙잡는다
                     pdb = 0 if self.adc_unit else ((1 << BIT_MODEM) |
                                                    (0 if self.top_blocked else (1 << BIT_TOP)))
@@ -281,7 +293,7 @@ class Dev:
                     stop = True
                 if i + 1 == n_per or stop:  # ★펌웨어와 같이 USB 중단 때도 그 단계까지 남긴다
                     nv['lp%d' % p] = self.lp_cnt - lp0   # 단계 끝마다 누적(펌웨어 "lp%u")
-                    if fac == 3:
+                    if fac in (3, 4):
                         nv['wk%d' % p] = wk
                     if cc_cal_on:          # C 끝 — MARCSTATE 확인 후 SPWD
                         nv['ce%d' % p] = MARC_IDLE if self.cc_state == 'IDLE' else MARC_SLEEP
@@ -294,6 +306,8 @@ class Dev:
                 break
         if cc_cal_on and not self.cc_spwd_fail:   # 안전망 — IDLE 로 두고 나가지 않는다
             self.cc_state = 'SPWD'
+        if fac == 4:                       # ★2026-10-21 측정 뒤(USB 중단 포함) 안테나를 평소 설정으로
+            self.ant = 'prod'
         nv['lp_d'] = self.lp_cnt - lp0
         # 측정 끝 탐침: VERSION 읽기로 깨울 때 이미 깨어 있었으면 cc_awk=1
         nv['cc_awk'] = 1 if self.cc_state == 'IDLE' else 0
@@ -746,10 +760,71 @@ def main():
     assert Dev().cmd(3600, 7200, 180, fac=2) == 'ARMED'  # 4단계는 그대로 23개까지
     cases += 1
 
+    # ㊱ ★2026-10-21 ANT 측정(fac=4) 흐름: ABACA, B 만 안테나 구동, C CC1101 IDLE, 끝나면 안테나 평소 설정 ----------
+    def ant_run(dI=0.98, floor=1.8, cal=1.7, seed=1, phase_s=3600, samp_s=300, dev_kw=None, **cell_kw):
+        dd = Dev()
+        for k_, v_ in (dev_kw or {}).items():
+            setattr(dd, k_, v_)
+        assert dd.cmd(phase_s, 7200, samp_s, fac=4) == 'ARMED' and dd.nvs['nph'] == 5 and dd.nvs['fac'] == 4
+        dd.sleeps = []
+        cur = [floor, floor + dI, floor, floor + cal, floor]
+        _settle_and_boot(dd, mv_fn=Cell(cur, seed=seed, **cell_kw))
+        ss = dd.samples()
+        return dd, ss, analyse_wake(ss, dd.nvs, 5)
+    d, s, a = ant_run()
+    assert len(s) == 61 and d.cpu_ret and all(u for _, u in d.sleeps) and d.holds == set()
+    assert [d.nvs['an%d' % p] for p in range(5)] == [1, 6, 1, 1, 1], '놓음=0b001(EN=1,SEL=0), 구동=0b110'
+    assert d.ant == 'prod', '★측정 뒤 안테나를 평소 설정으로 되돌려야 외장으로 붙는다'
+    assert d.nvs['wk1'] == 12 and d.nvs['wk3'] == 12, 'ANT 의 B 단계는 깨어남을 섞지 않는다(표본당 절전 1회)'
+    assert a['verdict'] == 'ANT_COST' and abs(a['dB'] - 0.98) < 0.4 and all(a['ant_proof']), a
+    cases += 1
+
+    # ㊲ 판정 정확도(20시드): 0.98mA / 0.33mA(내장 모드면 R21 만) / 0 — 셀 계수가 3배 달라도 같은 답 -------------
+    for seed in range(1, 21):
+        a = ant_run(dI=0.98, seed=seed)[2]
+        assert a['verdict'] == 'ANT_COST' and 0.55 < a['dB'] < 1.45, (seed, a.get('dB'))
+        a = ant_run(dI=0.33, seed=seed)[2]
+        assert a['verdict'] == 'ANT_COST' and a['dB'] < 0.75, (seed, a.get('dB'))
+        a = ant_run(dI=0.0, seed=seed)[2]
+        assert a['verdict'] == 'ANT_COST' and a['dB_lo'] < 0.3, ('★전류가 없는데 있다고 하면 안 된다', seed)
+        for kk in (0.44, 1.3):
+            a = ant_run(dI=0.98, seed=seed, k=kk)[2]
+            assert a['verdict'] == 'ANT_COST' and 0.55 < a['dB'] < 1.45, (seed, kk, a.get('dB'))
+    cases += 1
+
+    # ㊳ 내부 저항이 없는 모듈(놓은 단계 읽힘이 반대) → 판정은 내되 '확인 안 됨'을 밝힌다 -------------------------
+    d, s, a = ant_run(dI=0.0, dev_kw={'ant_res': False})
+    assert a['verdict'] == 'ANT_COST' and not all(a['ant_proof']) and '확인되지 않았다' in a['why'], a['why']
+    cases += 1
+
+    # ㊴ B 단계 구동 실패 → 무효("저항 전류 없음"으로 잘못 결론 내면 안 된다) -------------------------------------
+    d, s, a = ant_run(dI=0.0, dev_kw={'ant_drive_fail': True})
+    assert a['verdict'] == 'INVALID', a['verdict']
+    cases += 1
+
+    # ㊵ 도중 USB 중단·도중 리셋 → 어느 쪽이든 안테나는 평소 설정으로 돌아온다 --------------------------------------
+    d = Dev()
+    d.cmd(3600, 7200, 300, fac=4)
+    _settle_and_boot(d, events={'usb_at': 18})          # 단계 1(B, 구동) 도중
+    assert d.nvs['run'] == RUN_USB and d.ant == 'prod'
+    d = Dev()
+    d.cmd(3600, 7200, 300, fac=4)
+    try:
+        _settle_and_boot(d, events={'reset_at': 18})
+        raise AssertionError('리셋이 일어나야 한다')
+    except Reset:
+        pass
+    assert d.ant == 'drive', '리셋 직후엔 B 단계 구동 상태'
+    d.boot(False, reset_reason=9)
+    assert d.ant == 'prod' and d.nvs['run'] == RUN_RESET, '★다음 부팅 app_main 이 평소 설정으로'
+    cases += 1
+
     print('lsfloor %d케이스 통과' % cases)
     print('  흐름: 예약→끊음→정착→재부팅→4단계→정상부팅 / 취소 / 도중리셋 / USB중단 / 루프방어')
     print('  판정: 3.0↔0.3·1.3↔0.3mA=COSTS(20/20), 차이 없음=거짓 양성 0 (20시드) / TOP 측정 3케이스')
     print('  LP 측정(fac=2): 3.2↔1.7mA=COSTS(20/20)·거짓 양성 0 / 안 멈춤·못 살림=무효 / 모의·리셋 뒤 LP 재가동')
+    print('  ANT 측정(fac=4, 10/21): 0.98mA→0.55~1.45(20시드, K 0.44·1.2·1.3) / 0.33→<0.75 / 0→거짓 양성 0 / '
+          '저항 없음=확인 안 됨 표시 / 구동 실패=무효 / USB·리셋 뒤 안테나 평소 설정')
     print('  WAKE 측정(fac=3): 1.9mA→1.3~2.5(20시드, K 0.44·1.2·1.3 모두) / 0.5→<1.0 / 0→거짓 양성 0'
           ' / 교정 안 켜짐·SPWD 실패·깨어남 없음=무효 / 모의·C 도중 리셋 뒤 SPWD')
     print('  ※단계별 기울기 차이는 셀 완화로 45%% 넘게 부풀어 판정에 안 쓴다(톱니 진폭 + 주기 평균)' % ())

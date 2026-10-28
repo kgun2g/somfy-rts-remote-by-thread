@@ -5023,12 +5023,54 @@ static inline bool _lsf_phase_pd(unsigned p) { return (p & 1u) != 0; }   /* 홀�
 static const char LSF_PAT_WAKE[] = "ABACA";   /* ★sim/tools/lsfloor_decode.py WAKE_PATS[5] 와 같아야 한다 */
 _Static_assert(sizeof(LSF_PAT_WAKE) - 1 <= LSF_PHASES_MAX, "LSF_PAT_WAKE 가 LSF_PHASES_MAX 보다 길다");
 _Static_assert(LSF_PHASES <= LSF_PHASES_MAX, "LSF_PHASES 가 LSF_PHASES_MAX 보다 크다");
-static inline unsigned _lsf_nph(unsigned fac) { return fac == 3 ? (unsigned)(sizeof(LSF_PAT_WAKE) - 1) : LSF_PHASES; }
+/* ★2026-10-21 fac=4 `lsfloor ant` 도 같은 ABACA — B = 안테나 바이어스 저항 전류(옛 동작), C = CC1101 교정 */
+static inline bool _lsf_abaca(unsigned fac) { return fac == 3 || fac == 4; }
+static inline unsigned _lsf_nph(unsigned fac) { return _lsf_abaca(fac) ? (unsigned)(sizeof(LSF_PAT_WAKE) - 1) : LSF_PHASES; }
 static inline char _lsf_kind(unsigned fac, unsigned p)
 {
-  if (fac == 3) return p < sizeof(LSF_PAT_WAKE) - 1 ? LSF_PAT_WAKE[p] : '?';
+  if (_lsf_abaca(fac)) return p < sizeof(LSF_PAT_WAKE) - 1 ? LSF_PAT_WAKE[p] : '?';
   return _lsf_phase_pd(p) ? 'X' : 'A';
 }
+static inline const char *_lsf_fname(unsigned fac)
+{
+  return fac == 1 ? "TOP" : fac == 2 ? "LP" : fac == 3 ? "WAKE" : fac == 4 ? "ANT" : "MODEM";
+}
+
+#if BOARD_HAS_RF_ANT_SW
+void board_rf_ant_apply(void);   /* app_main.cpp — 평소 안테나 설정(깨어 있을 때 구동, 얕은잠 중 놓음) */
+/* ★★2026-10-21 lsfloor ant(fac=4) — 단계마다 XIAO 내부 안테나 바이어스 저항 전류를 켜고 끈다
+ *  (app_main.cpp board_rf_ant_apply 주석, doc/HARDWARE_POWER_AUDIT_V6_2026-10-21.md §3).
+ *    drive=true  : 옛 동작 — EN LOW·SEL HIGH(외장) 를 절전 중에도 구동 → R21 10k·R24 5.1k 에 ~0.98mA
+ *    drive=false : 깨어 있을 때도 놓는다(입력, 풀 없음) → 전류 0. 무선 시작 전이라 스위치가 꺼져도 무관하다.
+ *  놓을 때 **내부 풀을 일부러 반대로** 걸고 한 번 읽는다 — EN 은 내부 풀다운(~45k)을 이겨 1, SEL 은 내부
+ *  풀업을 이겨 0 이면 모듈 안에 R21·R24 가 정말 있다는 증거다(없으면 반대로 읽힌다). 그 뒤 풀을 끈다.
+ *  반환 비트: 0=EN 읽힘, 1=SEL 읽힘, 2=구동 단계. 해석기가 an%u 로 확인한다. */
+static uint8_t _lsf_ant_set(bool drive)
+{
+  const gpio_num_t en = (gpio_num_t)BOARD_PIN_RF_SW_EN, sel = (gpio_num_t)BOARD_PIN_RF_ANT_SEL;
+  gpio_sleep_sel_dis(en);                         /* 절전 중에도 깨어 있을 때 설정 그대로 — 단계 조건이 절전에 걸린다 */
+  gpio_sleep_sel_dis(sel);
+  if (drive) {
+    gpio_set_direction(en,  GPIO_MODE_INPUT_OUTPUT);
+    gpio_set_direction(sel, GPIO_MODE_INPUT_OUTPUT);
+    gpio_set_pull_mode(en,  GPIO_FLOATING);
+    gpio_set_pull_mode(sel, GPIO_FLOATING);
+    gpio_set_level(en,  0);
+    gpio_set_level(sel, BOARD_RF_EXT_ANT ? 1 : 0);
+    esp_rom_delay_us(200);
+    return (uint8_t)(4u | (gpio_get_level(sel) ? 2u : 0u) | (gpio_get_level(en) ? 1u : 0u));
+  }
+  gpio_set_direction(en,  GPIO_MODE_INPUT);
+  gpio_set_direction(sel, GPIO_MODE_INPUT);
+  gpio_set_pull_mode(en,  GPIO_PULLDOWN_ONLY);    /* 증거 읽기 — R21 10k 가 이기면 1 */
+  gpio_set_pull_mode(sel, GPIO_PULLUP_ONLY);      /*           — R24 5.1k 가 이기면 0 */
+  esp_rom_delay_us(500);
+  const uint8_t r = (uint8_t)((gpio_get_level(sel) ? 2u : 0u) | (gpio_get_level(en) ? 1u : 0u));
+  gpio_set_pull_mode(en,  GPIO_FLOATING);         /* 측정 상태 — 풀 없음, 외부 저항만 */
+  gpio_set_pull_mode(sel, GPIO_FLOATING);
+  return r;
+}
+#endif
 
 /* ★★2026-10-15 무엇을 켰다 껐다 하는가 — NVS lsfl/fac.
  *    0 = MODEM (첫 본측정 10/14 밤: 차이 없음, MODEM 몫 < 0.6mA)
@@ -5292,12 +5334,13 @@ void somfy_app_lsfloor_boot_hook(void)
   nvs_commit(h);
   s_lsf_armed = 0;
   const uint32_t n_per = phase_s / samp_s;
-  const char *const fname = (fac == 1) ? "TOP" : (fac == 2 ? "LP" : (fac == 3 ? "WAKE" : "MODEM"));
+  const char *const fname = _lsf_fname(fac);       /* ★2026-10-21 fac=4 ANT 추가 */
   ESP_LOGW(TAG, "[LSF] ════ 얕은잠 바닥 전류 측정 시작%s — %s %s, %u단계 × %lu초, 표본 %lu초마다 (%lu개) ════",
            dry ? " (모의: 절전 없음)" : "", fname,
-           fac == 3 ? "(A 바닥 / B +깨어남 / C +CC1101 IDLE 교정)" : "를 켬/끔", nph, (unsigned long)phase_s,
-           (unsigned long)samp_s, (unsigned long)(nph * n_per + 1));
-  if (fac == 1 || fac == 2 || fac == 3) {          /* TOP·LP·WAKE 측정의 전제 — 위 s_lsf_hold_pins 주석 */
+           fac == 3 ? "(A 바닥 / B +깨어남 / C +CC1101 IDLE 교정)" :
+           fac == 4 ? "(A 바닥=핀 놓음 / B +안테나 바이어스(옛 동작) / C +CC1101 IDLE 교정)" : "를 켬/끔",
+           nph, (unsigned long)phase_s, (unsigned long)samp_s, (unsigned long)(nph * n_per + 1));
+  if (fac == 1 || fac == 2 || _lsf_abaca(fac)) {   /* TOP·LP·WAKE·ANT 측정의 전제 — 위 s_lsf_hold_pins 주석 */
     uint8_t cpu_ok = 0;
 #if SOC_PM_SUPPORT_CPU_PD
     cpu_ok = (sleep_cpu_configure(true) == ESP_OK) ? 1 : 0;
@@ -5348,8 +5391,8 @@ void somfy_app_lsfloor_boot_hook(void)
   char     key[16];
   int      end_mv10[LSF_PHASES_MAX];
   for (int i = 0; i < LSF_PHASES_MAX; i++) end_mv10[i] = -1;
-  /* LP·WAKE 측정은 ADC 유닛을 평소처럼 상주시킨다(= TOP·MODEM 켜짐, 평소 절전 플래그 0x3C12) */
-  const bool adc_resident = (fac == 2 || fac == 3);
+  /* LP·WAKE·ANT 측정은 ADC 유닛을 평소처럼 상주시킨다(= TOP·MODEM 켜짐, 평소 절전 플래그 0x3C12) */
+  const bool adc_resident = (fac == 2 || _lsf_abaca(fac));
 
   int mv10 = _lsf_measure_mv10(adc_resident ? false : _lsf_phase_pd(0));
   snprintf(key, sizeof(key), "s%02u", (unsigned)idx);
@@ -5362,7 +5405,19 @@ void somfy_app_lsfloor_boot_hook(void)
 
   for (unsigned p = 0; p < nph && !stop_usb; p++) {
     const char kind = _lsf_kind(fac, p);
-    const bool pd   = (fac == 3) ? (kind != 'A') : _lsf_phase_pd(p);   /* fac=3: 바닥이 아닌 단계 표시 */
+    const bool pd   = _lsf_abaca(fac) ? (kind != 'A') : _lsf_phase_pd(p);   /* fac=3·4: 바닥이 아닌 단계 표시 */
+#if BOARD_HAS_RF_ANT_SW
+    if (fac == 4) {   /* ★2026-10-21 안테나 바이어스 — B 만 옛 동작(구동), A·C 는 놓음 */
+      const uint8_t an = _lsf_ant_set(kind == 'B');
+      snprintf(key, sizeof(key), "an%u", p);
+      nvs_set_u8(h, key, an);
+      nvs_commit(h);
+      ESP_LOGW(TAG, "[LSF] 단계%u(%c): 안테나 핀 %s — 읽힘 EN=%u SEL=%u%s", p, kind,
+               kind == 'B' ? "구동(EN LOW·SEL HIGH, 옛 동작)" : "놓음(풀 없음)", an & 1u, (an >> 1) & 1u,
+               kind == 'B' ? "" : ((an & 3u) == 1u ? "  ← 내부 R21 풀업·R24 풀다운 확인"
+                                                   : "  ★반대 풀을 못 이겼다 — 내부 저항이 없거나 값이 다르다"));
+    }
+#endif
     if (fac == 2) {   /* ★2026-10-16 LP 켬/끔 — 단계 시작 때 바꾼다. ADC·TOP·MODEM 은 평소처럼 켜 둔다 */
       const bool ok = pd ? btn_handler_lp_pause() : btn_handler_lp_resume();
       snprintf(key, sizeof(key), "lpk%u", p);
@@ -5371,7 +5426,7 @@ void somfy_app_lsfloor_boot_hook(void)
       ESP_LOGW(TAG, "[LSF] 단계%u: LP 코어 %s%s", p, pd ? "멈춤" : "돌림",
                ok ? "" : (pd ? " ★I2C 선이 LOW 로 남았다(풀업 전류가 섞인다)" : " ★다시 돌리기 실패"));
     }
-    if (fac == 3 && kind == 'C' && g_rf_ready) {
+    if (_lsf_abaca(fac) && kind == 'C' && g_rf_ready) {
       /* ★2026-10-16 교정 부하: CC1101 을 SPWD 에서 깨워 IDLE(크리스털만 돎, 1.7mA)로 둔다.
        *  "켰다"가 아니라 "IDLE 이다"를 값으로 남긴다(MARCSTATE 0x01) — IDLE 이 아니면 해석기가 무효로 본다.
        *  절전 중 CSn 은 풀업(cc1101_sleep_pins_fix)이라 SPI 가 안 움직이고, IDLE 은 CSn 과 무관하게 유지된다. */
@@ -5409,10 +5464,11 @@ void somfy_app_lsfloor_boot_hook(void)
       nvs_set_u16(h, "n", (uint16_t)idx);
       nvs_commit(h);
       end_mv10[p] = mv10;
-      if (fac == 3) {
+      if (_lsf_abaca(fac)) {
         ESP_LOGW(TAG, "[LSF] #%lu  단계%u(%c%s)  +%lu초  %d.%dmV  기상=%u  플래그=0x%04lX  깨어남 %lu%s%s",
                  (unsigned long)(idx - 1), p, kind,
-                 kind == 'B' ? " +깨어남" : (kind == 'C' ? " +CC1101" : " 바닥"), (unsigned long)t_s,
+                 kind == 'B' ? (fac == 4 ? " +안테나" : " +깨어남") : (kind == 'C' ? " +CC1101" : " 바닥"),
+                 (unsigned long)t_s,
                  mv10 / 10, mv10 % 10, cause, (unsigned long)flags16, (unsigned long)wk,
                  rej ? " ★절전거부/조기기상" : "", usb_now ? " ★USB" : "");
       } else {
@@ -5426,7 +5482,7 @@ void somfy_app_lsfloor_boot_hook(void)
         /* ★2026-10-15 단계마다 LP 폴링 누적 — 단계별로 LP 가 돌았는지(꺼짐 단계에서 멈추지 않았는지) 본다 */
         snprintf(key, sizeof(key), "lp%u", p);
         nvs_set_u32(h, key, btn_handler_lp_poll_raw() - lp0);
-        if (fac == 3) {                           /* ★2026-10-16 단계별 절전 횟수 — B 의 실제 깨어남 속도 검증 */
+        if (_lsf_abaca(fac)) {                    /* ★2026-10-16 단계별 절전 횟수 — B 의 실제 깨어남 속도 검증(ANT 는 전 단계 같아야) */
           snprintf(key, sizeof(key), "wk%u", p);
           nvs_set_u32(h, key, wk);
         }
@@ -5445,6 +5501,10 @@ void somfy_app_lsfloor_boot_hook(void)
     }
   }
   if (cc_cal_on) { cc1101_idle(&g_cc1101); cc_cal_on = false; }   /* 안전망 — 어떤 경로로도 IDLE 로 두고 나가지 않는다 */
+#if BOARD_HAS_RF_ANT_SW
+  /* ★2026-10-21 ANT 측정 뒤 안테나를 평소 설정으로 — 놓은 채로 무선이 뜨면 스위치 전원이 꺼져 외장이 안 쓰인다 */
+  if (fac == 4) board_rf_ant_apply();
+#endif
 
   /* ★핀 고정을 **먼저** 푼다 — 붙잡힌 채로는 아래 CC1101 탐침의 SPI 가 칩에 닿지 않는다(USB 중단 경로도 여기로 온다). */
   if (fac == 1) _lsf_hold(false);
@@ -5485,10 +5545,11 @@ void somfy_app_lsfloor_boot_hook(void)
            stop_usb ? "중단(USB)" : "완료", (unsigned long)idx);
   for (unsigned i = 0; i < nph; i++) {
     if (end_mv10[i] <= 0) continue;
-    if (fac == 3) {
+    if (_lsf_abaca(fac)) {
       const char k = _lsf_kind(fac, i);
       ESP_LOGE(TAG, "  단계%u(%c%s) 끝 %d.%dmV", i, k,
-               k == 'B' ? " +깨어남" : (k == 'C' ? " +CC1101" : " 바닥"), end_mv10[i] / 10, end_mv10[i] % 10);
+               k == 'B' ? (fac == 4 ? " +안테나" : " +깨어남") : (k == 'C' ? " +CC1101" : " 바닥"),
+               end_mv10[i] / 10, end_mv10[i] % 10);
     } else {
       ESP_LOGE(TAG, "  단계%u(%s %s) 끝 %d.%dmV", i, fname, _lsf_phase_pd(i) ? "끔" : "켬",
                end_mv10[i] / 10, end_mv10[i] % 10);
@@ -5523,7 +5584,7 @@ void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, i
                                       "★도중에 리셋됨", "USB 가 꽂혀 중단" };
     ESP_LOGW(TAG, "[LSF] 예약=%u  상태=%s  대상=%s  모의=%u  단계 %lu초×%u  표본 %lu초  정착 %lu초  표본 %u개",
              armed, run <= LSF_RUN_USB ? RN[run] : "?",
-             fq == 1 ? "TOP" : (fq == 2 ? "LP" : (fq == 3 ? "WAKE(깨어남+교정)" : "MODEM")), d,
+             fq == 3 ? "WAKE(깨어남+교정)" : (fq == 4 ? "ANT(안테나 바이어스+교정)" : _lsf_fname(fq)), d,
              (unsigned long)ps, _lsf_nph(fq), (unsigned long)ss, (unsigned long)st, (unsigned)n);
     if (rst != 0xFF)  ESP_LOGW(TAG, "[LSF] 도중 리셋 사유 코드 %u", rst);
     if (oled != 0xFF) ESP_LOGW(TAG, "[LSF] 화면 끔 확인=%u  CC1101 %s", oled,
@@ -5566,8 +5627,14 @@ void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, i
              phase_s, ph_min, LSF_PHASE_MAX_S, samp_s, LSF_SAMP_MIN_S, LSF_SAMP_MAX_S);
     return;
   }
-  if (fac < 0 || fac > 3) fac = 0;
-  const int nph   = (int)_lsf_nph((unsigned)fac);   /* ★2026-10-16 fac=3 은 5단계 */
+  if (fac < 0 || fac > 4) fac = 0;
+#if !BOARD_HAS_RF_ANT_SW
+  if (fac == 4) {   /* ★2026-10-21 안테나 스위치가 없는 보드엔 잴 것이 없다 */
+    ESP_LOGE(TAG, "[LSF] 거부 — 이 보드에는 RF 안테나 스위치(BOARD_HAS_RF_ANT_SW)가 없다.");
+    return;
+  }
+#endif
+  const int nph   = (int)_lsf_nph((unsigned)fac);   /* ★2026-10-16 fac=3 은 5단계 (★10/21 fac=4 도) */
   const int n_per = phase_s / samp_s;
   const int per_max = (LSF_MAX_SAMPLES - 1) / nph;   /* 4단계 23개, 5단계 19개 */
   if (n_per < 2 || n_per > per_max) {
@@ -5624,8 +5691,9 @@ void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, i
     esp_restart();
   }
   s_lsf_armed = 1;                                /* ★부팅 뒤 예약도 감시가 돌아야 한다 */
-  if (fac == 3) {
-    ESP_LOGW(TAG, "[LSF] 예약 완료 — 깨어남 비용 + CC1101 교정(%s), %d단계 × %d초(총 %.1f시간), 표본 %d초마다.",
+  if (_lsf_abaca((unsigned)fac)) {
+    ESP_LOGW(TAG, "[LSF] 예약 완료 — %s + CC1101 교정(%s), %d단계 × %d초(총 %.1f시간), 표본 %d초마다.",
+             fac == 4 ? "안테나 바이어스 저항 전류" : "깨어남 비용",
              LSF_PAT_WAKE, nph, phase_s, nph * phase_s / 3600.0, samp_s);
   } else {
     ESP_LOGW(TAG, "[LSF] 예약 완료 — %s 를 켬/끔, %d단계 × %d초(총 %.1f시간), 표본 %d초마다.",
