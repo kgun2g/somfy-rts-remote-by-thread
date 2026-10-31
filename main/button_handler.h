@@ -214,6 +214,19 @@ void btn_handler_vibe_wake_enable(void);
 void btn_handler_vibe_gpio_woke(void);
 
 bool btn_handler_lp_active(void);
+/* ★2026-10-29 PCF 원시값(0=LOW, 래치 없이) — 아직 못 읽었으면 -1. 정지 상태 기록용(button_handler.c 주석) */
+int32_t  btn_handler_pcf_raw(void);
+/* ★2026-10-29 LP → HP 인계 횟수(GPT 재감사 N07, 정상 = 0) */
+uint32_t btn_handler_lp_handoffs(void);
+/* ★2026-10-29 lsfloor rot(fac=8) — LP 를 세우고 PCF 를 HP 비트뱅으로 직접 쓴다/읽는다(button_handler.c 주석). LP 경로 없는 보드는 실패 */
+bool     btn_handler_pcf_hp_takeover(void);
+bool     btn_handler_pcf_hp_write(uint16_t v);
+int32_t  btn_handler_pcf_hp_read(void);
+/* ★2026-10-31 로터리 주차(lp_core/pcf_lp_config.h LP_ROT_PARK) — 켬/끔(lsfloor park), 주차한 채 끝난 LP 폴 누적,
+ *  LP 가 마지막으로 읽은 원시값(s_lp_active 무관 — 훅용). LP 경로 없는 보드는 false / 0 / -1 */
+bool     btn_handler_rot_park_set(bool on);
+uint32_t btn_handler_rot_park_polls(void);
+int32_t  btn_handler_lp_pcf_raw(void);
 /* ★2026-10-18 F05 유휴 훅(HP 가 깨어 있는 동안의 LP 변화) 통지 누적 — LP 경로 없으면 0 */
 uint32_t btn_handler_idle_notify_count(void);
 void btn_handler_lp_counters(uint32_t *poll_cnt, uint32_t *seq);

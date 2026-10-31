@@ -27,6 +27,10 @@
  *   poll_cnt    폴링 누적(살아있음 확인)
  *   i2c_err     I2C 실패 누적 — 늘어나면 LP 경로를 접고 HP 폴링으로 되돌릴 근거
  *   enabled     HP 가 0 으로 두면 LP 는 I2C 를 건드리지 않는다(HP 가 버스를 쓸 때)
+ *   park_en     ★2026-10-31 로터리 주차 켬(1)/끔(0) — HP 가 쓴다(lsfloor park). LP 는 읽기만
+ *   park_polls  ★2026-10-31 주차한 채 끝난 폴 누적 — LP 만 쓴다
+ *   ※주차 중 PCF 출력 래치에 로터리 핀 0 이 남아 있을 수 있다 — HP 가 선을 넘겨받으면 0xFFFF 를 먼저 쓴다
+ *     (button_handler.c _lp_pins_to_hp).
  */
 
 #include <stdint.h>
@@ -74,6 +78,10 @@ volatile uint32_t press_gen1 = 0;
 volatile uint32_t poll_cnt   = 0;        /* 폴링 누적(생존 확인) */
 volatile uint32_t i2c_err    = 0;        /* I2C 실패 누적 */
 volatile uint32_t enabled    = 1;        /* HP 가 0 으로 내리면 I2C 정지 */
+/* ★2026-10-31 로터리 핀 주차(pcf_lp_config.h LP_ROT_PARK 주석). park_en 은 HP 가 쓰고(lsfloor park) LP 는 읽기만,
+ *  park_polls 는 LP 만 쓴다(주차한 채 끝난 폴 누적 — batlog·콘솔 `bl` 이 비율로 본다). */
+volatile uint32_t park_en    = LP_ROT_PARK;
+volatile uint32_t park_polls = 0;
 
 /* ── 쿼드러처 LUT — button_handler.c 의 kQuad 와 **같은 표** ────────────
  *  인덱스 = (이전 AB << 2) | 현재 AB. ±1 이 모여 ±2 가 되면 1 디텐트.
@@ -91,6 +99,9 @@ static const int8_t kQuad[16] = {
  * 로터리가 안 도는 형태로 즉시 드러난다. */
 #define BIT_ROT_A   LP_BIT_ROT_A
 #define BIT_ROT_B   LP_BIT_ROT_B
+#define ROT_MASK    ((1u << BIT_ROT_A) | (1u << BIT_ROT_B))
+/* 주차 쓰기는 첫 바이트(P00~P07)에 로터리를 싣는다 — 두 비트가 저바이트에 있어야 한다 */
+_Static_assert(LP_BIT_ROT_A < 8 && LP_BIT_ROT_B < 8, "rotary bits must be in the low PCF byte (park write)");
 
 /* ★★★2026-09-01 상태를 **파일 스코프**로 올렸다 — halt/타이머 방식의 전제다.
  *  main() 이 폴 1회마다 새로 호출되므로 자동 변수로 두면 매번 초기화돼
@@ -101,6 +112,13 @@ static int8_t   accum    = 0;
 static uint32_t last     = 0xFFFFFFFFu;  /* '아직 안 읽음' 표식 — 16비트 값과 겹치면 안 된다 */
 static uint32_t prev_low = 0;            /* 2연속 눌림 판정용 직전 표본 */
 static uint32_t held     = 0;            /* ★2026-10-20 직전 폴의 '2연속 눌림' — 새로 시작된 것만 세려고 */
+/* ★2026-10-31 주차 상태. parked = 지금 LOW 로 몰아 둔 로터리 핀. **초깃값은 '둘 다 몰려 있다'** — LP 가 다시 적재되면
+ *  (재기동·정상 부팅) 이 RAM 은 초기화되지만 PCF 출력 래치는 지난 LP 가 몰아 둔 그대로일 수 있다. 모른다고 보고
+ *  첫 폴에서 먼저 놓는다(안 그러면 몰린 LOW 를 접점으로 읽는다 — rot_park_sim ④ 음성 대조 오독 3091회).
+ *  still = 로터리 비트가 그대로인 연속 폴 수(LP_ROT_PARK_IDLE_POLLS 에서 멈춘다). */
+static uint32_t parked   = ROT_MASK;
+static uint32_t last_rot = 0xFFFFFFFFu;
+static uint32_t still    = 0;
 
 /* ★★★2026-09-01 **busy-wait 무한루프 → 1회 실행 후 halt** 로 바꿨다.
  *
@@ -142,14 +160,25 @@ int main(void)
         /* PCF8574/8575 는 레지스터 주소가 없다 — 그냥 read 하면 현재 입력이 나온다.
          * PCF8575 는 **저바이트(P00~P07) 먼저, 고바이트(P10~P17) 나중**에 나온다. */
         uint8_t buf[2] = { 0xFF, 0xFF };
-        esp_err_t err = lp_core_i2c_master_read_from_device(
-                            PCF_I2C_PORT, PCF_I2C_ADDR, buf, LP_PCF_NBYTES,
-                            I2C_TIMEOUT_CYCLES);
+        esp_err_t err;
+        if (parked) {
+            /* ★2026-10-31 몰아 둔 핀이 있으면 **놓고 읽는다** — 전부 1(약한 풀업 입력 = 평소 상태)을 쓰고 반복 START 로 바로 읽는다.
+             *  1 을 쓰면 PCF 가 ACK 클럭 동안 강한 풀업으로 선을 올리므로, 열린 접점은 읽기 전에 이미 HIGH 다.
+             *  쓰기가 NACK 이면 읽기 없이 실패한다(ACK 검사 기본 켬) — 놓지 못한 채 읽는 일은 없다. */
+            static const uint8_t rel[2] = { 0xFF, 0xFF };
+            err = lp_core_i2c_master_write_read_device(PCF_I2C_PORT, PCF_I2C_ADDR, rel, LP_PCF_NBYTES,
+                                                       buf, LP_PCF_NBYTES, I2C_TIMEOUT_CYCLES);
+        } else {
+            err = lp_core_i2c_master_read_from_device(
+                      PCF_I2C_PORT, PCF_I2C_ADDR, buf, LP_PCF_NBYTES,
+                      I2C_TIMEOUT_CYCLES);
+        }
         uint16_t rx = (LP_PCF_NBYTES == 2)
                         ? (uint16_t)(buf[0] | ((uint16_t)buf[1] << 8))
                         : (uint16_t)buf[0];
         if (err != ESP_OK) {
             i2c_err++;
+            parked = ROT_MASK;    /* ★2026-10-31 어디까지 적용됐는지 모른다 — 다음 폴에 놓고 읽는다 */
 #if !SOMFY_LP_HALT
             ulp_lp_core_delay_us(POLL_US);
 #endif
@@ -209,6 +238,33 @@ int main(void)
             seq++;
             /* HP 가 light sleep 중이면 깨운다. 깨어 있으면 무해(무시된다). */
             ulp_lp_core_wakeup_main_processor();
+        }
+
+        /* ── ★2026-10-31 로터리 주차 (pcf_lp_config.h LP_ROT_PARK 주석) ──
+         *  HP 를 깨운 **뒤에** 한다 — 깨움 지연이 그대로다. 이번 읽기는 이미 놓인 상태에서 했으므로(위) 여기서 parked 를 새로 정한다.
+         *  로터리 비트가 200ms 그대로일 때만 LOW 로 읽힌 핀(= 닫힌 접점)을 몬다. 돌리는 중엔 옛 동작 그대로(한 번 읽기). */
+        {
+            const uint32_t rot = (uint32_t)rx & ROT_MASK;
+            if (rot == last_rot) {
+                if (still < LP_ROT_PARK_IDLE_POLLS) still++;
+            } else {
+                last_rot = rot;
+                still    = 0;
+            }
+            const uint32_t want = (park_en && still >= LP_ROT_PARK_IDLE_POLLS) ? (~(uint32_t)rx & ROT_MASK) : 0u;
+            if (want) {
+                const uint8_t pk[2] = { (uint8_t)(0xFFu & ~want), 0xFFu };   /* 몰 핀만 0, 나머지는 입력(1) 그대로 */
+                if (lp_core_i2c_master_write_to_device(PCF_I2C_PORT, PCF_I2C_ADDR, pk, LP_PCF_NBYTES,
+                                                       I2C_TIMEOUT_CYCLES) == ESP_OK) {
+                    parked = want;
+                    park_polls++;
+                } else {
+                    i2c_err++;
+                    parked = ROT_MASK;    /* 첫 바이트만 들어갔을 수 있다 — 다음 폴에 놓고 읽는다 */
+                }
+            } else {
+                parked = 0;               /* 이번 폴이 놓고 읽었거나 원래 안 몰려 있었다 */
+            }
         }
 #if SOMFY_LP_HALT
     } while (0);

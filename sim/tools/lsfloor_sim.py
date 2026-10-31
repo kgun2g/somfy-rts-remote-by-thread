@@ -56,12 +56,24 @@ WAKE_RATE = 1e6 / 31450.0          # 31.8회/초
 MARC_IDLE, MARC_SLEEP = 0x01, 0x00
 
 
+ABACA = (3, 4, 5, 6, 7, 8, 9)    # ★2026-10-21 fac=4(ANT) / ★2026-10-29 5=OLED 6=ADC 7=LPC 8=ROT 도 ABACA / ★10/31 9=PARK
+
+
 def nph_of(fac):
-    return len(WAKE_PATS[5]) if fac in (3, 4) else PHASES        # ★2026-10-21 fac=4(ANT) 도 ABACA
+    return len(WAKE_PATS[5]) if fac in ABACA else PHASES
 
 
 def kind_of(fac, p):
-    return WAKE_PATS[5][p] if fac in (3, 4) else ('X' if phase_wants_pd(p) else 'A')
+    return WAKE_PATS[5][p] if fac in ABACA else ('X' if phase_wants_pd(p) else 'A')
+
+
+def unit_pd(fac, p):
+    """펌웨어 _lsf_unit_pd — 단계 p 의 절전 동안 ADC 유닛을 지우나(MODEM·TOP 을 놓나)."""
+    if fac in (0, 1):
+        return phase_wants_pd(p)
+    if fac == 6:
+        return kind_of(fac, p) != 'B'
+    return False
 
 
 class Reset(Exception):
@@ -104,6 +116,25 @@ class Dev:
         self.ant = 'prod'                  # 'prod'(깨어 구동·절전 놓음) / 'drive'(옛 동작) / 'release'(놓음)
         self.ant_res = True                # 모듈 안에 R21·R24 가 있다(False = 놓은 단계 읽힘이 반대로 나온다)
         self.ant_drive_fail = False        # 구동이 안 먹음(핀이 다른 기능에 묶임 등) → B 읽힘이 틀린다
+        # ★2026-10-29 OLED 측정(fac=5) — 패널 차지펌프 상태(별개 칩: ESP 리셋으로 안 바뀐다)와 고장 주입
+        self.oled_cp = True                # 화면 OFF 여도 8D 14 그대로(옛 동작)
+        self.oled_fail = False             # 패널이 명령을 못 받음(NACK)
+        # ★2026-10-29 ADC 측정(fac=6) — C 단계에서 붙잡힌 SPI 핀을 안 풀고 보내는 옛 실수 재현
+        self.no_unhold = False
+        # ★2026-10-29 ROT 측정(fac=8) — 노브 원시값(로터리 두 비트, 0=닫힘), 도중에 노브가 움직이는 표본 번호, PCF 무응답
+        self.knob = 0xFFFC
+        self.knob_move_at = None
+        self.pcf_fail = False
+        # ★2026-10-31 핀 고정 측정(fac 1·6)의 안테나 — 절전마다 실제 안테나 상태('drive'/'release')를 남긴다.
+        #  old_ant_hold=True 는 옛 펌웨어(고정 전에 안 놓음 → 깨어 있을 때의 구동을 붙잡아 측정 내내 0.98mA) 재현
+        self.ant_sleeps = []
+        self.old_ant_hold = False
+        # ★2026-10-31 PARK 측정(fac=9) — LP 공유 RAM park_en·park_polls, 주차 설정 실패 주입
+        self.park_en = True
+        self.pp_cnt = 0
+        self.park_fail = False
+        # ★2026-10-31 옛 펌웨어 재현: 정착 표시("go") 없이 배터리 부팅이면 곧바로 측정(10/30 COM7)
+        self.old_no_go = False
 
     # ── 콘솔 ──────────────────────────────────────────────────────────
     def cmd(self, phase_s, settle_s=SETTLE_DEF_S, samp_s=300, dry=0, fac=0):
@@ -119,8 +150,10 @@ class Dev:
         lo = PHASE_MIN_DRY_S if dry else PHASE_MIN_S
         if not (lo <= phase_s <= PHASE_MAX_S) or not (SAMP_MIN_S <= samp_s <= SAMP_MAX_S):
             return 'RANGE'
-        if not 0 <= fac <= 4:
+        if not 0 <= fac <= 9:              # ★2026-10-29 5·6·7·8 (★10/31 9)
             fac = 0
+        if fac == 9 and not dry and (~self.knob & 0x3) == 0:
+            return 'KNOB_OPEN'             # ★2026-10-31 열린 노브엔 주차할 핀이 없다 — 하룻밤을 날린다
         nph = nph_of(fac)
         n_per = phase_s // samp_s
         if not (2 <= n_per <= (MAX_SAMPLES - 1) // nph):   # 4단계 23개, 5단계 19개
@@ -158,6 +191,7 @@ class Dev:
         self.nvs['tries'] = tries
         self.oled_on = False               # 패널 OFF — SSD1306 은 재부팅 뒤에도 이 상태를 유지
         self.nvs['oled_off'] = 1
+        self.nvs['go'] = 1                 # ★2026-10-31 정착을 마친 재시작 표시 — 훅은 이게 있어야 측정한다
         self.restarts += 1
         self.off_s = 0
         return 'RESTART'
@@ -182,6 +216,7 @@ class Dev:
         self.oled_on = True                # 정상 부팅이 이어져 화면이 켜진다
         # ★btn_handler 의 _lp_core_try_start 가 멈춰 있던 LP 코어도 다시 적재해 돌린다(ulp_lp_core_stop 먼저)
         self.lp_running = True
+        self.park_en = True                # ★2026-10-31 재적재 = LP RAM 초깃값(LP_ROT_PARK)
         return 'RUN'
 
     # ── LP 코어 켬/끔 (btn_handler_lp_pause / _resume 과 같은 결과) ────────
@@ -221,32 +256,65 @@ class Dev:
         if not phase_s or not samp_s or phase_s // samp_s < 2:
             nv['armed'] = 0
             return
+        go = nv.pop('go', 0) if not dry else 0   # ★2026-10-31 읽자마자 지운다(바로 다음 부팅 한 번만 유효)
         if not dry and usb:
             self.ram_armed = 1             # ★부팅 시점에 이미 예약돼 있던 경우
+            self.ram_settle = nv.get('settle_s') or SETTLE_DEF_S
+            return
+        if not dry and not go and not self.old_no_go:
+            # ★2026-10-31 배터리 부팅이지만 정착을 마친 재시작이 아니다(전원투입 등) — 정착부터 다시
+            nv['ng_n'] = min(255, nv.get('ng_n', 0) + 1)
+            nv['ng_rr'] = reset_reason
+            self.ram_armed = 1
             self.ram_settle = nv.get('settle_s') or SETTLE_DEF_S
             return
         nv.update(armed=0, tries=0, run=RUN_ACTIVE, n=0)   # ★예약부터 해제
         self.ram_armed = 0
         fac = nv.get('fac', 0)
         nph = nph_of(fac)
-        if fac in (1, 2, 3, 4):            # TOP·LP·WAKE·ANT 측정: CPU 리텐션(평소처럼 CPU 도 꺼지게)
+        if 1 <= fac <= 9:                  # TOP·LP·WAKE·ANT·OLED·ADC·LPC·ROT·PARK 측정: CPU 리텐션(평소처럼 CPU 도 꺼지게)
             self.cpu_ret = True
-        if fac == 1:                       # TOP 측정만 핀 고정 — LP·WAKE 측정은 TOP 이 켜진 채다
+        ant_held = None
+        if fac in (1, 6):                  # TOP 을 끄는 측정만 핀 고정(★10/29 ADC 도) — 나머지는 TOP 이 켜진 채다
+            if not self.old_ant_hold:      # ★2026-10-31 고정 전에 안테나를 놓는다(평소 절전과 같은 상태로 붙잡게)
+                self.ant = 'release'
+                nv['anr'] = 1 if self.ant_res else 2
+            ant_held = 'drive' if self.ant == 'prod' else self.ant   # 고정은 **깨어 있는** 지금의 패드를 붙잡는다
             self.holds = set(HOLD_PINS)
-        adc_resident = fac in (2, 3, 4)    # ★LP·WAKE·ANT 는 ADC 유닛을 평소처럼 상주(MODEM·TOP 켜짐)
+        if fac == 8:                       # ★2026-10-29 ROT: LP 를 세우고 PCF 선을 HP 로(측정 내내 LP 멈춤)
+            self.lp_running = False
+            nv['rtk'] = 0 if self.pcf_fail else 1
         lp0 = self.lp_cnt
+        pp0 = self.pp_cnt
         n_per = phase_s // samp_s
         idx, stop, t = 0, False, 0
         cc_cal_on = False
-        nv['s%02d' % idx] = pack(0, self._measure(0, 0, False if adc_resident else phase_wants_pd(0), mv_fn),
+        nv['s%02d' % idx] = pack(0, self._measure(0, 0, unit_pd(fac, 0), mv_fn),
                                  0, 0, False, False, FLAGS_NONE, False)
         idx += 1
         nv['n'] = idx
         for p in range(nph):
             kind = kind_of(fac, p)
-            pd = (kind != 'A') if fac in (3, 4) else phase_wants_pd(p)
+            pd = (kind != 'A') if fac in ABACA else phase_wants_pd(p)
             if fac == 2:                   # 단계 시작 때 LP 코어를 멈추거나 다시 돌린다(모의 실행도 같다)
                 nv['lpk%d' % p] = 1 if (self._lp_pause() if pd else self._lp_resume()) else 0
+            if fac == 7:                   # ★2026-10-29 LPC: B 만 돌림, A·C 는 멈춤
+                nv['lpk%d' % p] = 1 if (self._lp_resume() if kind == 'B' else self._lp_pause()) else 0
+            if fac == 8:                   # ★2026-10-29 ROT: 놓고 노브를 읽은 뒤 B 만 입력, A·C 는 로터리 핀 LOW
+                if self.knob_move_at is not None and idx >= self.knob_move_at:
+                    self.knob = 0xFFFF     # 사용자가 노브를 열린 위치로 돌렸다
+                nv['rs%d' % p] = 0xFFFFFFFF if self.pcf_fail else self.knob
+                nv['ro%d' % p] = 0 if self.pcf_fail else 1
+            if fac == 9:                   # ★2026-10-31 PARK: B 만 주차 끔, A·C 는 켬. 노브는 LP 가 놓고 읽은 값
+                if self.knob_move_at is not None and idx >= self.knob_move_at:
+                    self.knob = 0xFFFF
+                self.park_en = (kind != 'B')
+                nv['pk%d' % p] = 0 if self.park_fail else 1
+                nv['rs%d' % p] = self.knob
+            if fac == 5:                   # ★2026-10-29 OLED: B 만 차지펌프 켬(옛 동작), A·C 는 끔 — ACK 를 ol%d 에
+                if not self.oled_fail:
+                    self.oled_cp = (kind == 'B')
+                nv['ol%d' % p] = 0 if self.oled_fail else 1
             if fac == 4:                   # ★2026-10-21 안테나: B 만 구동(옛 동작), A·C 는 놓음 — 읽힘을 an%d 에
                 if kind == 'B':
                     self.ant = 'drive'
@@ -254,17 +322,24 @@ class Dev:
                 else:
                     self.ant = 'release'
                     nv['an%d' % p] = 1 if self.ant_res else 2                     # 반대 풀 걸고: EN=1, SEL=0
-            if fac in (3, 4) and kind == 'C':   # 교정 부하: CC1101 SIDLE → IDLE, MARCSTATE 를 값으로 남긴다
-                if not self.cc_wake_fail:
+            if fac in ABACA and kind == 'C':   # 교정 부하: CC1101 SIDLE → IDLE, MARCSTATE 를 값으로 남긴다
+                held = set(self.holds)
+                if fac == 6 and not self.no_unhold:
+                    self.holds = set()         # ★2026-10-29 펌웨어: 붙잡힌 SPI 핀을 잠깐 푼다
+                if not self.cc_wake_fail and 'CS' not in self.holds:   # 붙잡힌 CSn 이면 SPI 가 칩에 안 닿는다
                     self.cc_state = 'IDLE'
                 nv['cs%d' % p] = MARC_IDLE if self.cc_state == 'IDLE' else MARC_SLEEP
+                self.holds = held
                 cc_cal_on = True
             wk = 0
             for i in range(n_per):
                 self.sleeps.append((p, self.adc_unit))
+                # ★2026-10-31 이 절전 동안 안테나 실제 상태 — 고정 중이면 붙잡힌 상태, 아니면 'prod' 는 절전 중 놓음
+                self.ant_sleeps.append(ant_held if (ant_held and 'ANT_EN' in self.holds)
+                                       else ('release' if self.ant == 'prod' else self.ant))
                 if dry:
                     flags = FLAGS_NONE
-                elif fac in (1, 2, 3, 4):
+                elif 1 <= fac <= 9:
                     # PERIPHERAL_PD 설정에서 ADC 유닛은 MODEM 과 TOP 을 둘 다 붙잡는다
                     pdb = 0 if self.adc_unit else ((1 << BIT_MODEM) |
                                                    (0 if self.top_blocked else (1 << BIT_TOP)))
@@ -278,12 +353,15 @@ class Dev:
                 t += samp_s
                 if self.lp_running:
                     self.lp_cnt += LP_RATE * samp_s
+                    # ★2026-10-31 주차 폴 — 켜져 있고 노브가 닫힌 위치면 LP 폴마다(설정 실패면 0)
+                    if self.park_en and (~self.knob & 0x3) and not self.park_fail:
+                        self.pp_cnt += LP_RATE * samp_s
                 if events.get('reset_at') == idx:
                     raise Reset()
                 usb_now = (not dry) and events.get('usb_at') == idx
                 last = (p == nph - 1 and i == n_per - 1)
                 next_p = p if i + 1 < n_per else p + 1
-                pd_next = False if (last or adc_resident) else phase_wants_pd(next_p)
+                pd_next = False if last else unit_pd(fac, next_p)
                 mv10 = self._measure(t, p, pd_next, mv_fn)
                 nv['s%02d' % idx] = pack(t, mv10, p, 0 if dry else WAKE_TIMER,
                                          usb_now, pd, flags, False)
@@ -293,21 +371,35 @@ class Dev:
                     stop = True
                 if i + 1 == n_per or stop:  # ★펌웨어와 같이 USB 중단 때도 그 단계까지 남긴다
                     nv['lp%d' % p] = self.lp_cnt - lp0   # 단계 끝마다 누적(펌웨어 "lp%u")
-                    if fac in (3, 4):
+                    if fac in ABACA:
                         nv['wk%d' % p] = wk
-                    if cc_cal_on:          # C 끝 — MARCSTATE 확인 후 SPWD
+                    if fac == 9:
+                        nv['pp%d' % p] = self.pp_cnt - pp0   # ★2026-10-31 펌웨어 "pp%u"
+                    if cc_cal_on:          # C 끝 — MARCSTATE 확인 후 SPWD (★10/29 fac 6 은 잠깐 핀을 풀고)
+                        held = set(self.holds)
+                        if fac == 6 and not self.no_unhold:
+                            self.holds = set()
                         nv['ce%d' % p] = MARC_IDLE if self.cc_state == 'IDLE' else MARC_SLEEP
-                        if not self.cc_spwd_fail:
+                        if not self.cc_spwd_fail and 'CS' not in self.holds:
                             self.cc_state = 'SPWD'
+                        self.holds = held
                         cc_cal_on = False
                 if stop:
                     break
             if stop:
                 break
+        if fac in (1, 6):                  # ★2026-10-29 펌웨어: 핀 고정을 안전망 SPWD 보다 **먼저** 푼다
+            self.holds = set()
         if cc_cal_on and not self.cc_spwd_fail:   # 안전망 — IDLE 로 두고 나가지 않는다
             self.cc_state = 'SPWD'
-        if fac == 4:                       # ★2026-10-21 측정 뒤(USB 중단 포함) 안테나를 평소 설정으로
+        if fac in (4, 1, 6):               # ★2026-10-21 측정 뒤(USB 중단 포함) 안테나를 평소 설정으로 (★10/31 핀 고정 측정도)
             self.ant = 'prod'
+        if fac == 9:                       # ★2026-10-31 PARK 뒤엔 주차 켬(정상 부팅의 LP 재적재도 LP_ROT_PARK 로)
+            self.park_en = True
+        if fac == 7:                       # ★2026-10-29 LPC 는 A(멈춤)로 끝난다 — 멈춘 채 두지 않는다
+            self._lp_resume()
+        if fac == 5 and not self.oled_fail:   # ★2026-10-29 OLED 측정 뒤엔 새 동작(차지펌프 끔)
+            self.oled_cp = False
         nv['lp_d'] = self.lp_cnt - lp0
         # 측정 끝 탐침: VERSION 읽기로 깨울 때 이미 깨어 있었으면 cc_awk=1
         nv['cc_awk'] = 1 if self.cc_state == 'IDLE' else 0
@@ -819,6 +911,198 @@ def main():
     assert d.ant == 'prod' and d.nvs['run'] == RUN_RESET, '★다음 부팅 app_main 이 평소 설정으로'
     cases += 1
 
+    # ㊶~㊾ ★2026-10-29 남은 후보 셋(fac 5 OLED · 6 ADC · 7 LPC) — 같은 ABACA + CC1101 교정 -----------------------------
+    def x_run(fac, dI, floor=1.4, cal=1.7, seed=1, dev_kw=None, **cell_kw):
+        dd = Dev()
+        for k_, v_ in (dev_kw or {}).items():
+            setattr(dd, k_, v_)
+        assert dd.cmd(3600, 7200, 300, fac=fac) == 'ARMED' and dd.nvs['nph'] == 5 and dd.nvs['fac'] == fac
+        dd.sleeps = []
+        cur = [floor, floor + dI, floor, floor + cal, floor]
+        _settle_and_boot(dd, mv_fn=Cell(cur, seed=seed, **cell_kw))
+        ss = dd.samples()
+        return dd, ss, analyse_wake(ss, dd.nvs, 5)
+
+    # ㊶ OLED 흐름: 단계마다 ACK, B 만 차지펌프 켬, 절전 플래그는 평소(TOP·MODEM 켜짐), 끝나면 새 동작(끔)
+    d, s, a = x_run(5, 0.3)
+    assert len(s) == 61 and d.cpu_ret and d.holds == set() and all(u for _, u in d.sleeps)
+    assert [d.nvs['ol%d' % p] for p in range(5)] == [1] * 5 and d.oled_cp is False
+    assert all(x['flags'] == FLAGS_BASE_TOP for x in s[1:]) and [d.nvs['wk%d' % p] for p in range(5)] == [12] * 5
+    assert a['verdict'] == 'OLED_COST' and abs(a['dB'] - 0.3) < 0.3, a
+    cases += 1
+    # ㊷ OLED 판정 정확도(20시드): 0.3mA / 0(데이터시트 예상) — 거짓 양성 0, 셀 계수가 달라도
+    for seed in range(1, 21):
+        a = x_run(5, 0.3, seed=seed)[2]
+        assert a['verdict'] == 'OLED_COST' and 0.0 <= a['dB'] < 0.7, (seed, a.get('dB'))
+        a = x_run(5, 0.0, seed=seed)[2]
+        assert a['verdict'] == 'OLED_COST' and a['dB_lo'] < 0.3, ('★차지펌프가 공짜인데 있다고 하면 안 된다', seed)
+        a = x_run(5, 0.3, seed=seed, k=0.44)[2]
+        assert a['verdict'] == 'OLED_COST' and 0.0 <= a['dB'] < 0.7, (seed, a.get('dB'))
+    cases += 1
+    # ㊸ OLED 패널이 명령을 못 받음 → 무효("차지펌프 0" 으로 결론 내면 안 된다)
+    assert x_run(5, 0.0, dev_kw={'oled_fail': True})[2]['verdict'] == 'INVALID'
+    cases += 1
+
+    # ㊹ ADC 흐름: 측정 내내 핀 고정, A·C 는 TOP·MODEM 꺼짐 플래그, B 는 켜짐, C 의 CC1101 은 핀을 잠깐 풀어 IDLE
+    d, s, a = x_run(6, 0.6)
+    assert d.holds == set() and d.cpu_ret, '측정 뒤 핀 고정은 반드시 풀려야 RF 가 산다'
+    PD = (1 << BIT_MODEM) | (1 << BIT_TOP)
+    for x in s[1:]:
+        want = 0 if kind_of(6, x['phase']) == 'B' else PD
+        assert x['flags'] & PD == want, (x['phase'], hex(x['flags']))
+    assert d.nvs['cs3'] == MARC_IDLE and d.nvs['ce3'] == MARC_IDLE and d.cc_state == 'SPWD' and d.nvs['cc_ver'] == 0x14
+    assert a['verdict'] == 'ADC_COST' and abs(a['dB'] - 0.6) < 0.35, a
+    cases += 1
+    # ㊺ ADC 판정 정확도(20시드): 0.6 / 0.2 / 0
+    for seed in range(1, 21):
+        a = x_run(6, 0.6, seed=seed)[2]
+        assert a['verdict'] == 'ADC_COST' and 0.3 < a['dB'] < 0.95, (seed, a.get('dB'))
+        a = x_run(6, 0.2, seed=seed)[2]
+        assert a['verdict'] == 'ADC_COST' and a['dB'] < 0.55, (seed, a.get('dB'))
+        a = x_run(6, 0.0, seed=seed)[2]
+        assert a['verdict'] == 'ADC_COST' and a['dB_lo'] < 0.3, ('★ADC 상주가 공짜인데 있다고 하면 안 된다', seed)
+    cases += 1
+    # ㊻ TOP 이 안 꺼짐(리텐션 없는 드라이버) → 무효 / C 에서 핀을 안 풀고 보냄(옛 실수) → 교정이 안 켜져 무효
+    assert x_run(6, 0.0, dev_kw={'top_blocked': True})[2]['verdict'] == 'INVALID'
+    d, s, a = x_run(6, 0.6, cal=0.0, dev_kw={'no_unhold': True})
+    assert d.nvs['cs3'] == MARC_SLEEP and a['verdict'] == 'INVALID', (d.nvs['cs3'], a['verdict'])
+    cases += 1
+
+    # ㊼ LPC 흐름: A·C 멈춤, B 돌림(단계별 폴링 속도), 끝나면 LP 가 다시 돈다
+    d, s, a = x_run(7, 0.4)
+    assert [d.nvs['lpk%d' % p] for p in range(5)] == [1] * 5 and d.lp_running
+    r = lp_rates(d.nvs, s, 5)
+    assert r[1] > 150 and max(r[0], r[2], r[3], r[4]) < 1, r
+    assert a['verdict'] == 'LP_COST' and abs(a['dB'] - 0.4) < 0.3, a
+    cases += 1
+    # ㊽ LPC 판정 정확도(20시드): 0.4 / 0
+    for seed in range(1, 21):
+        a = x_run(7, 0.4, seed=seed)[2]
+        assert a['verdict'] == 'LP_COST' and 0.1 < a['dB'] < 0.75, (seed, a.get('dB'))
+        a = x_run(7, 0.0, seed=seed)[2]
+        assert a['verdict'] == 'LP_COST' and a['dB_lo'] < 0.3, ('★LP 폴링이 공짜인데 있다고 하면 안 된다', seed)
+    cases += 1
+    # ㊾ LP 가 안 멈춤(I2C 선 LOW) / 못 살림 → 무효. 범위: 5단계라 190초 받고 180초 거부. fac 9 는 0 으로
+    assert x_run(7, 0.0, dev_kw={'lp_bus_low': True})[2]['verdict'] == 'INVALID'
+    assert x_run(7, 0.0, dev_kw={'lp_run_fail': True})[2]['verdict'] == 'INVALID'
+    for f in (5, 6, 7, 8, 9):
+        assert Dev().cmd(3600, 7200, 180, fac=f) == 'NPER' and Dev().cmd(3600, 7200, 190, fac=f) == 'ARMED'
+    dd = Dev()
+    assert dd.cmd(3600, 7200, 180, fac=10) == 'ARMED' and dd.nvs['fac'] == 0   # ★10/31 범위 밖은 이제 10
+    cases += 1
+
+    # ㊿ ROT 흐름(10/29 COM8 노브 0xFFFC): 접점 2개 × 0.1mA → 0.2mA, 접점당 ~100µA. 끝나면 정상 부팅이 LP 를 다시 올린다
+    d, s, a = x_run(8, 0.2)
+    assert d.nvs['rtk'] == 1 and [d.nvs['ro%d' % p] for p in range(5)] == [1] * 5 and d.lp_running
+    assert a['verdict'] == 'ROT_COST' and abs(a['dB'] - 0.2) < 0.3 and a['rot_closed'] == [2] * 5, a
+    cases += 1
+    # (51) ROT 판정 정확도(20시드) 0.2 / 0 — 거짓 양성 0. 노브가 열린 위치면 ROT_OPEN(0 근처)
+    for seed in range(1, 21):
+        a = x_run(8, 0.2, seed=seed)[2]
+        assert a['verdict'] == 'ROT_COST' and 0.0 <= a['dB'] < 0.55, (seed, a.get('dB'))
+        a = x_run(8, 0.0, seed=seed)[2]
+        assert a['verdict'] == 'ROT_COST' and a['dB_lo'] < 0.3, ('★접점 전류가 없는데 있다고 하면 안 된다', seed)
+    a = x_run(8, 0.0, dev_kw={'knob': 0xFFFF})[2]
+    assert a['verdict'] == 'ROT_OPEN', a['verdict']
+    cases += 1
+    # (52) 측정 중 노브가 움직임 / PCF 무응답 → 무효
+    assert x_run(8, 0.2, dev_kw={'knob_move_at': 30})[2]['verdict'] == 'INVALID'
+    assert x_run(8, 0.0, dev_kw={'pcf_fail': True})[2]['verdict'] == 'INVALID'
+    cases += 1
+
+    # (53) ★2026-10-31 10/30 COM7 재현: 예약 뒤 USB 를 뽑자 전원투입 리셋 → 옛 펌웨어는 정착 없이 곧바로 측정
+    d = Dev()
+    d.old_no_go = True
+    d.cmd(3600, 7200, 300, fac=6)
+    d.boot(False, reset_reason=1)
+    assert d.nvs['run'] == RUN_DONE and d.restarts == 0, '옛 동작 재현 실패'
+    #   새 펌웨어: 측정 대신 정착부터 — 정착이 끝나야(재시작) 측정한다
+    d = Dev()
+    d.cmd(3600, 7200, 300, fac=6)
+    d.boot(False, reset_reason=1)
+    assert d.nvs['run'] == RUN_NONE and d.ram_armed == 1 and d.ram_settle == 7200 and d.nvs['ng_n'] == 1, d.nvs
+    assert d.nvs['ng_rr'] == 1 and 's01' not in d.nvs, '★정착 없이 표본을 찍으면 안 된다'
+    for _ in range(7199):
+        assert d.tick(False) is None
+    assert d.tick(False) == 'RESTART' and d.nvs['go'] == 1
+    d.boot(False, reset_reason=3)
+    assert d.nvs['run'] == RUN_DONE and len(d.samples()) == 61 and 'go' not in d.nvs
+    #   전원투입이 정착 중에 또 와도 같은 규칙(두 번째) — 루프 방어 횟수는 쓰지 않는다
+    d = Dev()
+    d.cmd(3600, 7200, 300, fac=7)
+    d.boot(False, reset_reason=1)
+    for _ in range(3000):
+        d.tick(False)
+    d.boot(False, reset_reason=1)
+    assert d.nvs['run'] == RUN_NONE and d.nvs['ng_n'] == 2 and d.nvs.get('tries', 0) == 0
+    _settle_and_boot(d)
+    assert d.nvs['run'] == RUN_DONE
+    #   USB 오독으로 건너뛴 재시작의 표시가 남아 나중 전원투입을 통과시키면 안 된다(읽자마자 지움)
+    d = Dev()
+    d.cmd(3600, 7200, 300, fac=6)
+    for _ in range(7200):
+        if d.tick(False) == 'RESTART':
+            break
+    d.boot(True)                                       # 훅이 USB 로 봄 → 측정 안 함
+    assert 'go' not in d.nvs and d.nvs['run'] == RUN_NONE
+    d.boot(False, reset_reason=1)
+    assert d.nvs['run'] == RUN_NONE and d.nvs['ng_n'] == 1, '★지난 재시작의 표시로 정착 없이 측정했다'
+    #   모의 실행은 표시 없이 바로(USB 꽂힌 채 흐름 확인용)
+    d = Dev()
+    assert d.cmd(20, 60, 5, dry=1, fac=6) == 'RESTART'
+    d.boot(True)
+    assert d.nvs['run'] == RUN_DONE
+    cases += 1
+
+    # (54) ★2026-10-31 핀 고정 측정(ADC·TOP)의 안테나 — 고정 전에 놓아 절전 내내 'release'(평소 절전과 같다), 끝나면 평소 설정.
+    #   옛 펌웨어(old_ant_hold)는 깨어 있을 때의 구동을 붙잡아 측정 내내 'drive'(~0.98mA 공통 부하)
+    for f in (6, 1):
+        d = Dev()
+        d.cmd(3600 if f == 6 else 4500, 7200, 300, fac=f)
+        d.ant_sleeps = []
+        _settle_and_boot(d)
+        assert d.ant_sleeps and set(d.ant_sleeps) == {'release'}, (f, set(d.ant_sleeps))
+        assert d.nvs['anr'] == 1 and d.ant == 'prod' and d.holds == set()
+        d = Dev()
+        d.old_ant_hold = True
+        d.cmd(3600 if f == 6 else 4500, 7200, 300, fac=f)
+        d.ant_sleeps = []
+        _settle_and_boot(d)
+        assert set(d.ant_sleeps) == {'drive'}, ('음성 대조 실패', f, set(d.ant_sleeps))
+    #   고정 없는 측정(LPC·ROT·PARK…)은 안테나를 건드리지 않는다 — 절전 중 놓음(평소)
+    d = Dev()
+    d.cmd(3600, 7200, 300, fac=7)
+    d.ant_sleeps = []
+    _settle_and_boot(d)
+    assert set(d.ant_sleeps) == {'release'} and 'anr' not in d.nvs
+    cases += 1
+
+    # (55) ★2026-10-31 PARK 흐름(fac 9, COM8 노브 0xFFFC): A·C 주차 폴 ≈ LP 폴, B 0, 노브 전 단계 닫힘2, 끝나면 주차 켬
+    d, s, a = x_run(9, 0.1)
+    assert [d.nvs['pk%d' % p] for p in range(5)] == [1] * 5 and d.park_en and d.lp_running
+    pr = lp_rates(d.nvs, s, 5, prefix='pp')
+    assert pr[1] < 1 and min(pr[0], pr[2], pr[3], pr[4]) > 150, pr
+    assert a['verdict'] == 'PARK_NET' and abs(a['dB'] - 0.1) < 0.3 and a['rot_closed'] == [2] * 5, a
+    assert all(x['flags'] == FLAGS_BASE_TOP for x in s[1:]), '평소 절전(TOP·MODEM 켜짐)이어야'
+    cases += 1
+    # (56) PARK 판정 정확도(20시드): +0.13(10/30 rot 점추정 − 주차 비용) / 0 → 거짓 양성 0 / −0.05(주차가 손해) → 음수 하한
+    for seed in range(1, 21):
+        a = x_run(9, 0.13, seed=seed)[2]
+        assert a['verdict'] == 'PARK_NET' and -0.2 < a['dB'] < 0.5, (seed, a.get('dB'))
+        a = x_run(9, 0.0, seed=seed)[2]
+        assert a['verdict'] == 'PARK_NET' and a['dB_lo'] < 0.3, ('★주차가 공짜(=무익)인데 이득이라 하면 안 된다', seed)
+        a = x_run(9, -0.05, seed=seed)[2]
+        assert a['verdict'] == 'PARK_NET' and a['dB_lo'] < 0.0, ('★손해일 수 있는 결과의 하한을 0 에서 자르면 안 된다', seed)
+    cases += 1
+    # (57) PARK 예약 거부(열린 노브) / 측정 중 노브가 열림 / 주차 설정 실패 → 무효. 모의 실행은 열린 노브여도 흐름 확인 가능
+    assert Dev().cmd(3600, 7200, 300, fac=9) == 'ARMED'
+    dd = Dev()
+    dd.knob = 0xFFFF
+    assert dd.cmd(3600, 7200, 300, fac=9) == 'KNOB_OPEN' and dd.cmd(20, 60, 5, dry=1, fac=9) == 'RESTART'
+    assert x_run(9, 0.1, dev_kw={'knob_move_at': 30})[2]['verdict'] == 'INVALID'
+    assert x_run(9, 0.1, dev_kw={'park_fail': True})[2]['verdict'] == 'INVALID'
+    cases += 1
+
     print('lsfloor %d케이스 통과' % cases)
     print('  흐름: 예약→끊음→정착→재부팅→4단계→정상부팅 / 취소 / 도중리셋 / USB중단 / 루프방어')
     print('  판정: 3.0↔0.3·1.3↔0.3mA=COSTS(20/20), 차이 없음=거짓 양성 0 (20시드) / TOP 측정 3케이스')
@@ -827,6 +1111,12 @@ def main():
           '저항 없음=확인 안 됨 표시 / 구동 실패=무효 / USB·리셋 뒤 안테나 평소 설정')
     print('  WAKE 측정(fac=3): 1.9mA→1.3~2.5(20시드, K 0.44·1.2·1.3 모두) / 0.5→<1.0 / 0→거짓 양성 0'
           ' / 교정 안 켜짐·SPWD 실패·깨어남 없음=무효 / 모의·C 도중 리셋 뒤 SPWD')
+    print('  OLED·ADC·LPC(fac 5·6·7, 10/29): OLED 0.3→<0.7·0→거짓 양성 0·명령 미수신=무효 / ADC 0.6→0.3~0.95·0.2→<0.55·0→거짓 양성 0'
+          '·TOP 안 꺼짐=무효·C 핀 안 풂=무효 / LPC 0.4→0.1~0.75·0→거짓 양성 0·안 멈춤/못 살림=무효 (각 20시드)')
+    print('  ROT(fac 8, 10/29): 접점 2개 0.2mA→<0.55·0→거짓 양성 0(20시드) / 열린 노브=ROT_OPEN / 노브 움직임·PCF 무응답=무효')
+    print('  ★10/31 정착 표시: 전원투입 배터리 부팅 → 정착부터(10/30 COM7 재현·음성 대조) / 두 번째도 같게 / 남은 표시 재사용 0 / 모의는 바로')
+    print('  ★10/31 핀 고정 측정 안테나: 절전 내내 놓음(옛 펌웨어 = 구동 음성 대조) / PARK(fac 9): 흐름·0.13→-0.2~0.5·0→거짓 양성 0·'
+          '−0.05→음수 하한(20시드) / 열린 노브 거부·노브 움직임·설정 실패=무효')
     print('  ※단계별 기울기 차이는 셀 완화로 45%% 넘게 부풀어 판정에 안 쓴다(톱니 진폭 + 주기 평균)' % ())
     return 0
 

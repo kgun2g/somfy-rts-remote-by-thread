@@ -3332,6 +3332,42 @@ static void _pmdump_session_end(void) {}
 static void _pmdump_tick(int64_t now_us) { (void)now_us; }
 #endif
 
+/* ★★2026-10-29 PCF 정지 상태 기록 — batlog "pcf_rest" (절전 남은 후보 2, sim/tools/pcf_rest_sim.py).
+ *  하프스텝 로터리(EC05 계열)는 디텐트가 A/B 열림(11)과 닫힘(00)을 번갈아 간다. 닫힌 채 멈추면 PCF8575 입력 전류원
+ *  (TI 표 5.5: 핀당 30~300µA)이 접점을 통해 계속 흐른다. 어느 위치에 얼마나 멈춰 있는지부터 잰다(대책은 그 뒤 결정).
+ *  메인 루프 회전마다 원시값을 읽고 **직전 값이 유지된 시간**을 칸에 더한다:
+ *    [0] 로터리 닫힌 접점 0개 / [1] 1개 / [2] 2개 (초)   [3] 그 밖 LOW 핀 × 시간(핀·초 — 누름 중, 정지 중이면 0)
+ *  방전 세션 중·배터리일 때만. 저장은 batlog 와 함께(이전 부팅 누적 + 이번 부팅). 값을 모르면(-1) 그 구간은 버린다.
+ *  비용: 회전마다 LP RAM 한 단어 읽기. */
+#define PCF_REST_N 4
+static uint64_t s_pr_ms[PCF_REST_N];          /* 이번 부팅·세션 누적(ms, [3] 은 핀·ms) */
+static uint32_t s_pr_base[PCF_REST_N];        /* 이전 부팅들의 누적(초) — 이어받기 */
+static uint32_t s_bl_saved_pr[PCF_REST_N];    /* NVS 에서 읽어온 값 */
+static int32_t  s_pr_last    = -1;            /* 마지막 원시값(-1 = 모름) */
+static int64_t  s_pr_prev_us = 0;             /* 0 = 직전 표본 없음 */
+static void _pcfrest_tick(int64_t now_us)
+{
+  if (!s_dis_t0_us || _is_usb_powered()) { s_pr_prev_us = 0; return; }
+  const int32_t st = btn_handler_pcf_raw();
+  if (s_pr_prev_us && s_pr_last >= 0 && now_us > s_pr_prev_us) {
+    const uint64_t dms = (uint64_t)((now_us - s_pr_prev_us) / 1000);
+    const uint32_t rot = (1u << PCF8574_BIT_ROT_A) | (1u << PCF8574_BIT_ROT_B);
+    const uint32_t low = ~(uint32_t)s_pr_last & ((1u << (8 * PCF_NBYTES)) - 1u);
+    s_pr_ms[__builtin_popcount(low & rot)] += dms;
+    s_pr_ms[3] += dms * (uint64_t)__builtin_popcount(low & ~rot);
+  }
+  s_pr_last    = st;
+  s_pr_prev_us = now_us;
+}
+static void _pcfrest_session_begin(bool resume)
+{
+  for (int i = 0; i < PCF_REST_N; i++) {
+    s_pr_ms[i]   = 0;
+    s_pr_base[i] = resume ? s_bl_saved_pr[i] : 0;
+  }
+  s_pr_prev_us = 0;
+}
+
 /* 직전 샘플 이후 light sleep 비율(0~100). 호출 시 기준점을 갱신한다. */
 static uint8_t _ls_take_pct(int64_t now_us) {
   const int64_t d_sleep = s_ls_total_us - s_ls_mark_us;
@@ -3390,6 +3426,20 @@ static void _batlog_save(void) {
   nvs_set_u32(h, "ls_rjs",  s_dis_base_rjs + (s_ls_rej_short - s_dis_rjs0));
   nvs_set_u32(h, "ls_rjh",  s_dis_base_rjh + (s_ls_rej_hw    - s_dis_rjh0));
   nvs_set_u32(h, "ol_fail", s_dis_base_olf + (g_oled_onoff_fail_cnt - s_dis_olf0));
+  /* ★2026-10-29 PCF 정지 상태(위 _pcfrest_tick 주석) — [0..3] 칸 초, [4] 마지막 원시값(0xFFFFFFFF = 모름) */
+  {
+    uint32_t pr[PCF_REST_N + 1];
+    for (int i = 0; i < PCF_REST_N; i++) pr[i] = s_pr_base[i] + (uint32_t)(s_pr_ms[i] / 1000);
+    pr[PCF_REST_N] = (uint32_t)s_pr_last;
+    nvs_set_blob(h, "pcf_rest", pr, sizeof(pr));
+    nvs_set_u32(h, "lp_ho", btn_handler_lp_handoffs());   /* ★2026-10-29 LP→HP 인계(N07) — 부팅 후 누적, 정상 0 */
+    /* ★2026-10-31 로터리 주차(lp_core/pcf_lp_config.h) — LP 적재 뒤 누적 [주차한 채 끝난 폴, 전체 폴]. 비율이 곧 '닫힌 접점인데
+     *  전류가 거의 안 흐른' 시간 비율이다(pcf_rest 의 '닫힘 2개' 시간과 견줘 본다). LP 가 다시 적재되면 둘 다 0 부터. */
+    {
+      const uint32_t rk[2] = { btn_handler_rot_park_polls(), btn_handler_lp_poll_raw() };
+      nvs_set_blob(h, "rot_park", rk, sizeof(rk));
+    }
+  }
   /* ★2026-08-20 수면 길이 히스토그램 + LP 상태 — 깨어남 출처 판별용.
    *  부팅 후 누적(세션 기준 차감 안 함) — 분포의 **모양**만 보면 되므로 충분하다.
    *  blob 한 덩어리로 저장해 NVS 엔트리 낭비를 줄인다(8×u32 = 32B). */
@@ -3487,6 +3537,12 @@ static void _batlog_load(void) {
     nvs_get_u32(h, "ls_rjs",  &s_bl_saved_rjs);    /* ★2026-10-20 없으면(옛 기록) 0 그대로 */
     nvs_get_u32(h, "ls_rjh",  &s_bl_saved_rjh);
     nvs_get_u32(h, "ol_fail", &s_bl_saved_olf);
+    {   /* ★2026-10-29 PCF 정지 상태 — 길이가 다르면(옛 기록·형식 변경) 0 부터 */
+      uint32_t pr[PCF_REST_N + 1];
+      size_t pl = sizeof(pr);
+      if (nvs_get_blob(h, "pcf_rest", pr, &pl) == ESP_OK && pl == sizeof(pr))
+        for (int i = 0; i < PCF_REST_N; i++) s_bl_saved_pr[i] = pr[i];
+    }
     /* ★2026-08-20 수면 히스토그램 이어받기 — 선언부 주석의 덮어쓰기 사고 대응 */
     {
       size_t hl = sizeof(s_ls_hist_base);
@@ -3559,6 +3615,7 @@ static void _batlog_ls_session_begin(bool resume) {
   s_dis_base_rjs = resume ? s_bl_saved_rjs : 0;
   s_dis_base_rjh = resume ? s_bl_saved_rjh : 0;
   s_dis_base_olf = resume ? s_bl_saved_olf : 0;
+  _pcfrest_session_begin(resume);   /* ★2026-10-29 PCF 정지 상태도 같은 시점에 기준 */
   /* ★2026-10-20 **이 세션을 만든 펌웨어**를 남긴다 (GPT 재감사 N03 — 측정값을 어느 판의 것인지 모르고 비교한 적이 있다).
    *  fw0 = 세션을 시작한 판(새 세션 때만), fw = 마지막으로 이어받은 판(매 부팅). 둘이 다르면 세션 도중 판이 바뀐 것
    *  (배터리 중 OTA). 형식 "버전 sha앞8자리" — 같은 버전 문자열이라도 sha 가 다르면 다른 빌드다. */
@@ -3655,6 +3712,22 @@ void somfy_app_batlog_button(int ev) {
 
 /* 콘솔 `bl` — 저장된 방전 기록 전체를 출력. */
 void somfy_app_batlog_dump(void) {
+  {   /* ★2026-10-29 지금 로터리가 어디 멈춰 있나 — 배터리 세션 없이도 바로 본다(_pcfrest_tick 주석) */
+    const int32_t st = btn_handler_pcf_raw();
+    if (st >= 0) {
+      const uint32_t rot = (1u << PCF8574_BIT_ROT_A) | (1u << PCF8574_BIT_ROT_B);
+      ESP_LOGW(TAG, "[PCF] 지금 원시값 0x%04X — 로터리 닫힌 접점 %d개(0=열림 정지, 2=둘 다 닫힘: 핀당 30~300µA), 그 밖 LOW 핀 %d개, LP→HP 인계 %u회",
+               (unsigned)st, __builtin_popcount(~(uint32_t)st & rot),
+               __builtin_popcount(~(uint32_t)st & ~rot & ((1u << (8 * PCF_NBYTES)) - 1u)),
+               (unsigned)btn_handler_lp_handoffs());
+      /* ★2026-10-31 주차 — 닫힌 접점이 있는데 주차 폴이 안 늘면 주차가 안 되는 것이다 */
+      const uint32_t pk = btn_handler_rot_park_polls(), pn = btn_handler_lp_poll_raw();
+      ESP_LOGW(TAG, "[PCF] 로터리 주차: LP 적재 뒤 폴 %lu회 중 %lu회(%lu%%)가 주차한 채 끝났다 — 닫힌 접점이 있으면 200ms 뒤 ~100%%, 열림이면 0%%",
+               (unsigned long)pn, (unsigned long)pk, (unsigned long)(pn ? (uint64_t)pk * 100u / pn : 0u));
+    } else {
+      ESP_LOGW(TAG, "[PCF] 아직 원시값을 못 읽었다");
+    }
+  }
   ESP_LOGW(TAG, "[BATLOG] === 저장된 방전 기록: 세션 #%u, %u건 (용량 %dmAh) ===",
            (unsigned)s_bl_sess, (unsigned)s_bl_n, BAT_CAPACITY_MAH);
   if (s_bl_n == 0) { ESP_LOGW(TAG, "[BATLOG] (비어 있음)"); return; }
@@ -3701,6 +3774,7 @@ static void _batlog_ls_session_begin(bool resume) { (void)resume; }
  * ★2026-10-20 호출부가 방전 세션 블록의 _pmdump_tick/_pmdump_session_end 로 바뀌었다(N03·N08) — 스텁도 따라 바꿈. */
 static void _pmdump_session_end(void) {}
 static void _pmdump_tick(int64_t now_us) { (void)now_us; }
+static void _pcfrest_tick(int64_t now_us) { (void)now_us; }   /* ★2026-10-29 */
 /* ★★2026-10-18 BATLOG 를 꺼도 **버튼 통지는 남긴다** (감사 보고서 F12).
  *  위 BATLOG 블록의 _ls_exit_cb 는 계측과 함께 "ULP 깨움 → 버튼 태스크 통지"(btn_handler_notify_from_lp)
  *  도 하는 유일한 통로다. 예전엔 BATLOG 를 끄면 여기가 빈 함수라 그 통로까지 사라져, LP 가 버튼을
@@ -4172,6 +4246,17 @@ static uint8_t s_pct_floor     = BAT_PCT_UNKNOWN;
 #define BAT_FLOOR_RELEASE_N    5   /* 5초 주기 × 5 = 25초 연속 유지 */
 static int     s_pct_floor_mv  = 0;    /* 하한을 건 시점의 평활 전압 */
 static uint8_t s_floor_up_run  = 0;    /* 연속 상승 표본 수 */
+/* ★2026-10-29 풀린 뒤 **오름이 멈출 때까지** 다시 잠그지 않는다 (남은 항목 — 옛 펌웨어부터 있던 거동).
+ *  증상: 측정 오류에서 회복할 때 해제 조건(+100mV × 5표본)이 EMA 가 오르는 **도중**에 차서, 바로 다음 표본의 덜 오른 값으로
+ *  다시 잠겼다. 그 뒤로는 +100mV 가 다시 안 차 참값 80% 대신 69~73% 에 굳었다(다음 USB 연결까지).
+ *  → 푼 순간부터 평활 전압의 최고값을 따라가다가, BAT_FLOOR_SETTLE_MV 넘게 새로 오르지 않는 표본이 BAT_FLOOR_RELEASE_N 개
+ *    이어지면 그때 잠근다. 해제가 없는 평소 방전에서는 이 상태에 들어가지 않아 아무것도 바뀌지 않는다.
+ *  검증 sim/tools/bat_floor_settle_sim.py: 회복 뒤 표시 옛 71.6% → 78.4%(참값 80, 두 무리 중앙값 편향 -2 는 평소와 같다),
+ *  오류 없는 24시간 대기 10시드 표시 완전 동일·정착 진입 0회, 정착 최대 35표본(화면 OFF 30초 주기면 17.5분). */
+#define BAT_FLOOR_SETTLE_MV    3
+static bool    s_floor_settling = false;
+static int     s_floor_settle_mv = 0;  /* 정착 대기 중 본 최고 평활 전압 */
+static uint8_t s_floor_settle_n  = 0;  /* 그 뒤로 새로 안 오른 표본 수 */
 /* ★2026-08-16 (③) 충전 중 표시% 천장 — 방전 중 하한(s_pct_floor)의 대칭.
  *  milli-percent(0~100000) 로 들고 있어야 분 단위 상승률이 정수 절사로 죽지 않는다.
  *  -1 = 비활성(방전 중). 자세한 배경은 사용 지점 주석 참조. */
@@ -5058,7 +5143,18 @@ static const char LSF_PAT_WAKE[] = "ABACA";   /* ★sim/tools/lsfloor_decode.py 
 _Static_assert(sizeof(LSF_PAT_WAKE) - 1 <= LSF_PHASES_MAX, "LSF_PAT_WAKE 가 LSF_PHASES_MAX 보다 길다");
 _Static_assert(LSF_PHASES <= LSF_PHASES_MAX, "LSF_PHASES 가 LSF_PHASES_MAX 보다 크다");
 /* ★2026-10-21 fac=4 `lsfloor ant` 도 같은 ABACA — B = 안테나 바이어스 저항 전류(옛 동작), C = CC1101 교정 */
-static inline bool _lsf_abaca(unsigned fac) { return fac == 3 || fac == 4; }
+/* ★★2026-10-29 절전 남은 후보 셋을 **같은 교정 방식**으로 다시 잰다 (10/14~16 밤의 MODEM·TOP·LP 는 교정 없이 상한만 냈다).
+ *    fac=5 OLED : A = 화면 OFF + 차지펌프 끔(새 동작 AE·8D10) / B = 화면 OFF + 차지펌프 켬(옛 동작, AE 만) — oled_ui_early_cmds
+ *    fac=6 ADC  : A = ADC 유닛 삭제(TOP·MODEM 얕은잠 중 꺼짐, 핀 고정·CPU 리텐션 = fac 1 과 같은 전제) / B = 상주(평소)
+ *    fac=7 LPC  : A = LP 코어 폴링 멈춤 / B = 돌림(평소 5ms) — fac 2 와 같은 손잡이에 교정을 붙였다
+ *    fac=8 ROT  : A = 로터리 두 핀을 PCF 출력 LOW 로(접점이 닫혀 있어도 전류 0) / B = 입력(평소 — 닫힌 접점마다 전류원 30~300µA)
+ *                 LP 를 세우고 PCF 를 HP 비트뱅으로 직접 쓴다(btn_handler_pcf_hp_*). 단계마다 놓고 읽어 노브 위치를 rs%u 에 남긴다.
+ *                 10/29 실측: COM8 노브가 접점 둘 다 닫힌 위치(0xFFFC)에 멈춰 있었다 — 그 몫을 잰다.
+ *  넷 다 C = A + CC1101 IDLE(1.7mA). 해석 sim/tools/lsfloor_decode.py analyse_wake, 흐름 검증 sim/tools/lsfloor_sim.py.
+ *  ★2026-10-31 fac=9 PARK : 로터리 주차(lp_core/pcf_lp_config.h)의 **순이득**. LP 는 전 단계 평소대로 돈다.
+ *                 A = 주차 켬(새 동작) / B = 주차 끔(옛 동작) → B−A = 닫힌 접점 전류 − 주차 I2C 비용(놓고 읽기·다시 몰기).
+ *                 노브가 닫힌 위치(00)여야 잴 것이 있다 — 예약 때 열림이면 거부. 단계마다 노브 rs%u·설정 pk%u·주차 폴 pp%u. */
+static inline bool _lsf_abaca(unsigned fac) { return fac >= 3 && fac <= 9; }
 static inline unsigned _lsf_nph(unsigned fac) { return _lsf_abaca(fac) ? (unsigned)(sizeof(LSF_PAT_WAKE) - 1) : LSF_PHASES; }
 static inline char _lsf_kind(unsigned fac, unsigned p)
 {
@@ -5067,11 +5163,31 @@ static inline char _lsf_kind(unsigned fac, unsigned p)
 }
 static inline const char *_lsf_fname(unsigned fac)
 {
-  return fac == 1 ? "TOP" : fac == 2 ? "LP" : fac == 3 ? "WAKE" : fac == 4 ? "ANT" : "MODEM";
+  return fac == 1 ? "TOP" : fac == 2 ? "LP" : fac == 3 ? "WAKE" : fac == 4 ? "ANT" :
+         fac == 5 ? "OLED" : fac == 6 ? "ADC" : fac == 7 ? "LPC" : fac == 8 ? "ROT" : fac == 9 ? "PARK" : "MODEM";
 }
+/* ★2026-10-29 B 단계 표기(로그) */
+static inline const char *_lsf_blabel(unsigned fac)
+{
+  return fac == 4 ? " +안테나" : fac == 5 ? " +차지펌프" : fac == 6 ? " +ADC상주" : fac == 7 ? " +LP폴링" :
+         fac == 8 ? " +접점전류" : fac == 9 ? " +주차끔" : " +깨어남";
+}
+/* ★2026-10-29 단계 p 의 절전 동안 ADC 유닛을 지우나(= MODEM·TOP 을 놓아 주나). fac 0·1 은 홀수 단계, fac 6 은 B 가 아닌 단계,
+ *  그 밖(LP·WAKE·ANT·OLED·LPC)은 평소처럼 상주. 예전 adc_resident·_lsf_phase_pd 조합을 한곳에 모았다. */
+static inline bool _lsf_unit_pd(unsigned fac, unsigned p)
+{
+  if (fac == 0 || fac == 1) return _lsf_phase_pd(p);
+  if (fac == 6) return _lsf_kind(fac, p) != 'B';
+  return false;
+}
+/* ★2026-10-29 TOP 을 끄는 측정(핀 고정이 필요한 것) */
+static inline bool _lsf_holds(unsigned fac) { return fac == 1 || fac == 6; }
 
 #if BOARD_HAS_RF_ANT_SW
 void board_rf_ant_apply(void);   /* app_main.cpp — 평소 안테나 설정(깨어 있을 때 구동, 얕은잠 중 놓음) */
+#ifndef BOARD_RF_ANT_SLEEP_RELEASE
+#define BOARD_RF_ANT_SLEEP_RELEASE 1   /* app_main.cpp 와 같은 기본값 — 핀 고정 측정이 "평소 절전"과 같은 안테나 상태를 쓰려고 본다 */
+#endif
 /* ★★2026-10-21 lsfloor ant(fac=4) — 단계마다 XIAO 내부 안테나 바이어스 저항 전류를 켜고 끈다
  *  (app_main.cpp board_rf_ant_apply 주석, doc/HARDWARE_POWER_AUDIT_V6_2026-10-21.md §3).
  *    drive=true  : 옛 동작 — EN LOW·SEL HIGH(외장) 를 절전 중에도 구동 → R21 10k·R24 5.1k 에 ~0.98mA
@@ -5294,6 +5410,8 @@ static void _lsf_watch_usb(void)
   /* ★2026-10-18 "껐다"가 아니라 "꺼졌다"를 남긴다(oled_ui_set_display_on 반환값, 감사 F14).
    *  1 = 패널이 OFF 명령을 받음 / 0 = 못 받음(패널 미검출 포함) — 0 이면 패널 전류가 섞였을 수 있다. */
   nvs_set_u8(h, "oled_off", oled_ui_set_display_on(false) ? 1 : 0);
+  /* ★★2026-10-31 "정착을 마치고 내가 건 재시작"이라는 표시 — 부팅 훅은 이게 있을 때만 측정을 시작한다(아래 훅 주석). */
+  nvs_set_u8(h, "go", 1);
   nvs_commit(h);
   nvs_close(h);
   ESP_LOGW(TAG, "[LSF] 전원 빠짐 %lu초 확인 — 화면을 끄고 재부팅해 측정을 시작한다. (시도 %u/%d)",
@@ -5350,12 +5468,38 @@ void somfy_app_lsfloor_boot_hook(void)
     };
     gpio_config(&_chg_io);
     vTaskDelay(pdMS_TO_TICKS(20));
+    /* ★2026-10-31 "정착을 마친 재시작" 표시는 **바로 다음 부팅 한 번만** 유효하다 — 읽자마자 지운다(아래 주석).
+     *  안 지우면 USB 오독으로 측정을 건너뛴 부팅(루프 방어 경로) 뒤에 남아, 나중의 전원투입 부팅이 정착 없이 측정한다. */
+    uint8_t go = 0;
+    nvs_get_u8(h, "go", &go);
+    if (go) { nvs_set_u8(h, "go", 0); nvs_commit(h); }
     if (_is_usb_powered()) {
       s_lsf_armed = 1;                            /* ★부팅 시점에 이미 예약돼 있던 경우 */
       if (settle_s) s_lsf_settle_s = settle_s;
       ESP_LOGW(TAG, "[LSF] 예약 대기 중 — 전원을 끊으면 %lu초(정착) 뒤 자동 시작한다. (취소: lsfloor 0)",
                (unsigned long)s_lsf_settle_s);
       nvs_close(h);
+      return;
+    }
+    /* ★★2026-10-31 배터리로 부팅했어도 **정착을 마친 재시작이 아니면** 측정하지 않는다 — 정착부터 다시 한다.
+     *  10/30 밤 COM7: USB 를 뽑고 ~115초 뒤 전원투입 리셋 → 예약+배터리라 여기서 곧바로 측정에 들어갔다. 그래서
+     *    · 정착 2시간이 없었다(충전 직후 완화 중 — 바닥 기울기가 평소의 ~7배, 끝나자 +29mV 반등),
+     *    · 정착 경로가 하는 화면 끄기·기록(oled_off)을 건너뛰었다,
+     *    · 전원투입이라 LP 코어가 아직 안 돌았다(평소 절전과 조건이 다르다 — 폴링 0회).
+     *  B−A 차이는 공통 부하라 유효했지만(ADC 0.08±0.10mA) 다음 측정이 같은 일을 겪지 않게 한다.
+     *  표시 "go" 는 정착 경로(_lsf_watch_usb)가 재시작 직전에만 세우고, 예약(nvs_erase_all)과 위 읽기 때 지운다. */
+    if (!go) {
+      uint8_t ng = 0;
+      nvs_get_u8(h, "ng_n", &ng);
+      if (ng < 255) ng++;
+      nvs_set_u8(h, "ng_n",  ng);                          /* 해석기가 "정착 없이 부팅해 다시 정착한 횟수"로 보여 준다 */
+      nvs_set_u8(h, "ng_rr", (uint8_t)esp_reset_reason());
+      nvs_commit(h);
+      nvs_close(h);
+      s_lsf_armed = 1;
+      if (settle_s) s_lsf_settle_s = settle_s;
+      ESP_LOGW(TAG, "[LSF] ★배터리로 부팅했지만 정착을 마친 재시작이 아니다(리셋 사유 %d, %u번째) — %lu초 정착부터 다시 한다.",
+               (int)esp_reset_reason(), (unsigned)ng, (unsigned long)s_lsf_settle_s);
       return;
     }
   }
@@ -5372,7 +5516,12 @@ void somfy_app_lsfloor_boot_hook(void)
   ESP_LOGW(TAG, "[LSF] ════ 얕은잠 바닥 전류 측정 시작%s — %s %s, %u단계 × %lu초, 표본 %lu초마다 (%lu개) ════",
            dry ? " (모의: 절전 없음)" : "", fname,
            fac == 3 ? "(A 바닥 / B +깨어남 / C +CC1101 IDLE 교정)" :
-           fac == 4 ? "(A 바닥=핀 놓음 / B +안테나 바이어스(옛 동작) / C +CC1101 IDLE 교정)" : "를 켬/끔",
+           fac == 4 ? "(A 바닥=핀 놓음 / B +안테나 바이어스(옛 동작) / C +CC1101 IDLE 교정)" :
+           fac == 5 ? "(A 화면OFF+차지펌프 끔 / B +차지펌프 켬(옛 동작) / C +CC1101 IDLE 교정)" :
+           fac == 6 ? "(A ADC 삭제=TOP·MODEM 꺼짐 / B +ADC 상주(평소) / C +CC1101 IDLE 교정)" :
+           fac == 7 ? "(A LP 폴링 멈춤 / B +LP 폴링(평소) / C +CC1101 IDLE 교정)" :
+           fac == 8 ? "(A 로터리 핀 LOW 출력 / B +입력(평소, 닫힌 접점 전류) / C +CC1101 IDLE 교정)" :
+           fac == 9 ? "(A 로터리 주차(새 동작) / B +주차 끔(옛 동작) / C +CC1101 IDLE 교정)" : "를 켬/끔",
            nph, (unsigned long)phase_s, (unsigned long)samp_s, (unsigned long)(nph * n_per + 1));
   if (fac == 1 || fac == 2 || _lsf_abaca(fac)) {   /* TOP·LP·WAKE·ANT 측정의 전제 — 위 s_lsf_hold_pins 주석 */
     uint8_t cpu_ok = 0;
@@ -5393,10 +5542,17 @@ void somfy_app_lsfloor_boot_hook(void)
 #if SOC_PM_SUPPORT_RTC_PERIPH_PD
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
 #endif
-    if (fac == 1) _lsf_hold(true);          /* LP 측정은 TOP 이 켜진 채라 핀을 붙잡을 필요가 없다 */
+#if BOARD_HAS_RF_ANT_SW && BOARD_RF_ANT_SLEEP_RELEASE
+    /* ★★2026-10-31 핀 고정 **전에** 안테나 핀을 놓는다. 고정은 그 순간의 패드 상태를 붙잡는데, 깨어 있는 지금은
+     *  board_rf_ant_apply 가 구동(EN LOW·SEL HIGH) 중이라 그대로 붙잡으면 측정 내내 옛 동작(~0.98mA, 10/21 ANT 실측)이 된다.
+     *  평소 절전은 놓음(BOARD_RF_ANT_SLEEP_RELEASE)이다 — 10/30 밤 ADC 측정이 이 상태로 돌았다(전 단계 공통이라 B−A 는 유효).
+     *  무선 시작 전이라 스위치를 놓아도 무관하다. 측정 뒤 board_rf_ant_apply 로 되돌린다(아래 fac 4 와 같은 곳). */
+    if (_lsf_holds(fac)) nvs_set_u8(h, "anr", _lsf_ant_set(false));   /* 읽힘: EN=1·SEL=0(=1) 이면 놓였다 */
+#endif
+    if (_lsf_holds(fac)) _lsf_hold(true);   /* LP 측정은 TOP 이 켜진 채라 핀을 붙잡을 필요가 없다(★10/29 fac 6 ADC 도 TOP 을 끈다) */
     ESP_LOGW(TAG, "[LSF] %s 측정 준비: CPU 리텐션 %s, 핀 고정 %d개", fname,
              cpu_ok ? "켜짐" : "★실패",
-             fac == 1 ? (int)(sizeof(s_lsf_hold_pins) / sizeof(s_lsf_hold_pins[0])) - 1 : 0);
+             _lsf_holds(fac) ? (int)(sizeof(s_lsf_hold_pins) / sizeof(s_lsf_hold_pins[0])) - 1 : 0);
   }
 #if SOC_PAU_SUPPORTED
   {   /* 측정 시작 때의 리텐션 모듈 — TOP 이 안 꺼지면 막은 모듈 이름을 해석기가 보여준다 */
@@ -5414,9 +5570,17 @@ void somfy_app_lsfloor_boot_hook(void)
   uint32_t cc_a0 = 0, cc_w0 = 0;
   uint8_t  cc_last = 0xFF;
   cc1101_probe_stats(&cc_a0, &cc_w0, &cc_last);
+  /* ★2026-10-29 ROT 측정 — LP 를 세우고 PCF 선을 HP 로 넘긴다(측정 내내 LP 멈춤: 모든 단계에 똑같이 빠진다) */
+  if (fac == 8) {
+    const bool tk = btn_handler_pcf_hp_takeover();
+    nvs_set_u8(h, "rtk", tk ? 1 : 0);
+    nvs_commit(h);
+    ESP_LOGW(TAG, "[LSF] ROT 측정 준비: LP 멈춤 + PCF 선 HP 로 — PCF %s", tk ? "응답" : "★무응답");
+  }
   /* LP 코어: 소프트 재부팅으로는 안 멈추므로 지난 부팅의 폴링이 계속 돈다(평소 절전과 같은
    *  조건). 측정 내내 돌았는지 폴링 횟수 증가분으로 남긴다 — btn_handler_lp_poll_raw 주석. */
   const uint32_t lp0 = btn_handler_lp_poll_raw();
+  const uint32_t pp0 = btn_handler_rot_park_polls();   /* ★2026-10-31 PARK — 단계별 주차 폴(pp%u) 기준점 */
 
   const int64_t t0 = esp_timer_get_time();
   uint32_t idx = 0;
@@ -5425,10 +5589,9 @@ void somfy_app_lsfloor_boot_hook(void)
   char     key[16];
   int      end_mv10[LSF_PHASES_MAX];
   for (int i = 0; i < LSF_PHASES_MAX; i++) end_mv10[i] = -1;
-  /* LP·WAKE·ANT 측정은 ADC 유닛을 평소처럼 상주시킨다(= TOP·MODEM 켜짐, 평소 절전 플래그 0x3C12) */
-  const bool adc_resident = (fac == 2 || _lsf_abaca(fac));
-
-  int mv10 = _lsf_measure_mv10(adc_resident ? false : _lsf_phase_pd(0));
+  /* LP·WAKE·ANT 측정은 ADC 유닛을 평소처럼 상주시킨다(= TOP·MODEM 켜짐, 평소 절전 플래그 0x3C12)
+   *  ★2026-10-29 단계별 판단을 _lsf_unit_pd 로 모았다(fac 6 ADC 는 B 만 상주) */
+  int mv10 = _lsf_measure_mv10(_lsf_unit_pd(fac, 0));
   snprintf(key, sizeof(key), "s%02u", (unsigned)idx);
   nvs_set_u64(h, key, _lsf_pack(0, mv10 > 0 ? (uint32_t)mv10 : 0, 0, 0, false, false,
                                 LSF_FLAGS_NONE, false));
@@ -5460,13 +5623,63 @@ void somfy_app_lsfloor_boot_hook(void)
       ESP_LOGW(TAG, "[LSF] 단계%u: LP 코어 %s%s", p, pd ? "멈춤" : "돌림",
                ok ? "" : (pd ? " ★I2C 선이 LOW 로 남았다(풀업 전류가 섞인다)" : " ★다시 돌리기 실패"));
     }
+    if (fac == 5) {   /* ★2026-10-29 OLED 차지펌프 — B 만 옛 동작(켜 둠), A·C 는 새 동작(끔). 화면은 늘 OFF */
+      static const uint8_t cp_on[]  = { 0xAE, 0x8D, 0x14 };
+      static const uint8_t cp_off[] = { 0xAE, 0x8D, 0x10 };
+      const bool ok = (kind == 'B') ? oled_ui_early_cmds(cp_on, sizeof(cp_on))
+                                    : oled_ui_early_cmds(cp_off, sizeof(cp_off));
+      snprintf(key, sizeof(key), "ol%u", p);
+      nvs_set_u8(h, key, ok ? 1 : 0);
+      nvs_commit(h);
+      ESP_LOGW(TAG, "[LSF] 단계%u(%c): 화면 OFF + 차지펌프 %s%s", p, kind, kind == 'B' ? "켬(옛 동작)" : "끔(새 동작)",
+               ok ? "" : " ★패널이 명령을 안 받았다");
+    }
+    if (fac == 7) {   /* ★2026-10-29 LP 폴링 — B 만 돌림, A·C 는 멈춤(fac 2 와 같은 손잡이·같은 검증 lpk%u) */
+      const bool ok = (kind == 'B') ? btn_handler_lp_resume() : btn_handler_lp_pause();
+      snprintf(key, sizeof(key), "lpk%u", p);
+      nvs_set_u8(h, key, ok ? 1 : 0);
+      nvs_commit(h);
+      ESP_LOGW(TAG, "[LSF] 단계%u(%c): LP 코어 %s%s", p, kind, kind == 'B' ? "돌림" : "멈춤",
+               ok ? "" : (kind == 'B' ? " ★다시 돌리기 실패" : " ★I2C 선이 LOW 로 남았다(풀업 전류가 섞인다)"));
+    }
+    if (fac == 8) {   /* ★2026-10-29 로터리 접점 전류 — 놓고(전부 입력) 노브 위치를 읽은 뒤, B 만 입력 그대로 A·C 는 로터리 두 핀 LOW */
+      const uint16_t rotm = (uint16_t)((1u << PCF8574_BIT_ROT_A) | (1u << PCF8574_BIT_ROT_B));
+      const bool w1 = btn_handler_pcf_hp_write(0xFFFF);
+      esp_rom_delay_us(1000);
+      const int32_t rs = btn_handler_pcf_hp_read();
+      const bool w2 = (kind == 'B') ? w1 : btn_handler_pcf_hp_write((uint16_t)(0xFFFF & ~rotm));
+      snprintf(key, sizeof(key), "rs%u", p);
+      nvs_set_u32(h, key, (uint32_t)rs);
+      snprintf(key, sizeof(key), "ro%u", p);
+      nvs_set_u8(h, key, (w1 && w2 && rs >= 0) ? 1 : 0);
+      nvs_commit(h);
+      ESP_LOGW(TAG, "[LSF] 단계%u(%c): 노브 원시값 0x%04X(닫힌 접점 %d개) → 로터리 핀 %s%s", p, kind, (unsigned)(rs & 0xFFFF),
+               rs >= 0 ? __builtin_popcount(~(uint32_t)rs & rotm) : -1, kind == 'B' ? "입력(평소)" : "LOW 출력",
+               (w1 && w2 && rs >= 0) ? "" : " ★PCF 쓰기/읽기 실패");
+    }
+    if (fac == 9) {   /* ★2026-10-31 로터리 주차 — B 만 끔(옛 동작), A·C 는 켬(새 동작). 노브는 LP 가 놓고 읽은 값 */
+      const bool    ok = btn_handler_rot_park_set(kind != 'B');
+      const int32_t rs = btn_handler_lp_pcf_raw();
+      const uint32_t rotm = (1u << PCF8574_BIT_ROT_A) | (1u << PCF8574_BIT_ROT_B);
+      snprintf(key, sizeof(key), "pk%u", p);
+      nvs_set_u8(h, key, ok ? 1 : 0);
+      snprintf(key, sizeof(key), "rs%u", p);
+      nvs_set_u32(h, key, (uint32_t)rs);
+      nvs_commit(h);
+      ESP_LOGW(TAG, "[LSF] 단계%u(%c): 로터리 주차 %s — 노브 원시값 0x%04X(닫힌 접점 %d개)%s", p, kind,
+               kind == 'B' ? "끔(옛 동작)" : "켬(새 동작)", (unsigned)(rs & 0xFFFF),
+               rs >= 0 ? __builtin_popcount(~(uint32_t)rs & rotm) : -1, ok ? "" : " ★설정 실패(LP 경로 없음)");
+    }
     if (_lsf_abaca(fac) && kind == 'C' && g_rf_ready) {
       /* ★2026-10-16 교정 부하: CC1101 을 SPWD 에서 깨워 IDLE(크리스털만 돎, 1.7mA)로 둔다.
        *  "켰다"가 아니라 "IDLE 이다"를 값으로 남긴다(MARCSTATE 0x01) — IDLE 이 아니면 해석기가 무효로 본다.
-       *  절전 중 CSn 은 풀업(cc1101_sleep_pins_fix)이라 SPI 가 안 움직이고, IDLE 은 CSn 과 무관하게 유지된다. */
+       *  절전 중 CSn 은 풀업(cc1101_sleep_pins_fix)이라 SPI 가 안 움직이고, IDLE 은 CSn 과 무관하게 유지된다.
+       *  ★2026-10-29 fac 6(ADC)은 SPI 핀이 붙잡혀 있다 — 잠깐 풀고 보낸 뒤 다시 붙잡는다(CSn 은 그 사이 SPI 가 HIGH 로 둔다). */
+      if (_lsf_holds(fac)) _lsf_hold(false);
       cc1101_strobe(&g_cc1101, CC1101_SIDLE);
       esp_rom_delay_us(1000);
       const uint8_t ms = cc1101_read_reg(&g_cc1101, 0x35 | 0xC0) & 0x1F;
+      if (_lsf_holds(fac)) _lsf_hold(true);
       cc_cal_on = true;
       snprintf(key, sizeof(key), "cs%u", p);
       nvs_set_u8(h, key, ms);
@@ -5490,7 +5703,7 @@ void somfy_app_lsfloor_boot_hook(void)
       const bool last    = (p == nph - 1) && (i + 1 == n_per);
       const unsigned next_p = (i + 1 < n_per) ? p : p + 1;
       /* 마지막 표본 뒤에는 절전이 없다 — 유닛을 남겨 두고 아래에서 NVS 설정대로 되돌린다 */
-      mv10 = _lsf_measure_mv10((last || adc_resident) ? false : _lsf_phase_pd(next_p));
+      mv10 = _lsf_measure_mv10(last ? false : _lsf_unit_pd(fac, next_p));
       snprintf(key, sizeof(key), "s%02u", (unsigned)idx);
       nvs_set_u64(h, key, _lsf_pack(t_s, mv10 > 0 ? (uint32_t)mv10 : 0, p, cause, usb_now, pd,
                                     flags16, rej));
@@ -5501,7 +5714,7 @@ void somfy_app_lsfloor_boot_hook(void)
       if (_lsf_abaca(fac)) {
         ESP_LOGW(TAG, "[LSF] #%lu  단계%u(%c%s)  +%lu초  %d.%dmV  기상=%u  플래그=0x%04lX  깨어남 %lu%s%s",
                  (unsigned long)(idx - 1), p, kind,
-                 kind == 'B' ? (fac == 4 ? " +안테나" : " +깨어남") : (kind == 'C' ? " +CC1101" : " 바닥"),
+                 kind == 'B' ? _lsf_blabel(fac) : (kind == 'C' ? " +CC1101" : " 바닥"),
                  (unsigned long)t_s,
                  mv10 / 10, mv10 % 10, cause, (unsigned long)flags16, (unsigned long)wk,
                  rej ? " ★절전거부/조기기상" : "", usb_now ? " ★USB" : "");
@@ -5520,11 +5733,17 @@ void somfy_app_lsfloor_boot_hook(void)
           snprintf(key, sizeof(key), "wk%u", p);
           nvs_set_u32(h, key, wk);
         }
+        if (fac == 9) {                           /* ★2026-10-31 단계 끝까지 누적 주차 폴 — A·C 는 LP 폴과 같이 늘고 B 는 멈춰야 */
+          snprintf(key, sizeof(key), "pp%u", p);
+          nvs_set_u32(h, key, btn_handler_rot_park_polls() - pp0);
+        }
         if (cc_cal_on) {                          /* C 단계 끝 — 끝까지 IDLE 이었나 확인하고 다시 재운다 */
+          if (_lsf_holds(fac)) _lsf_hold(false);  /* ★2026-10-29 fac 6 — 붙잡힌 SPI 핀을 잠깐 푼다(위 C 시작과 같다) */
           const uint8_t ms = cc1101_read_reg(&g_cc1101, 0x35 | 0xC0) & 0x1F;
           snprintf(key, sizeof(key), "ce%u", p);
           nvs_set_u8(h, key, ms);
           cc1101_idle(&g_cc1101);                 /* SIDLE + SPWD */
+          if (_lsf_holds(fac)) _lsf_hold(true);
           cc_cal_on = false;
           ESP_LOGW(TAG, "[LSF] 단계%u(C) 끝: MARCSTATE=0x%02X%s — CC1101 다시 SPWD", p, ms,
                    ms == 0x01 ? "" : " ★IDLE 이 아니었다");
@@ -5534,14 +5753,26 @@ void somfy_app_lsfloor_boot_hook(void)
       if (stop_usb) break;
     }
   }
+  /* ★핀 고정을 **먼저** 푼다 — 붙잡힌 채로는 아래 CC1101 탐침의 SPI 가 칩에 닿지 않는다(USB 중단 경로도 여기로 온다).
+   *  ★2026-10-29 fac 6 도. 그리고 안전망 SPWD 보다 앞으로 옮겼다 — fac 6 C 도중 USB 중단이면 붙잡힌 채 SPWD 를 보내 안 먹었다. */
+  if (_lsf_holds(fac)) _lsf_hold(false);
   if (cc_cal_on) { cc1101_idle(&g_cc1101); cc_cal_on = false; }   /* 안전망 — 어떤 경로로도 IDLE 로 두고 나가지 않는다 */
 #if BOARD_HAS_RF_ANT_SW
-  /* ★2026-10-21 ANT 측정 뒤 안테나를 평소 설정으로 — 놓은 채로 무선이 뜨면 스위치 전원이 꺼져 외장이 안 쓰인다 */
-  if (fac == 4) board_rf_ant_apply();
+  /* ★2026-10-21 ANT 측정 뒤 안테나를 평소 설정으로 — 놓은 채로 무선이 뜨면 스위치 전원이 꺼져 외장이 안 쓰인다
+   *  ★2026-10-31 핀 고정 측정(fac 1·6)도 — 고정 전에 놓았다(위 "anr" 주석) */
+  if (fac == 4 || (_lsf_holds(fac) && BOARD_RF_ANT_SLEEP_RELEASE)) board_rf_ant_apply();
 #endif
-
-  /* ★핀 고정을 **먼저** 푼다 — 붙잡힌 채로는 아래 CC1101 탐침의 SPI 가 칩에 닿지 않는다(USB 중단 경로도 여기로 온다). */
-  if (fac == 1) _lsf_hold(false);
+  /* ★2026-10-31 PARK 측정은 A(주차 켬)로 끝나지만 명시적으로 켜 둔다 — 정상 부팅의 LP 재적재가 어차피 LP_ROT_PARK 로 되돌린다 */
+  if (fac == 9) (void)btn_handler_rot_park_set(true);
+  /* ★2026-10-29 LPC 측정은 A(멈춤)로 끝난다 — 정상 부팅의 _lp_core_try_start 가 어차피 다시 올리지만 멈춘 채 두지 않는다 */
+  if (fac == 7) (void)btn_handler_lp_resume();
+  /* ★2026-10-29 ROT 측정 뒤 PCF 를 전부 입력으로 — 핀·LP 는 정상 부팅의 btn_handler_init 이 다시 잡는다 */
+  if (fac == 8) (void)btn_handler_pcf_hp_write(0xFFFF);
+  /* ★2026-10-29 OLED 측정 뒤엔 새 동작(화면 OFF + 차지펌프 끔)으로 둔다 — 정상 부팅의 패널 init 이 8D 14 를 다시 넣는다 */
+  if (fac == 5) {
+    static const uint8_t cp_off_end[] = { 0xAE, 0x8D, 0x10 };
+    (void)oled_ui_early_cmds(cp_off_end, sizeof(cp_off_end));
+  }
 
   /* ★★2026-10-15 SPI 가 실제로 칩에 닿는지 **값으로** 확인한다. 아래 SNOP 탐침만으로는 안 된다 —
    *  CSn 이 붙잡혀 칩이 요청을 무시해도 MISO 가 HIGH 로 읽혀 0xFF(= "자고 있었다")가 나오므로
@@ -5582,7 +5813,7 @@ void somfy_app_lsfloor_boot_hook(void)
     if (_lsf_abaca(fac)) {
       const char k = _lsf_kind(fac, i);
       ESP_LOGE(TAG, "  단계%u(%c%s) 끝 %d.%dmV", i, k,
-               k == 'B' ? (fac == 4 ? " +안테나" : " +깨어남") : (k == 'C' ? " +CC1101" : " 바닥"),
+               k == 'B' ? _lsf_blabel(fac) : (k == 'C' ? " +CC1101" : " 바닥"),
                end_mv10[i] / 10, end_mv10[i] % 10);
     } else {
       ESP_LOGE(TAG, "  단계%u(%s %s) 끝 %d.%dmV", i, fname, _lsf_phase_pd(i) ? "끔" : "켬",
@@ -5618,7 +5849,10 @@ void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, i
                                       "★도중에 리셋됨", "USB 가 꽂혀 중단" };
     ESP_LOGW(TAG, "[LSF] 예약=%u  상태=%s  대상=%s  모의=%u  단계 %lu초×%u  표본 %lu초  정착 %lu초  표본 %u개",
              armed, run <= LSF_RUN_USB ? RN[run] : "?",
-             fq == 3 ? "WAKE(깨어남+교정)" : (fq == 4 ? "ANT(안테나 바이어스+교정)" : _lsf_fname(fq)), d,
+             fq == 3 ? "WAKE(깨어남+교정)" : (fq == 4 ? "ANT(안테나 바이어스+교정)" :
+             fq == 5 ? "OLED(차지펌프+교정)" : fq == 6 ? "ADC(TOP·MODEM+교정)" : fq == 7 ? "LPC(LP 폴링+교정)" :
+             fq == 8 ? "ROT(로터리 접점 전류+교정)" : fq == 9 ? "PARK(로터리 주차 순이득+교정)" :
+             _lsf_fname(fq)), d,
              (unsigned long)ps, _lsf_nph(fq), (unsigned long)ss, (unsigned long)st, (unsigned)n);
     if (rst != 0xFF)  ESP_LOGW(TAG, "[LSF] 도중 리셋 사유 코드 %u", rst);
     if (oled != 0xFF) ESP_LOGW(TAG, "[LSF] 화면 끔 확인=%u  CC1101 %s", oled,
@@ -5661,13 +5895,34 @@ void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, i
              phase_s, ph_min, LSF_PHASE_MAX_S, samp_s, LSF_SAMP_MIN_S, LSF_SAMP_MAX_S);
     return;
   }
-  if (fac < 0 || fac > 4) fac = 0;
+  if (fac < 0 || fac > 9) fac = 0;   /* ★2026-10-29 5=OLED 6=ADC 7=LPC 8=ROT (★10/31 9=PARK) */
 #if !BOARD_HAS_RF_ANT_SW
   if (fac == 4) {   /* ★2026-10-21 안테나 스위치가 없는 보드엔 잴 것이 없다 */
     ESP_LOGE(TAG, "[LSF] 거부 — 이 보드에는 RF 안테나 스위치(BOARD_HAS_RF_ANT_SW)가 없다.");
     return;
   }
 #endif
+#if !BOARD_OLED_BITBANG
+  if (fac == 5) {   /* ★2026-10-29 훅은 oled_ui_init 전이라 비트뱅 보드만 패널에 명령을 보낼 수 있다(oled_ui_early_cmds) */
+    ESP_LOGE(TAG, "[LSF] 거부 — OLED 측정은 비트뱅 OLED 보드(BOARD_OLED_BITBANG)만 된다.");
+    return;
+  }
+#endif
+#if !BOARD_PCF_LP_CORE
+  if (fac == 7 || fac == 8 || fac == 9) {   /* ★2026-10-29 LP 코어 경로가 없는 보드엔 잴 것이 없다(ROT 도 LP 를 세우고 선을 넘기는 경로를 쓴다, ★10/31 PARK 는 LP 가 주차한다) */
+    ESP_LOGE(TAG, "[LSF] 거부 — 이 보드는 LP 코어 PCF 폴링(BOARD_PCF_LP_CORE)을 쓰지 않는다.");
+    return;
+  }
+#endif
+  if (fac == 9 && !dry) {   /* ★2026-10-31 노브가 열린 위치(11)면 몰 핀이 없다 — B−A 가 0 이라 하룻밤을 날린다 */
+    const int32_t r = btn_handler_pcf_raw();
+    const uint32_t rotm = (1u << PCF8574_BIT_ROT_A) | (1u << PCF8574_BIT_ROT_B);
+    if (r < 0 || (~(uint32_t)r & rotm) == 0) {
+      ESP_LOGE(TAG, "[LSF] 거부 — 노브가 %s. 한 칸 돌려 두 접점이 닫힌 위치(`bl` 첫 줄 '닫힌 접점 2개')에 두고 다시 예약할 것.",
+               r < 0 ? "어디 있는지 아직 못 읽었다" : "열린 위치(닫힌 접점 0개)라 주차할 핀이 없다");
+      return;
+    }
+  }
   const int nph   = (int)_lsf_nph((unsigned)fac);   /* ★2026-10-16 fac=3 은 5단계 (★10/21 fac=4 도) */
   const int n_per = phase_s / samp_s;
   const int per_max = (LSF_MAX_SAMPLES - 1) / nph;   /* 4단계 23개, 5단계 19개 */
@@ -5727,7 +5982,10 @@ void somfy_app_console_lsfloor(int phase_s, int settle_s, int samp_s, int dry, i
   s_lsf_armed = 1;                                /* ★부팅 뒤 예약도 감시가 돌아야 한다 */
   if (_lsf_abaca((unsigned)fac)) {
     ESP_LOGW(TAG, "[LSF] 예약 완료 — %s + CC1101 교정(%s), %d단계 × %d초(총 %.1f시간), 표본 %d초마다.",
-             fac == 4 ? "안테나 바이어스 저항 전류" : "깨어남 비용",
+             fac == 4 ? "안테나 바이어스 저항 전류" : fac == 5 ? "OLED 차지펌프(화면 OFF 중)" :
+             fac == 6 ? "ADC 상주(TOP·MODEM 얕은잠 중 켜짐)" : fac == 7 ? "LP 코어 5ms 폴링" :
+             fac == 8 ? "로터리 닫힌 접점 전류(노브를 측정 내내 그대로 둘 것)" :
+             fac == 9 ? "로터리 주차 순이득(노브를 측정 내내 그대로 둘 것)" : "깨어남 비용",
              LSF_PAT_WAKE, nph, phase_s, nph * phase_s / 3600.0, samp_s);
   } else {
     ESP_LOGW(TAG, "[LSF] 예약 완료 — %s 를 켬/끔, %d단계 × %d초(총 %.1f시간), 표본 %d초마다.",
@@ -6365,13 +6623,25 @@ void somfy_app_run(void *arg) {
                              (int)s_floor_up_run);
                     s_pct_floor    = BAT_PCT_UNKNOWN;
                     s_floor_up_run = 0;
+                    s_floor_settling  = true;  /* ★2026-10-29 오름이 멈출 때까지 다시 잠그지 않는다(선언부 주석) */
+                    s_floor_settle_mv = _sm;
+                    s_floor_settle_n  = 0;
                   }
                 } else {
                   s_floor_up_run = 0;
                 }
+                if (s_floor_settling) {
+                  if (_sm > s_floor_settle_mv + BAT_FLOOR_SETTLE_MV) {
+                    s_floor_settle_mv = _sm;
+                    s_floor_settle_n  = 0;
+                  } else if (++s_floor_settle_n >= BAT_FLOOR_RELEASE_N) {
+                    s_floor_settling = false;
+                    ESP_LOGW(TAG, "[BAT%%] 하한 해제 뒤 오름이 멈췄다 — %dmV(%d%%) 에서 다시 잠근다", _sm, _pct);
+                  }
+                }
                 if (s_pct_floor <= 100 && _pct > (int)s_pct_floor) {
                   _pct = (int)s_pct_floor;
-                } else {
+                } else if (!s_floor_settling) {
                   s_pct_floor    = (uint8_t)_pct;
                   s_pct_floor_mv = _sm;        /* 해제 판정의 기준 전압 */
                 }
@@ -6379,6 +6649,7 @@ void somfy_app_run(void *arg) {
               s_pct_ceil_mpct = -1;            /* 방전 복귀 → 충전 천장 해제 */
             } else {
               s_pct_floor = BAT_PCT_UNKNOWN;   /* 충전 중엔 상승이 정상 → 하한 해제 */
+              s_floor_settling = false;        /* ★2026-10-29 정착 대기도 같이 끝 — 분리 뒤 새로 잠근다 */
               /* ★★★2026-08-16 (③) 충전 중 **상승률 제한** — 위 BAT_FULL_MV 주석이
                *  "고치려면 충전 중 상승률 제한(하한 s_pct_floor 의 대칭)이 필요하다"
                *  고 지시해 놓고 구현되지 않았던 부분이다.
@@ -6730,6 +7001,7 @@ void somfy_app_run(void *arg) {
                                 : (int64_t)BATLOG_SLOW_IV * 1000000LL;
       _batlog_flush_if_due(now_us, false);   /* 쌓인 기록을 2초 단위로 NVS 반영 */
       _pmdump_tick(now_us);                  /* ★2026-10-20 PM 락 스냅샷 — 세션 중 300초마다 (N08, 사용자 결정) */
+      _pcfrest_tick(now_us);                 /* ★2026-10-29 PCF 정지 상태(로터리 닫힌 접점 체류 시간) */
       _vibelog_tick(now_us);                 /* ★진동 진단 기록(창 3초, NVS 는 10초 합침) */
       if (!now_usb && s_dis_t0_us && s_bat_last_sm_mv > 0 &&
           (now_us - s_dis_prev_us) >= _iv_us) {

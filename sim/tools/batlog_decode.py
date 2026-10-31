@@ -95,6 +95,31 @@ def decode(path, div_top=100, div_bot=100, capacity_mah=700, base_ns=None):
     if ns.get('ol_fail') is not None:
         print('OLED ON/OFF 명령 실패(세션): %s회  (정상 0 — 0 이 아니면 화면이 실제로는 안 꺼졌을 수 있다)'
               % ns.get('ol_fail'))
+    # ★2026-10-29 PCF 정지 상태(somfy_app.c _pcfrest_tick) — 로터리가 접점 닫힌 위치에 멈춰 있던 시간
+    pr = ns.get('pcf_rest')
+    if isinstance(pr, (bytes, bytearray)) and len(pr) >= 20:
+        c0, c1, c2, oth, last = struct.unpack('<5I', bytes(pr[:20]))
+        tot = c0 + c1 + c2
+        if tot:
+            # PCF8575 입력 전류원(TI 표 5.5): 외부에서 LOW 로 잡힌 핀마다 30~300µA — 닫힌 접점 수 × 체류 비율
+            avg_lo = (c1 * 1 + c2 * 2) * 30.0 / tot
+            avg_hi = (c1 * 1 + c2 * 2) * 300.0 / tot
+            print('PCF 정지 상태(세션 %.1f시간): 로터리 닫힌 접점 0개 %.1f%% / 1개 %.1f%% / 2개 %.1f%%  → 접점 전류 평균 %.0f~%.0f µA'
+                  ' (핀당 30~300µA 가정)' % (tot / 3600.0, 100.0 * c0 / tot, 100.0 * c1 / tot, 100.0 * c2 / tot, avg_lo, avg_hi))
+            print('   그 밖 LOW 핀 %d 핀·초(누름 시간 — 정지 중 0 이어야)   마지막 원시값 %s'
+                  % (oth, '모름' if last == 0xFFFFFFFF else '0x%04X' % last))
+        else:
+            print('PCF 정지 상태: 아직 기록 없음(세션이 짧거나 PCF 를 못 읽었다)')
+    if ns.get('lp_ho') is not None:
+        print('LP→HP 인계(부팅 후): %s회  (정상 0 — 0 이 아니면 LP 코어가 멈춰 HP 폴링으로 넘어간 적이 있다, N07)' % ns.get('lp_ho'))
+    # ★2026-10-31 로터리 주차(main/lp_core/pcf_lp_config.h) — LP 적재 뒤 [주차한 채 끝난 폴, 전체 폴]
+    rk = ns.get('rot_park')
+    if isinstance(rk, (bytes, bytearray)) and len(rk) >= 8:
+        pk, pn = struct.unpack('<2I', bytes(rk[:8]))
+        if pn:
+            # 주차한 폴은 놓고-읽고-다시 모는 창(~2.5%)만 전류원이 흐른다(sim/tools/rot_park_sim.py ⑥)
+            print('로터리 주차(LP 적재 뒤): 폴 %d회 중 %d회(%.1f%%)가 주차한 채 끝났다 — 위 "닫힌 접점" 시간 중 이만큼은 전류가 ~2.5%%만 흐른다'
+                  % (pn, pk, 100.0 * pk / pn))
     if not n:
         print('(비어 있음)'); return 0
 

@@ -656,24 +656,34 @@ static int scmd_adcfix(int argc, char **argv){
  *  ★2026-10-16 `lsfloor lp <단계분> [정착분] [표본초]` — LP 코어 5ms 폴링을 켬/끔(TOP 도 10/15 밤 무죄).
  *  ★2026-10-16 `lsfloor wake <단계분> [정착분] [표본초]` — 깨어남 비용 + CC1101 IDLE(1.7mA) 현장 교정,
  *    5단계 A(바닥)-B(+깨어남 31.8회/초)-A-C(+CC1101 IDLE)-A. 권장 `lsfloor wake 60 120 300`.
- *    모의: `lsfloor dry <단계초> <표본초> wake`. */
+ *    모의: `lsfloor dry <단계초> <표본초> wake`.
+ *  ★2026-10-29 `lsfloor oled|adc|lpc <단계분> [정착분] [표본초]` — 같은 ABACA + CC1101 교정.
+ *    oled = 화면 OFF 중 차지펌프(B 옛 동작), adc = ADC 상주로 켜진 TOP·MODEM(B 평소), lpc = LP 5ms 폴링(B 평소).
+ *    권장 `lsfloor adc 60 120 300` (5시간 + 정착 2시간). 모의: `lsfloor dry 20 5 oled|adc|lpc`.
+ *    rot = 로터리 닫힌 접점 전류(A 로터리 핀 LOW 출력 / B 입력) — 노브가 닫힌 위치에 있을 때만 의미가 있다.
+ *  ★2026-10-31 `lsfloor park <단계분> [정착분] [표본초]` — 로터리 주차의 순이득(A 주차 켬 / B 끔, LP 는 전 단계 돎).
+ *    노브가 열린 위치면 거부한다. 권장 `lsfloor park 60 120 300`. 모의: `lsfloor dry 20 5 park`. */
+/* 이름 → fac (★2026-10-29 표로 모았다 — dry 와 본측정이 같은 표를 쓴다) */
+static int _lsf_fac_of(const char *s){
+    static const char *const N[] = { "modem", "top", "lp", "wake", "ant", "oled", "adc", "lpc", "rot", "park" };
+    for (int i = 1; i < (int)(sizeof(N) / sizeof(N[0])); i++) if (strcmp(s, N[i]) == 0) return i;
+    return -1;
+}
 static int scmd_lsfloor(int argc, char **argv){
     if (argc < 2) { somfy_app_console_lsfloor(-1, 0, 0, 0, 0); return 0; }
     if (strcmp(argv[1], "dry") == 0) {
         const int ph = (argc >= 3) ? atoi(argv[2]) : 40;    /* 초 */
         const int sp = (argc >= 4) ? atoi(argv[3]) : 10;
-        const int fc = (argc >= 5 && strcmp(argv[4], "top")  == 0) ? 1 :
-                       (argc >= 5 && strcmp(argv[4], "lp")   == 0) ? 2 :
-                       (argc >= 5 && strcmp(argv[4], "wake") == 0) ? 3 :
-                       (argc >= 5 && strcmp(argv[4], "ant")  == 0) ? 4 : 0;   /* ★2026-10-21 */
+        const int f5 = (argc >= 5) ? _lsf_fac_of(argv[4]) : -1;
+        const int fc = (f5 > 0) ? f5 : 0;
         somfy_app_console_lsfloor(ph, 60, sp, 1, fc);
         return 0;
     }
     int a = 1, fac = 0;
-    if (strcmp(argv[1], "top") == 0) { fac = 1; a = 2; }
-    else if (strcmp(argv[1], "lp") == 0) { fac = 2; a = 2; }   /* ★2026-10-16 LP 폴링 켬/끔 */
-    else if (strcmp(argv[1], "wake") == 0) { fac = 3; a = 2; } /* ★2026-10-16 깨어남 비용 + 교정 */
-    else if (strcmp(argv[1], "ant") == 0)  { fac = 4; a = 2; } /* ★2026-10-21 XIAO 안테나 바이어스 저항 + 교정 */
+    {   /* top=1 lp=2 wake=3 ant=4 (★10/29 oled=5 adc=6 lpc=7 rot=8, ★10/31 park=9) */
+        const int f = _lsf_fac_of(argv[1]);
+        if (f > 0) { fac = f; a = 2; }
+    }
     if (argc <= a) { somfy_app_console_lsfloor(-1, 0, 0, 0, 0); return 0; }
     const int m  = atoi(argv[a]);                               /* 단계(분). 0 = 취소 */
     const int st = (argc >= a + 2) ? atoi(argv[a + 1]) : 60;    /* 정착(분) */
@@ -1284,7 +1294,7 @@ extern "C" void app_main()
       esp_console_cmd_register(&tmc);
       const esp_console_cmd_t dsc={ .command="dsleep", .help="깊은잠 대조군 dsleep <측정분> [정착분] (정착=셀 완화 대기, 기본 1분)", .hint=NULL, .func=&scmd_dsleep, .argtable=NULL };
       esp_console_cmd_register(&dsc);
-      const esp_console_cmd_t lsc={ .command="lsfloor", .help="얕은잠 바닥 전류 대조군 lsfloor [top|lp|wake|ant] <단계분> [정착분] [표본초] / lsfloor dry <단계초> <표본초> [top|lp|wake|ant] / lsfloor 0", .hint=NULL, .func=&scmd_lsfloor, .argtable=NULL };
+      const esp_console_cmd_t lsc={ .command="lsfloor", .help="얕은잠 바닥 전류 대조군 lsfloor [top|lp|wake|ant|oled|adc|lpc|rot|park] <단계분> [정착분] [표본초] / lsfloor dry <단계초> <표본초> [top|lp|wake|ant|oled|adc|lpc|rot|park] / lsfloor 0", .hint=NULL, .func=&scmd_lsfloor, .argtable=NULL };
       esp_console_cmd_register(&lsc);
       const esp_console_cmd_t ccf={ .command="ccfix", .help="ccfix [0|1] 절전 중 CC1101 CSn 풀업 + 수면 탐침 통계", .hint=NULL, .func=&scmd_ccfix, .argtable=NULL };
       esp_console_cmd_register(&ccf);

@@ -285,6 +285,26 @@ static esp_err_t _oled_send_cmds(const uint8_t *cmds, size_t len)
 #endif
 }
 
+/* ★2026-10-29 화면 ON/OFF 명령 — OFF 때 차지펌프도 끄고(8D 10), ON 때 다시 켠 뒤 켠다(8D 14 → AF). 절전 남은 후보 3.
+ *  SSD1306 표준 끄기 순서(앱노트: AEh → 8Dh 10h). 패널 init 이 8D 14 를 넣으므로 켤 때 같은 값으로 되돌린다.
+ *  ★기대 효과는 0 일 수 있다 — 데이터시트상 8D 의 A[2]=1 은 "디스플레이 ON 동안 차지펌프 켬"이라 AE 만으로 이미 멈출 수 있다.
+ *    그래서 lsfloor oled(fac=5)로 옛(AE 만)과 새(AE+8D10)의 차이를 잰다. 클론(SSD1315 등)이 달리 굴 수 있어 끄는 쪽을 기본으로 둔다.
+ *  OLED_CP_OFF_WITH_PANEL=0 이면 예전처럼 AE/AF 한 바이트. */
+#ifndef OLED_CP_OFF_WITH_PANEL
+#define OLED_CP_OFF_WITH_PANEL 1
+#endif
+static esp_err_t _oled_send_onoff(bool on)
+{
+#if OLED_CP_OFF_WITH_PANEL
+    static const uint8_t c_on[]  = { 0x8D, 0x14, 0xAF };   /* 차지펌프 켬 → 디스플레이 ON */
+    static const uint8_t c_off[] = { 0xAE, 0x8D, 0x10 };   /* 디스플레이 OFF → 차지펌프 끔 */
+    return on ? _oled_send_cmds(c_on, sizeof(c_on)) : _oled_send_cmds(c_off, sizeof(c_off));
+#else
+    const uint8_t c = on ? 0xAF : 0xAE;
+    return _oled_send_cmds(&c, 1);
+#endif
+}
+
 #if OLED_PANEL_FIXUP_72X40
 static void _ssd1315_apply_72x40_fixup(void)
 {
@@ -2971,11 +2991,11 @@ static void _ui_task(void *pvParam)
          *  요청은 즉시 3회(5ms 간격 — CONFIG_FREERTOS_HZ=1000 이라 실제 5틱), 재시도는 회전당 1회.
          *  보내는 값은 **지금의** 논리 상태다 — 거둔 뒤 반대 요청이 와도 마지막 요청이 이긴다. */
         if ((sync_req || s_panel_cmd_pending) && s_oled_present) {
-            const uint8_t c = s_panel_on ? 0xAF : 0xAE;
+            const bool on_now = s_panel_on;
             esp_err_t r = ESP_FAIL;
             for (int i = 0; i < (sync_req ? 3 : 1) && r != ESP_OK; i++) {
                 if (i) vTaskDelay(pdMS_TO_TICKS(5));
-                r = _oled_send_cmds(&c, 1);
+                r = _oled_send_onoff(on_now);   /* ★2026-10-29 차지펌프 포함(_oled_send_onoff 주석) */
             }
             if (r == ESP_OK) {
                 s_panel_cmd_pending = false;
@@ -2983,7 +3003,7 @@ static void _ui_task(void *pvParam)
                 s_panel_cmd_pending = true;
                 g_oled_onoff_fail_cnt++;
                 ESP_LOGW(TAG, "★화면 %s 명령이 패널에 안 닿았다(3회) — 다음 회전부터 계속 재시도 (누적 %u)",
-                         (c == 0xAF) ? "ON" : "OFF", (unsigned)g_oled_onoff_fail_cnt);
+                         on_now ? "ON" : "OFF", (unsigned)g_oled_onoff_fail_cnt);
             }
         }
         /* ★2026-10-18 F13 회전 도중(렌더·전송 중) 새 요청이 들어왔으면 기다리지 않고 바로 다음 회전 —
@@ -3336,17 +3356,17 @@ void oled_ui_start_task(oled_ui_ctx_t *ctx)
 bool oled_ui_set_display_on(bool on)
 {
     /* SSD1315/SSD1306 명령:
-     *   0xAE = Display OFF (sleep mode, panel 차단, ~5μA)
+     *   0xAE = Display OFF (sleep mode, panel 차단 — 모듈 전체 OFF 전류는 미측정)
      *   0xAF = Display ON
+     *   ★2026-10-29 OFF 뒤 8D 10(차지펌프 끔), ON 앞 8D 14(켬) — _oled_send_onoff 주석
      * I2C 패널이 응답 못해도(전원 OFF 상태 등) 호출은 안전 — _oled_send_cmds
      * 가 i2c_master_transmit 의 timeout 으로 fail 후 반환. */
     s_panel_on = on;               /* 미검출이어도 논리 상태는 갱신(태스크가 참조) */
     if (on && s_ui_task_h) xTaskNotifyGive(s_ui_task_h);   /* ★2026-10-18 OFF 동안 자던 UI 태스크를 즉시 깨움(F10) */
     if (!s_oled_present) return false;   /* 미검출 시 NACK 로그 방지 */
-    uint8_t cmd = on ? 0xAF : 0xAE;
     esp_err_t r = ESP_FAIL;
     for (int i = 0; i < 3 && r != ESP_OK; i++) {
-        r = _oled_send_cmds(&cmd, 1);
+        r = _oled_send_onoff(on);
         if (r != ESP_OK) vTaskDelay(pdMS_TO_TICKS(5));
     }
     s_panel_cmd_pending = (r != ESP_OK);
@@ -3356,6 +3376,20 @@ bool oled_ui_set_display_on(bool on)
                  on ? "ON" : "OFF", (unsigned)g_oled_onoff_fail_cnt);
     }
     return r == ESP_OK;
+}
+
+/* ★2026-10-29 oled_ui_init **이전**(무선 시작 전 lsfloor 부팅 훅)에 패널 명령을 보낸다 — lsfloor oled(fac=5) 가 차지펌프를
+ *  단계마다 켜고 끈다. 패널은 별개 칩이라 ESP 재부팅 뒤에도 지난 설정(화면 OFF)을 들고 있다. 비트뱅 보드만(HW I2C 보드는
+ *  버스를 아직 안 만들었다 → false). init 뒤에 불리면 평소 경로로 보낸다. 반환: 패널이 명령을 받았는가(ACK). */
+bool oled_ui_early_cmds(const uint8_t *cmds, size_t len)
+{
+#if BOARD_OLED_BITBANG
+    if (!s_ctx) _bbo_init_pins();          /* init 전 — 핀만 확보(뮤텍스 없음 = 다른 사용자도 없다) */
+    return _oled_send_cmds(cmds, len) == ESP_OK;
+#else
+    (void)cmds; (void)len;
+    return false;
+#endif
 }
 
 /* ★★2026-10-18 화면 켜기/끄기 **요청** (감사 F13 — s_panel_sync_req 주석).

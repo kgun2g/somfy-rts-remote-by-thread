@@ -55,9 +55,10 @@ FACTORS = {0: ('MODEM', BIT_MODEM), 1: ('TOP', BIT_TOP), 2: ('LP', None)}
 LP_ON_MIN, LP_OFF_MAX = 100.0, 1.0
 
 
-def lp_rates(meta, samples, nph=PHASES):
-    """NVS lp0..lp(n-1)(측정 시작부터의 누적 LP 폴링 수) → 단계별 초당 폴링. 기록이 없으면 None."""
-    vals = [meta.get('lp%d' % p) for p in range(nph)]
+def lp_rates(meta, samples, nph=PHASES, prefix='lp'):
+    """NVS lp0..lp(n-1)(측정 시작부터의 누적 LP 폴링 수) → 단계별 초당 폴링. 기록이 없으면 None.
+    ★2026-10-31 prefix='pp' 면 같은 방식으로 단계별 주차 폴(fac 9 PARK)."""
+    vals = [meta.get('%s%d' % (prefix, p)) for p in range(nph)]
     if not samples or all(v is None for v in vals):
         return None
     prev_c, prev_t, rates = 0, 0, []
@@ -319,10 +320,39 @@ FACTORS[3] = ('WAKE', None)
 #  읽으므로 EN=1·SEL=0(an=0b001) 이면 모듈 안에 R21·R24 가 정말 있다는 증거다.
 FACTORS[4] = ('ANT', None)
 ANT_CIRCUIT_MA = 3.3 / 10000 * 1000 + 3.3 / 5100 * 1000   # 0.977mA — Seeed v1.0 회로도 R21 10k + R24 5.1k
+# ★★2026-10-29 절전 남은 후보 셋을 같은 ABACA + CC1101 교정으로 (somfy_app.c _lsf_abaca 위 주석).
+#  fac=5 OLED : A = 화면 OFF + 차지펌프 끔(새 동작) / B = 차지펌프 켬(옛 동작, AE 만). 단계마다 ol%u = 패널 ACK.
+#  fac=6 ADC  : A = ADC 유닛 삭제(TOP·MODEM 얕은잠 중 꺼짐) / B = 상주(평소). 플래그로 검증 — A·C 는 TOP·MODEM 꺼짐 비트가 서야,
+#               B 는 둘 다 켜져야 한다. 핀 고정·CPU 리텐션은 fac 1 과 같은 전제.
+#  fac=7 LPC  : A = LP 폴링 멈춤 / B = 돌림. lpk%u(멈춤·돌림 성공)와 단계별 LP 폴링 속도(lp%u)로 검증.
+FACTORS[5] = ('OLED', None)
+FACTORS[6] = ('ADC', None)
+FACTORS[7] = ('LPC', None)
+# ★2026-10-29 fac=8 ROT : A = 로터리 두 핀 PCF 출력 LOW(닫힌 접점에도 전류 0) / B = 입력(평소). LP 는 측정 내내 멈춤(전 단계 같다).
+#  단계마다 놓고 읽은 노브 원시값 rs%u(닫힌 접점 수가 전 단계 같아야 — 아니면 측정 중 노브가 움직였다), 쓰기 성공 ro%u, 인계 rtk.
+FACTORS[8] = ('ROT', None)
+ROT_MASK = 0x0003                                   # P0·P1(-Rot ba 여도 두 비트 묶음은 같다)
+# ★2026-10-31 fac=9 PARK : 로터리 주차(main/lp_core/pcf_lp_config.h)의 순이득. LP 는 전 단계 돈다.
+#  A = 주차 켬(새 동작) / B = 주차 끔(옛 동작) → B−A = 닫힌 접점 전류 − 주차 I2C 비용. 양수면 주차가 아낀다.
+#  단계마다 pk%u(설정 성공), rs%u(LP 가 놓고 읽은 노브 — 전 단계 같고 닫힘 > 0 이어야), pp%u(누적 주차 폴 — A·C 는 LP 폴과 같이, B 는 0).
+FACTORS[9] = ('PARK', None)
+PARK_ON_MIN, PARK_OFF_MAX = 100.0, 1.0              # 단계별 주차 폴(회/초) — LP 폴(~191/s) 기준
+ABACA_FACS = (3, 4, 5, 6, 7, 8, 9)
+B_LABEL = {3: '+깨어남', 4: '+안테나', 5: '+차지펌프', 6: '+ADC상주', 7: '+LP폴링', 8: '+접점전류', 9: '+주차끔'}
+B_WHAT = {3: '깨어남', 4: '안테나 바이어스', 5: 'OLED 차지펌프(화면 OFF 중)', 6: 'ADC 상주(TOP·MODEM 켜짐)', 7: 'LP 코어 5ms 폴링',
+          8: '로터리 닫힌 접점 전류', 9: '로터리 주차 순이득(주차 끔 − 켬)'}
+VERDICT_OF = {3: 'WAKE_COST', 4: 'ANT_COST', 5: 'OLED_COST', 6: 'ADC_COST', 7: 'LP_COST', 8: 'ROT_COST', 9: 'PARK_NET'}
+
+
+def rot_closed(rs):
+    """노브 원시값 → 닫힌 접점 수(0~2). 기록이 없거나 읽기 실패면 None."""
+    if rs is None or rs == 0xFFFFFFFF or rs < 0:
+        return None
+    return bin(~rs & ROT_MASK).count('1')
 
 
 def is_abaca(fac):
-    return fac in (3, 4)
+    return fac in ABACA_FACS
 
 
 def phase_kind(fac, p, nph=PHASES):
@@ -363,7 +393,7 @@ def analyse_wake(samples, meta, nph=5):
     ★2026-10-21 fac=4(ANT) 도 여기서 — B 의 뜻만 다르다(깨어남 → 안테나 바이어스). 유효성 검사가 다르다."""
     fac = meta.get('fac', 3)
     kinds = WAKE_PATS.get(nph, '')
-    out = {'verdict': 'EMPTY', 'why': '표본이 없다', 'factor': 'ANT' if fac == 4 else 'WAKE',
+    out = {'verdict': 'EMPTY', 'why': '표본이 없다', 'factor': FACTORS.get(fac, ('WAKE', None))[0],
            'kinds': kinds, 'phases': []}
     if not samples or not kinds:
         return out
@@ -386,13 +416,44 @@ def analyse_wake(samples, meta, nph=5):
     # ── 유효성: 의도대로 됐는가 ──
     bad = []
     ant_proof = []                 # ★fac=4: 놓은 단계에서 내부 저항이 확인됐나(단계별)
+    lpr = lp_rates(meta, samples, nph) if fac in (7, 9) else None
+    ppr = lp_rates(meta, samples, nph, prefix='pp') if fac == 9 else None
     for x in ph:
         k, r = x['kind'], x['wake_rate']
         if fac == 3 and k == 'B' and (r is None or not (WAKE_RATE_LO <= r <= WAKE_RATE_HI)):
             bad.append('단계%d(B) 깨어남 %s회/초 — 허용 %.0f~%.0f' % (x['p'], '?' if r is None else '%.1f' % r,
                                                               WAKE_RATE_LO, WAKE_RATE_HI))
-        if (k in 'AC' or fac == 4) and r is not None and r > 1.0:
+        if (k in 'AC' or fac != 3) and r is not None and r > 1.0:      # ★10/29 fac 3 만 B 에 깨어남이 있다
             bad.append('단계%d(%s) 에 깨어남이 섞였다(%.1f회/초)' % (x['p'], k, r))
+        if fac == 5:                   # ★2026-10-29 단계마다 패널이 차지펌프 명령을 받았나
+            ol = meta.get('ol%d' % x['p'])
+            if ol != 1:
+                bad.append('단계%d(%s) OLED 명령 %s — 패널이 차지펌프 설정을 못 받았다'
+                           % (x['p'], k, '기록 없음' if ol is None else '미수신(ol=0)'))
+        if fac == 8:                   # ★2026-10-29 단계마다 PCF 쓰기·노브 읽기 성공
+            if meta.get('ro%d' % x['p']) != 1:
+                bad.append('단계%d(%s) PCF 쓰기/읽기 실패(ro=%s)' % (x['p'], k, meta.get('ro%d' % x['p'])))
+        if fac == 9:                   # ★2026-10-31 주차 설정·LP 폴링·주차 폴이 단계 종류대로였나
+            if meta.get('pk%d' % x['p']) != 1:
+                bad.append('단계%d(%s) 주차 설정 실패(pk=%s)' % (x['p'], k, meta.get('pk%d' % x['p'])))
+            if lpr is None or x['p'] >= len(lpr) or lpr[x['p']] < LP_ON_MIN:
+                bad.append('단계%d(%s) LP 폴링 %s회/초 — 전 단계 돌아야 한다' % (
+                    x['p'], k, '?' if lpr is None or x['p'] >= len(lpr) else '%.1f' % lpr[x['p']]))
+            opened = rot_closed(meta.get('rs%d' % x['p'])) == 0   # 열린 노브엔 몰 핀이 없다 — 아래 PARK_OPEN 으로
+            if ppr is None or x['p'] >= len(ppr):
+                bad.append('단계%d(%s) 주차 폴 기록(pp%d)이 없다' % (x['p'], k, x['p']))
+            elif (k == 'B' and ppr[x['p']] > PARK_OFF_MAX) or (k != 'B' and not opened and ppr[x['p']] < PARK_ON_MIN):
+                bad.append('단계%d(%s) 주차 폴 %.1f회/초 — %s' % (x['p'], k, ppr[x['p']],
+                           '껐는데 주차했다' if k == 'B' else '켰는데 주차를 안 했다(노브가 열렸거나 주차 실패)'))
+        if fac == 7:                   # ★2026-10-29 멈춤·돌림이 의도대로였나(fac 2 와 같은 기준)
+            lk = meta.get('lpk%d' % x['p'])
+            if lk != 1:
+                bad.append('단계%d(%s) LP %s 실패(lpk=%s)' % (x['p'], k, '돌림' if k == 'B' else '멈춤', lk))
+            if lpr and x['p'] < len(lpr):
+                rr = lpr[x['p']]
+                if (k == 'B' and rr < LP_ON_MIN) or (k != 'B' and rr > LP_OFF_MAX):
+                    bad.append('단계%d(%s) LP 폴링 %.1f회/초 — %s' % (x['p'], k, rr,
+                               '돌아야 하는데 멈췄다' if k == 'B' else '멈춰야 하는데 돌았다'))
         if fac == 4:
             an = meta.get('an%d' % x['p'])
             if an is None:
@@ -410,10 +471,30 @@ def analyse_wake(samples, meta, nph=5):
                 if v is None or (v & 0x1F) != MARC_IDLE:
                     bad.append('단계%d(C) CC1101 상태 %s=%s — IDLE(0x01) 이 아니다' %
                                (x['p'], key, '없음' if v is None else '0x%02X' % v))
-        dom = sum(1 for f in x['flags'] if f != FLAGS_NONE and f & ((1 << BIT_TOP) | (1 << BIT_MODEM)))
-        if dom:
-            bad.append('단계%d 에 TOP/MODEM 이 꺼진 절전 %d회 — 평소(둘 다 켜짐)와 다르다' % (x['p'], dom))
+        TM = (1 << BIT_TOP) | (1 << BIT_MODEM)
+        if fac == 6 and k != 'B':      # ★2026-10-29 ADC 측정 바닥·교정은 TOP·MODEM 이 **꺼져야** 한다(CPU 도)
+            off = sum(1 for f in x['flags'] if f != FLAGS_NONE and (f & TM) != TM)
+            nocpu = sum(1 for f in x['flags'] if f != FLAGS_NONE and not (f >> BIT_CPU) & 1)
+            if off:
+                bad.append('단계%d(%s) 에 TOP·MODEM 이 다 꺼지지 않은 절전 %d회 — 삭제가 안 먹었거나 리텐션 없는 드라이버가 막았다'
+                           % (x['p'], k, off))
+            if nocpu:
+                bad.append('단계%d(%s) 에 CPU 가 안 꺼진 절전 %d회 — TOP 차단 전제(CPU 리텐션) 실패' % (x['p'], k, nocpu))
+        else:
+            dom = sum(1 for f in x['flags'] if f != FLAGS_NONE and f & TM)
+            if dom:
+                bad.append('단계%d 에 TOP/MODEM 이 꺼진 절전 %d회 — 평소(둘 다 켜짐)와 다르다' % (x['p'], dom))
     out['ant_proof'] = ant_proof
+    out['park_rates'] = ppr
+    if fac in (8, 9):                  # ★2026-10-29 노브가 측정 내내 같은 위치였나 (★10/31 PARK 도)
+        if fac == 8 and meta.get('rtk') != 1:
+            bad.append('PCF 선을 HP 로 못 넘겼다(rtk=%s)' % meta.get('rtk'))
+        cl = [rot_closed(meta.get('rs%d' % x['p'])) for x in ph]
+        out['rot_closed'] = cl
+        if any(c is None for c in cl):
+            bad.append('노브 위치를 못 읽은 단계가 있다(rs)')
+        elif len(set(cl)) > 1:
+            bad.append('측정 중 노브가 움직였다(단계별 닫힌 접점 %s)' % cl)
     if meta.get('cc_awk') == 1:
         bad.append('측정 끝에 CC1101 이 깨어 있었다 — C 단계 뒤 SPWD 로 못 돌아갔다')
     if bad:
@@ -450,8 +531,10 @@ def analyse_wake(samples, meta, nph=5):
     R_se = (sB ** 2 + (R * sC) ** 2) ** 0.5 / S_C
     dB = CAL_MA * R
     dB_se = CAL_MA * R_se
+    lo = (R - 2 * R_se) * CAL_MA
     out.update(R=R, R_se=R_se, dB=dB, dB_se=dB_se,
-               dB_lo=max(0.0, (R - 2 * R_se) * CAL_MA * (1 - CAL_SYS)),
+               # ★2026-10-31 PARK(순이득)은 음수일 수 있다(주차 비용 > 접점 전류) — 0 에서 자르지 않는다
+               dB_lo=(lo * ((1 - CAL_SYS) if lo > 0 else (1 + CAL_SYS))) if fac == 9 else max(0.0, lo * (1 - CAL_SYS)),
                dB_hi=(R + 2 * R_se) * CAL_MA * (1 + CAL_SYS),
                per_wake_uc=(dB / rate_b * 1000.0) if (rate_b and fac == 3) else None)
     if fac == 4:
@@ -462,6 +545,38 @@ def analyse_wake(samples, meta, nph=5):
                        % (dB, dB_se, out['dB_lo'], out['dB_hi'], ANT_CIRCUIT_MA,
                           '. 놓은 단계 핀 읽힘으로 내부 저항 확인됨' if proof
                           else '. ★놓은 단계에서 내부 저항이 확인되지 않았다(반대 풀을 못 이김) — 모듈이 회로도와 다를 수 있다'))
+        return out
+    if fac == 8:                       # ★2026-10-29 접점 수로 나눠 핀당 전류
+        n = (out.get('rot_closed') or [0])[0]
+        if not n:
+            out.update(verdict='ROT_OPEN',
+                       why='노브가 열린 위치(닫힌 접점 0개)라 잴 몫이 없다 — 결과 %.2f ± %.2f mA 는 0 근처여야 정상(아니면 다른 핀이 새는 것)'
+                           % (dB, dB_se))
+            return out
+        out.update(verdict='ROT_COST', per_pin=dB / n,
+                   why='닫힌 접점 %d개의 전류 %.2f ± %.2f mA (95%%·교정 계통오차 포함 %.2f~%.2f mA) = 접점당 %.0f µA '
+                       '(TI 표 30~300µA) — 노브가 이 위치에 멈춰 있는 동안 계속 흐른다'
+                       % (n, dB, dB_se, out['dB_lo'], out['dB_hi'], dB / n * 1000.0))
+        return out
+    if fac == 9:                       # ★2026-10-31 로터리 주차 순이득
+        n = (out.get('rot_closed') or [0])[0]
+        if not n:
+            out.update(verdict='PARK_OPEN',
+                       why='노브가 열린 위치(닫힌 접점 0개)라 주차할 핀이 없었다 — 결과 %.2f ± %.2f mA 는 0 근처여야 정상'
+                           % (dB, dB_se))
+            return out
+        out.update(verdict='PARK_NET',
+                   why='닫힌 접점 %d개에서 주차가 아낀 순전류 %.2f ± %.2f mA (95%%·교정 계통오차 포함 %.2f~%.2f mA) — '
+                       '접점 전류에서 주차 I2C 비용을 뺀 값. 양수면 주차가 이득, 0 이하면 주차를 끈다(LP_ROT_PARK=0)'
+                       % (n, dB, dB_se, out['dB_lo'], out['dB_hi']))
+        return out
+    if fac in (5, 6, 7):               # ★2026-10-29
+        out.update(verdict=VERDICT_OF[fac],
+                   why='%s 몫 %.2f ± %.2f mA (95%%·교정 계통오차 포함 %.2f~%.2f mA)%s'
+                       % (B_WHAT[fac], dB, dB_se, out['dB_lo'], out['dB_hi'],
+                          ' — 0 에 가까우면 끄는 이득이 없다(데이터시트: 차지펌프는 화면 ON 동안만 돈다)' if fac == 5 else
+                          ' — 이만큼이 "ADC 를 지우면(=MODEM·TOP 을 놓으면)" 얻는 상한. Thread 를 살리는 방법이 따로 필요하다' if fac == 6 else
+                          ' — 폴링 주기를 바꾸면 이 비율로 준다(주기 변경은 사용자 승인 사항)'))
         return out
     out.update(verdict='WAKE_COST',
                why='평소처럼 깨어나는 것(초당 %.1f회)만으로 %.2f ± %.2f mA (95%%·교정 계통오차 포함 %.2f~%.2f mA) — '
@@ -496,6 +611,9 @@ def report_wake(meta, samples, nph):
     kinds = WAKE_PATS.get(nph, '?' * nph)
     fac = meta.get('fac', 3)
     KIND_NAMES = KIND_NAMES_ANT if fac == 4 else globals()['KIND_NAMES']   # noqa: N806 — 아래 표기만 바꾼다
+    if fac in (5, 6, 7, 8, 9):         # ★2026-10-29 (★10/31 9)
+        KIND_NAMES = {'A': {5: '펌프끔', 6: 'ADC삭제', 7: 'LP멈춤', 8: '핀LOW', 9: '주차켬'}[fac], 'B': B_LABEL[fac],  # noqa: N806
+                      'C': '+CC1101', '?': '?'}
     print()
     print('   #    +분   단계         mV       기상  플래그   비고')
     for i, s in enumerate(samples):
@@ -542,8 +660,31 @@ def report_wake(meta, samples, nph):
                 print('  안테나 단계%d(%s): 놓음 — 반대 풀 걸고 읽힘 EN=%d SEL=%d  %s'
                       % (p, kinds[p], an & 1, (an >> 1) & 1,
                          '← 모듈 내부 R21 풀업·R24 풀다운 확인' if (an & 3) == 1 else '★내부 저항이 확인되지 않음'))
+    if fac == 5:      # ★2026-10-29 단계별 OLED 차지펌프 명령 ACK
+        print('  OLED 명령 ACK(단계별): ' + '  '.join('%d(%s):%s' % (p, kinds[p], {1: 'OK', 0: '★미수신'}.get(meta.get('ol%d' % p), '-'))
+                                                 for p in range(nph)))
+    if fac == 7:      # ★2026-10-29 단계별 LP 멈춤·돌림 + 폴링 속도
+        rr = lp_rates(meta, samples, nph) or []
+        print('  LP 멈춤/돌림(단계별): ' + '  '.join('%d(%s):%s %s' % (p, kinds[p], {1: 'OK', 0: '★실패'}.get(meta.get('lpk%d' % p), '-'),
+                                                                   ('%.0f회/초' % rr[p]) if p < len(rr) else '')
+                                              for p in range(nph)))
+    if fac == 8:      # ★2026-10-29 단계별 노브 위치·PCF 쓰기
+        print('  노브(단계별, 놓고 읽음): ' + '  '.join(
+            '%d(%s):%s' % (p, kinds[p], '-' if meta.get('rs%d' % p) is None else
+                           '0x%04X 닫힘%s%s' % (meta['rs%d' % p] & 0xFFFF, rot_closed(meta['rs%d' % p]),
+                                                '' if meta.get('ro%d' % p) == 1 else ' ★쓰기실패'))
+            for p in range(nph)))
+    if fac == 9:      # ★2026-10-31 단계별 노브·주차 설정·주차 폴 속도·LP 폴 속도
+        pr = lp_rates(meta, samples, nph, prefix='pp') or []
+        lr = lp_rates(meta, samples, nph) or []
+        print('  주차(단계별): ' + '  '.join(
+            '%d(%s):%s 노브%s 주차폴%s LP%s' % (
+                p, kinds[p], {1: '설정OK', 0: '★설정실패'}.get(meta.get('pk%d' % p), '-'),
+                '-' if meta.get('rs%d' % p) is None else '0x%04X(닫힘%s)' % (meta['rs%d' % p] & 0xFFFF, rot_closed(meta['rs%d' % p])),
+                ('%.0f/s' % pr[p]) if p < len(pr) else '-', ('%.0f/s' % lr[p]) if p < len(lr) else '-')
+            for p in range(nph)))
     print()
-    blab = '+안테나' if fac == 4 else '+깨어남'
+    blab = B_LABEL.get(fac, '+깨어남')
     if 'S_B' in a:
         print('  ① 톱니: B(%s) %+.2f ± %.2f mV   C(+CC1101 1.7mA) %+.2f ± %.2f mV   (표본 잡음 σ=%.2f mV)'
               % (blab, a['S_B'], a['sB'], a['S_C'], a['sC'], a['sigma']))
@@ -551,7 +692,7 @@ def report_wake(meta, samples, nph):
             print('     (참고) 바닥 A 끝점끼리 기울기 %+.2f mV/h — B·C 의 추가 방전이 섞여 있다' % a['slope_AA'])
     if 'R' in a:
         print('  ② 비 S_B/S_C = %.3f ± %.3f  → %s 몫 = 1.7mA × 비 = **%.2f ± %.2f mA**%s'
-              % (a['R'], a['R_se'], '안테나 바이어스' if fac == 4 else '깨어남', a['dB'], a['dB_se'],
+              % (a['R'], a['R_se'], B_WHAT.get(fac, '깨어남'), a['dB'], a['dB_se'],
                  ('   (회로 계산 %.2f mA)' % ANT_CIRCUIT_MA) if fac == 4 else ''))
         print('     교정 부하 계통오차(CC1101 개체차·전원 효율 ±%d%%)까지 넣은 95%% 범위: %.2f ~ %.2f mA'
               % (int(CAL_SYS * 100), a['dB_lo'], a['dB_hi']))
@@ -571,6 +712,7 @@ def report(meta, samples):
     print('=== 얕은잠 바닥 전류 대조군 (lsfloor) — %s ===' %
           ('깨어남 비용 + CC1101 IDLE 교정 (%s)' % WAKE_PATS.get(nph, '?') if fac == 3 else
            'XIAO 안테나 바이어스 저항 + CC1101 IDLE 교정 (%s)' % WAKE_PATS.get(nph, '?') if fac == 4 else
+           '%s + CC1101 IDLE 교정 (%s)' % (B_WHAT[fac], WAKE_PATS.get(nph, '?')) if fac in (5, 6, 7, 8, 9) else
            '켰다 끈 것: ' + fname))
     # ★2026-10-18 oled_off 는 이제 실제 결과다: 1 = 패널이 OFF 명령을 받음, 0 = 못 받음(패널 미검출 포함)
     _oo = meta.get('oled_off')
@@ -582,6 +724,15 @@ def report(meta, samples):
              meta.get('settle_s', '-'), len(samples)))
     if 'rst' in meta:
         print('  ★도중 리셋 사유 코드: %s' % meta['rst'])
+    if meta.get('ng_n'):
+        # ★2026-10-31 배터리로 부팅했는데 정착 경로의 재시작이 아니어서 측정 대신 정착부터 다시 한 횟수(somfy_app.c 훅 주석)
+        print('  ★정착 없이 배터리로 부팅해 정착부터 다시 함: %d회 (마지막 리셋 사유 %s — 1=전원투입 3=SW 4=패닉 9=브라운아웃)'
+              % (meta['ng_n'], meta.get('ng_rr', '?')))
+    if 'anr' in meta:
+        # ★2026-10-31 핀 고정 측정(fac 1·6)은 고정 전에 안테나 핀을 놓는다 — 반대 풀 걸고 읽힘 EN=1·SEL=0 이면 놓였다
+        an = meta['anr']
+        print('  안테나 핀: 고정 전에 놓음 — 읽힘 EN=%d SEL=%d %s' % (an & 1, (an >> 1) & 1,
+              '(평소 절전과 같다)' if (an & 3) == 1 else '★놓였는지 확인 안 됨(옛 동작 ~0.98mA 가 전 단계에 섞였을 수 있다)'))
     if 'cc_awk' in meta:
         print('  CC1101: 측정 끝에 %s' % ('★깨어 있었다 — 1.7mA 가 섞였을 수 있다' if meta['cc_awk']
                                        else '자고 있었다(SPWD 유지)'))
@@ -595,12 +746,13 @@ def report(meta, samples):
         # ★2026-10-16 LP 측정(fac=2)은 일부러 반을 멈추므로 총합으로 판단하지 않는다 — 아래 단계별을 본다
         print('  LP 코어: 측정 중 폴링 %d회 (초당 %.1f) — %s'
               % (meta['lp_d'], meta['lp_d'] / dur,
-                 '켬/끔 측정이라 총합은 판단에 안 쓴다(아래 단계별)' if fac == 2
+                 '켬/끔 측정이라 총합은 판단에 안 쓴다(아래 단계별)' if fac in (2, 7)
+                 else '로터리 측정은 LP 를 일부러 멈춘다(전 단계 같다)' if fac == 8
                  else ('평소처럼 돌고 있었다' if meta['lp_d'] / dur > 5 else '★멈춰 있었다(평소 절전과 조건이 다르다)')))
     # ★2026-10-15 단계별 LP 폴링 — 첫 TOP 리허설에서 LP 가 첫 꺼짐 단계에서 멈춘 것을 총합만으로는
     #  늦게 알았다(초당 47.6). 단계마다 속도를 보면 바로 보인다. (2026-10-16 lp_rates() 로 뺐다)
     rates = lp_rates(meta, samples, nph)
-    if rates:
+    if rates and fac not in (7, 8):   # ★2026-10-29 LPC 는 아래 report_wake 가 단계 종류로, ROT 는 일부러 멈춘다
         if fac == 2:      # LP 측정: 끈 단계는 멈춰야, 켠 단계는 돌아야 의도대로
             bad = lambda i, r: (r > LP_OFF_MAX) if phase_wants_pd(i) else (r < LP_ON_MIN)
         else:             # 그 밖의 측정: LP 는 평소처럼 계속 돌아야 한다

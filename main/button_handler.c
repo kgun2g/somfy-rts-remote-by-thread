@@ -285,6 +285,20 @@ static volatile bool s_lp_active = false;
  *  s_seq_seen 은 태스크가 PCF 를 읽을 때도 갱신한다(_pcf8574_read — 상태보다 먼저). */
 static volatile uint32_t s_seq_seen = 0;
 volatile uint32_t g_btn_idle_notify_cnt = 0;      /* 계측: 유휴 훅이 통지한 횟수 */
+/* ★2026-10-29 LP 를 다시 올리면(N07 재기동 — _lp_fallback_to_hp 주석) LP RAM 을 새로 적재해 poll_cnt·rot_delta 가 0 부터 다시 센다.
+ *  그래서 HP 쪽 기록도 같이 다시 잡아야 한다 — 예전엔 _pcf8574_read·_btn_task 안의 정적 변수라 손댈 수 없었다.
+ *  안 잡으면 옛 s_rot_taken 과 새 rot_delta 의 차가 한꺼번에 헛회전으로 나간다(sim/tools/lp_handoff_sim.py [기준선]). */
+static uint32_t s_lp_cnt_prev = 0, s_lp_stale = 0, s_lp_chg_ms = 0;   /* LP 정지 판정(_pcf8574_read) */
+static int32_t  s_rot_taken = 0;                                       /* 로터리 소비량(_btn_task LP 경로) */
+static bool     s_rot_sync  = false;
+/* ★2026-10-29 인계 뒤 LP 재기동 — 부팅당 LP_RESTART_MAX 회, 인계 LP_RESTART_DELAY_MS 뒤 버튼·로터리가 쉴 때 */
+#define LP_RESTART_MAX       2
+#define LP_RESTART_DELAY_MS  30000
+static uint8_t  s_lp_restarts = 0;
+static bool     s_lp_restart_pending = false;
+static uint32_t s_lp_restart_at_ms = 0;
+volatile uint32_t g_lp_handoff_cnt = 0;           /* 계측: HP 로 인계한 횟수(정상 = 0) */
+static void _lp_core_try_start(void);             /* 정의는 아래(공개 API 앞) */
 static bool _btn_idle_hook(void) {
   if (s_lp_active && s_btn_task_h) {
     const uint32_t sq = ulp_seq;
@@ -665,6 +679,85 @@ static bool _pcf_lp_probe(void) {
   return (nack == 0);
 }
 
+#if SOMFY_LP_CORE_PATH
+/* ★2026-10-31 PCF 출력 래치 쓰기(비트뱅, LP_I2C 선이 HP 에 있을 때만) — 인계 때 주차 해제와 lsfloor rot 가 쓴다.
+ *  PCF8575 는 '1 = 약한 풀업 입력', '0 = 강한 LOW'. 바이트 수는 읽기와 같다(BOARD_HAS_LR_BUTTONS). */
+static bool _pcf_bb_write16(uint16_t v)
+{
+  if (!(s_i2c_mutex && xSemaphoreTake(s_i2c_mutex, pdMS_TO_TICKS(20)) == pdTRUE)) return false;
+  _i2c_start();
+  int nack = _i2c_write_byte((PCF8574_I2C_ADDR << 1) | 0);   /* write */
+  if (!nack) nack = _i2c_write_byte((uint8_t)(v & 0xFF));     /* P0~P7 */
+#if BOARD_HAS_LR_BUTTONS
+  if (!nack) nack = _i2c_write_byte((uint8_t)(v >> 8));       /* P10~P17 */
+#endif
+  _i2c_stop();
+  xSemaphoreGive(s_i2c_mutex);
+  return nack == 0;
+}
+
+/* ★★2026-10-29 LP → HP 인계 (GPT 재감사 N07, sim/tools/lp_handoff_sim.py).
+ *  옛 코드는 LP 가 멈추면(또는 부팅 때 LP_I2C init 뒤 적재·기동·폴링 확인이 실패하면) s_lp_active=false 만 하고 HP 비트뱅으로
+ *  넘어갔다. 그런데 GPIO6/7 은 lp_core_i2c_master_init 의 rtc_gpio_init 으로 **LP 쪽(LP_AON gpio_mux_sel)에 묶인 채**라 HP 의
+ *  gpio_set_direction·gpio_get_level 이 선에 닿지 않는다 → NACK → 직전 값(LP 경로에선 갱신된 적 없는 0xFFFF)만 돌아와
+ *  **버튼·로터리 전부 먹통**(재부팅까지). 시뮬: LP 정지 뒤 누름 391/391 놓침, 부팅 기동 실패면 579/579 → 새 방식 0.
+ *  순서: LP 정지 → 진행 중이던 폴 1회가 끝날 시간 → rtc_gpio_deinit(디지털 GPIO 로) → HP 입력+풀업(btn_handler_init 과 같은 설정)
+ *  → SDA 가 LOW 면(전송 한가운데서 끊겨 PCF 가 붙잡음) 9클럭 + STOP → PCF 재검출 3회. 반환: PCF 가 응답하는가.
+ *  실패해도 HP 경로로 간다 — 읽기 실패는 직전 값을 돌려줘 없던 눌림을 만들지 않는다(PCF_RD_BB). */
+static bool _lp_pins_to_hp(bool count)
+{
+  ulp_enabled = 0;
+  ulp_lp_core_stop();
+  esp_rom_delay_us(2000);                   /* 폴 1회 ~0.25ms — 끝까지 돌 시간 */
+  rtc_gpio_deinit(PCF_BB_SDA);
+  rtc_gpio_deinit(PCF_BB_SCL);
+  gpio_config_t io = {
+      .mode = GPIO_MODE_INPUT,
+      .pull_up_en = GPIO_PULLUP_ENABLE,
+      .pull_down_en = GPIO_PULLDOWN_DISABLE,
+      .intr_type = GPIO_INTR_DISABLE,
+      .pin_bit_mask = (1ULL << PCF_BB_SDA) | (1ULL << PCF_BB_SCL),
+  };
+  gpio_config(&io);
+  gpio_set_level(PCF_BB_SDA, 1);
+  gpio_set_level(PCF_BB_SCL, 1);
+  esp_rom_delay_us(50);
+  const bool sda_low = (gpio_get_level(PCF_BB_SDA) == 0);
+  if (sda_low) {
+    for (int i = 0; i < 9 && gpio_get_level(PCF_BB_SDA) == 0; i++) {
+      _scl_low(); _i2c_delay(); _scl_release(); _i2c_delay();
+    }
+    _i2c_stop();
+  }
+  bool ok = false;
+  for (int i = 0; i < 3 && !ok; i++) {
+    ok = _pcf_lp_probe();
+    if (!ok) vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  /* ★2026-10-31 LP 가 로터리 핀을 **주차(출력 LOW)해 둔 채** 멈췄을 수 있다(lp_core/pcf_poll.c). 그대로 HP 가 읽으면
+   *  몰린 LOW 를 접점으로 읽어 노브를 돌려도 00 에 굳는다(sim/tools/rot_park_sim.py ⑤ 음성 대조). 전부 입력(1)으로 놓는다. */
+  const bool rel = ok && _pcf_bb_write16(0xFFFF);
+  if (ok && !rel) ESP_LOGW(TAG, "[LP] 인계 때 PCF 주차 해제(0xFFFF 쓰기) 실패 — 로터리가 00 으로 보일 수 있다");
+  s_pcf_initialized = true;                 /* PCF_RD_BB 가 읽기를 시도하게(부팅 기동 실패 경로) */
+  if (count) g_lp_handoff_cnt++;            /* lsfloor rot 의 의도된 인계는 세지 않는다(btn_handler_pcf_hp_takeover) */
+  if (sda_low) ESP_LOGW(TAG, "[LP] 인계 때 SDA 가 LOW 였다 — 9클럭+STOP 으로 풀었다");
+  return ok;
+}
+
+/* 인계 + 재기동 예약. why = 로그용 사유. */
+static void _lp_fallback_to_hp(const char *why)
+{
+  s_lp_active = false;
+  s_lat_hold  = 0;                          /* ★2026-10-18 얼어붙은 래치를 HP 폴링 경로로 끌고 가지 않는다 */
+  const bool ok = _lp_pins_to_hp(true);
+  s_lp_restart_pending = (s_lp_restarts < LP_RESTART_MAX);
+  s_lp_restart_at_ms   = _ms_now() + LP_RESTART_DELAY_MS;
+  ESP_LOGE(TAG, "★[LP] %s → HP 비트뱅으로 인계: GPIO%d/%d 를 LP_I2C 에서 풀었다, PCF %s%s", why,
+           (int)PCF_BB_SDA, (int)PCF_BB_SCL, ok ? "응답" : "★무응답(직전 값 유지 — 없던 눌림은 안 만든다)",
+           s_lp_restart_pending ? " — 30초 뒤 버튼이 쉴 때 LP 재기동 시도" : " — LP 재기동 한도를 다 썼다, HP 폴링 유지");
+}
+#endif
+
 /* 런타임 디스패치: LP 연결이면 비트뱅, 아니면 공유 HW I2C 읽기. */
 static pcf_state_t _pcf8574_read(void) {
 #if SOMFY_LP_CORE_PATH
@@ -701,9 +794,7 @@ static pcf_state_t _pcf8574_read(void) {
 #ifndef LP_STALE_MIN_READS
 #define LP_STALE_MIN_READS 2
 #endif
-    static uint32_t s_lp_cnt_prev = 0;
-    static uint32_t s_lp_stale    = 0;
-    static uint32_t s_lp_chg_ms   = 0;
+    /* (s_lp_cnt_prev·s_lp_stale·s_lp_chg_ms 는 ★2026-10-29 파일 범위로 옮겼다 — LP 재기동 때 다시 잡는다, s_seq_seen 옆 주석) */
     /* ★2026-10-18 F05: 상태보다 **먼저** seq 를 적는다 — 반대 순서면 상태를 읽은 직후의 변화가
      *  "이미 본 것"으로 적혀 유휴 훅(_btn_idle_hook)이 놓친다. 순서가 이러면 최악이 헛통지 1번이다. */
     s_seq_seen = ulp_seq;
@@ -750,16 +841,11 @@ static pcf_state_t _pcf8574_read(void) {
       st &= ~s_lat_hold;
       return (pcf_state_t)st;
     }
-    /* LP 정지 확정 — 두 번 다시 이 값을 믿지 않는다. LP 를 세우고 HP 폴링으로 전환. */
-    static bool s_lp_dead_logged = false;
-    if (!s_lp_dead_logged) {
-      s_lp_dead_logged = true;
-      ulp_enabled  = 0;        /* LP 가 깨어나 I2C 를 다시 만지지 않게 */
-      s_lp_active  = false;    /* 이후 폴은 HP 직접 읽기 */
-      s_lat_hold   = 0;        /* ★2026-10-18 얼어붙은 래치를 HP 폴링 경로로 끌고 가지 않는다 */
-      ESP_LOGE(TAG, "★LP 코어 정지 감지(poll_cnt 고정 %u) — 공유 RAM 값 폐기, "
-                    "HP 직접 폴링으로 전환", (unsigned)lp_cnt);
-    }
+    /* LP 정지 확정 — 두 번 다시 이 값을 믿지 않는다. LP 를 세우고 HP 폴링으로 전환.
+     *  ★2026-10-29 핀까지 HP 로 넘긴다(N07, _lp_fallback_to_hp 주석). 예전엔 플래그만 내려 HP 읽기가 선에 안 닿았다.
+     *  s_lp_active 가 내려가므로 이 분기는 재기동 전까지 다시 오지 않는다(예전 s_lp_dead_logged 의 몫). */
+    ESP_LOGE(TAG, "★LP 코어 정지 감지(poll_cnt 고정 %u) — 공유 RAM 값 폐기", (unsigned)lp_cnt);
+    _lp_fallback_to_hp("LP 코어 정지");
   }
 #endif
   return (s_pcf_bus == PCF_BUS_LP) ? PCF_RD_BB() : PCF_RD_SHARED();
@@ -970,8 +1056,7 @@ static void _btn_task(void *pvParam) {
        *  그 몇 명령 사이에 LP 가 디텐트를 더하면 하나가 사라질 수 있었다(두 코어는 서로 막지 못한다).
        *  rot_delta 는 LP 만 더하고 빼는 **누적값**이므로, HP 는 자기가 이미 가져간 양(s_rot_taken)만
        *  따로 세고 차이를 쓴다 → 쓰는 쪽이 LP 하나뿐이라 경쟁이 없다. (래치 쪽 &= 는 그대로 — 아래 주석) */
-      static int32_t s_rot_taken = 0;
-      static bool    s_rot_sync  = false;
+      /* (s_rot_taken·s_rot_sync 는 ★2026-10-29 파일 범위 — LP 재기동 때 _lp_core_try_start 가 s_rot_sync 를 내린다) */
       if (!s_rot_sync) { s_rot_sync = true; s_rot_taken = ulp_rot_delta; }   /* 시작 시점 기준선(옛 잔량을 쏟지 않게) */
       int32_t d = (int32_t)(ulp_rot_delta - s_rot_taken);
       if (d) {
@@ -1200,6 +1285,22 @@ static void _btn_task(void *pvParam) {
      *    누르는 동안 이 숫자가 움직이면 `~INT` 가 살아 있는 것이고, 그때 비로소
      *    레벨 트리거 ISR 을 검토한다. */
     {
+#if SOMFY_LP_CORE_PATH
+      /* ★2026-10-29 인계 뒤 LP 재기동 (N07, _lp_fallback_to_hp 주석) — 절전 경로로 돌아가려고. 버튼·로터리가 **쉬고 있을 때만**
+       *  (재기동 ~60ms 동안 이 태스크가 묶여 그 사이 입력은 못 본다 — 누르는 중이면 미룬다). 실패하면 그 안에서 다시 인계·예약. */
+      if (s_lp_restart_pending && (int32_t)(now - s_lp_restart_at_ms) >= 0) {
+        bool busy = !s_rot_btn_state;
+        for (int i = 0; i < BTN_COUNT && !busy; i++)
+          if (!s_btns[i].last_state || s_btns[i].raw_state != s_btns[i].last_state) busy = true;
+        if (!busy) {
+          s_lp_restart_pending = false;
+          s_lp_restarts++;
+          ESP_LOGW(TAG, "[LP] 재기동 시도 %u/%d", (unsigned)s_lp_restarts, LP_RESTART_MAX);
+          _lp_core_try_start();
+          if (s_lp_active) continue;            /* 다음 회전부터 LP 경로 */
+        }
+      }
+#endif
       static int s_int_prev = -1;
       const int lv = gpio_get_level(PCF8574_INT_PIN);
       if (s_int_prev >= 0 && lv != s_int_prev) s_int_edges++;
@@ -1262,15 +1363,19 @@ static void _lp_core_try_start(void)
    *    C6 는 SDA=GPIO6/SCL=GPIO7 고정이라 별도 핀 지정이 없다. */
   const lp_core_i2c_cfg_t i2c_cfg = LP_CORE_I2C_DEFAULT_CONFIG();
   esp_err_t e = lp_core_i2c_master_init(LP_I2C_NUM_0, &i2c_cfg);
+  /* ★2026-10-29 아래 실패 경로는 전부 _lp_fallback_to_hp — init 이 핀을 LP_I2C 에 묶은 뒤라 "HP 폴링 유지"만 하면 HP 읽기가 선에
+   *  안 닿는다(N07, 부팅 기동 실패면 버튼 전부 먹통 — 시뮬 579/579 놓침). init 이 도중에 실패해도 핀 일부가 묶였을 수 있다. */
   if (e != ESP_OK) {
-    ESP_LOGW(TAG, "[LP] LP_I2C init 실패(%s) — HP 폴링 유지", esp_err_to_name(e));
+    ESP_LOGW(TAG, "[LP] LP_I2C init 실패(%s)", esp_err_to_name(e));
+    _lp_fallback_to_hp("LP_I2C init 실패");
     return;
   }
   /* 2) LP 프로그램 적재 + 기동 */
   e = ulp_lp_core_load_binary(lp_core_main_bin_start,
                               (size_t)(lp_core_main_bin_end - lp_core_main_bin_start));
   if (e != ESP_OK) {
-    ESP_LOGW(TAG, "[LP] 프로그램 적재 실패(%s) — HP 폴링 유지", esp_err_to_name(e));
+    ESP_LOGW(TAG, "[LP] 프로그램 적재 실패(%s)", esp_err_to_name(e));
+    _lp_fallback_to_hp("LP 프로그램 적재 실패");
     return;
   }
   /* ★★★2026-09-01 HP_CPU → **LP_TIMER** 기상으로 바꿨다.
@@ -1294,7 +1399,8 @@ static void _lp_core_try_start(void)
 #endif
   e = ulp_lp_core_run(&cfg);
   if (e != ESP_OK) {
-    ESP_LOGW(TAG, "[LP] 기동 실패(%s) — HP 폴링 유지", esp_err_to_name(e));
+    ESP_LOGW(TAG, "[LP] 기동 실패(%s)", esp_err_to_name(e));
+    _lp_fallback_to_hp("LP 기동 실패");
     return;
   }
   /* 3) LP 가 실제로 폴링을 시작했는지 확인하고 나서 경로를 넘긴다.
@@ -1302,11 +1408,18 @@ static void _lp_core_try_start(void)
   uint32_t p0 = ulp_poll_cnt;
   vTaskDelay(pdMS_TO_TICKS(50));
   if (ulp_poll_cnt == p0) {
-    ESP_LOGW(TAG, "[LP] 기동했으나 폴링이 안 돈다(poll_cnt 고정) — HP 폴링 유지");
+    ESP_LOGW(TAG, "[LP] 기동했으나 폴링이 안 돈다(poll_cnt 고정)");
+    _lp_fallback_to_hp("LP 폴링 안 돎");
     return;
   }
   s_gen_seen0 = ulp_press_gen0;   /* ★2026-10-20 세대 사본 기준점 — 기동 전 누름을 '새 누름'으로 오인하지 않게 */
   s_gen_seen1 = ulp_press_gen1;
+  /* ★2026-10-29 재기동이면 LP RAM 이 새로 적재돼 0 부터 다시 센다 — HP 쪽 기록도 맞춘다(s_seq_seen 옆 주석). 첫 기동에도 무해 */
+  s_rot_sync    = false;
+  s_lp_cnt_prev = ulp_poll_cnt;
+  s_lp_stale    = 0;
+  s_lp_chg_ms   = _ms_now();
+  s_seq_seen    = ulp_seq;
   s_lp_active = true;
   /* ★★★2026-08-23 **ULP 를 light sleep 깨움 소스로 등록**한다.
    *  이게 없으면 LP 가 `ulp_lp_core_wakeup_main_processor()` 를 불러도
@@ -1973,6 +2086,97 @@ bool btn_handler_lp_active(void) {
   return s_lp_active;
 #else
   return false;
+#endif
+}
+
+/* ★2026-10-29 PCF 원시값(래치·붙잡기 없이, 0=LOW) — somfy_app 의 정지 상태 기록(batlog "pcf_rest")이 읽는다.
+ *  LP 경로면 LP 가 마지막으로 읽은 값, 아니면 HP 가 마지막으로 읽은 값. 아직 한 번도 못 읽었으면 -1.
+ *  읽기만 한다(공유 RAM 에 쓰지 않는다 — N06 규칙). */
+int32_t btn_handler_pcf_raw(void) {
+#if SOMFY_LP_CORE_PATH
+  if (s_lp_active) {
+    const uint32_t v = ulp_pcf_state;
+    return (v == 0xFFFFFFFFu) ? -1 : (int32_t)(v & 0xFFFFu);
+  }
+#endif
+  return s_pcf_present ? (int32_t)(s_pcf_last & 0xFFFFu) : -1;
+}
+
+/* ★2026-10-29 LP → HP 인계 횟수(N07, 정상 = 0) */
+uint32_t btn_handler_lp_handoffs(void) {
+#if SOMFY_LP_CORE_PATH
+  return g_lp_handoff_cnt;
+#else
+  return 0;
+#endif
+}
+
+/* ★2026-10-31 로터리 주차(lp_core/pcf_lp_config.h LP_ROT_PARK). 셋 다 s_lp_active 와 무관하게 공유 RAM 을 **있는 그대로** 다룬다 —
+ *  lsfloor 훅(btn_handler_init 이전)에서도 지난 부팅의 LP 가 돌고 있기 때문이다(btn_handler_lp_poll_raw 주석).
+ *  park_en 은 HP 만 쓰고 LP 는 읽기만 한다(N06 규칙: 한 변수의 쓰는 쪽은 하나). 다음 LP 적재 때 LP_ROT_PARK 로 돌아간다.
+ *  LP 경로가 없는 보드는 false / 0 / -1. */
+bool btn_handler_rot_park_set(bool on) {
+#if SOMFY_LP_CORE_PATH
+  ulp_park_en = on ? 1u : 0u;
+  return true;
+#else
+  (void)on;
+  return false;
+#endif
+}
+
+uint32_t btn_handler_rot_park_polls(void) {
+#if SOMFY_LP_CORE_PATH
+  return ulp_park_polls;
+#else
+  return 0;
+#endif
+}
+
+/* LP 가 마지막으로 읽은 PCF 원시값(0=LOW) — btn_handler_pcf_raw 와 달리 s_lp_active 를 안 본다(lsfloor 훅용). 읽기 전이면 -1. */
+int32_t btn_handler_lp_pcf_raw(void) {
+#if SOMFY_LP_CORE_PATH
+  const uint32_t v = ulp_pcf_state;
+  return (v == 0xFFFFFFFFu) ? -1 : (int32_t)(v & 0xFFFFu);
+#else
+  return -1;
+#endif
+}
+
+/* ★★2026-10-29 lsfloor rot(fac=8) 용 — LP 를 세우고 PCF 선을 HP 로 넘긴 뒤 출력 래치를 직접 쓰고 읽는다(somfy_app.c lsfloor 주석).
+ *  PCF8575 의 핀은 '1 쓰기 = 약한 풀업 입력(전류원 30~300µA)', '0 쓰기 = 강한 LOW 출력'이다. 로터리 접점이 닫혀(GND) 있을 때
+ *  1 이면 전류원이 접점으로 흐르고, 0 이면 양쪽이 GND 라 흐르지 않는다 — 이 차이가 재려는 몫이다.
+ *  부팅 훅(btn_handler_init 이전)에서 불린다 — 뮤텍스가 아직 없으면 만든다. 정상 부팅의 btn_handler_init 이 핀을 다시 설정하고
+ *  LP 를 새로 올리므로(_lp_core_try_start 가 먼저 멈추고 init) 되돌릴 것은 "출력 래치 = 전부 1" 하나뿐이다.
+ *  LP 코어 경로가 없는 보드(H2 등)는 셋 다 실패를 돌려준다(콘솔이 fac 8 을 거부한다). */
+bool btn_handler_pcf_hp_takeover(void)
+{
+#if SOMFY_LP_CORE_PATH
+  if (s_i2c_mutex == NULL) s_i2c_mutex = xSemaphoreCreateMutex();
+  return _lp_pins_to_hp(false);
+#else
+  return false;
+#endif
+}
+
+bool btn_handler_pcf_hp_write(uint16_t v)
+{
+#if SOMFY_LP_CORE_PATH
+  return _pcf_bb_write16(v);                  /* ★2026-10-31 본문을 _pcf_bb_write16 으로 옮겼다(인계 때 주차 해제가 같이 쓴다) */
+#else
+  (void)v;
+  return false;
+#endif
+}
+
+int32_t btn_handler_pcf_hp_read(void)
+{
+#if SOMFY_LP_CORE_PATH
+  s_pcf_present = false;
+  const pcf_state_t v = PCF_RD_BB();          /* 성공하면 s_pcf_present = true */
+  return s_pcf_present ? (int32_t)(v & 0xFFFFu) : -1;
+#else
+  return -1;
 #endif
 }
 

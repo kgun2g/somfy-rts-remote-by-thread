@@ -444,6 +444,9 @@ void oled_ui_set_time_edit(oled_ui_ctx_t *ctx, const int v[5], uint8_t field);
  * @return    ★2026-10-18 패널이 명령을 받았는가(3회 재시도 후). false 면 UI 태스크가 계속 재시도한다.
  */
 bool oled_ui_set_display_on(bool on);
+
+/** ★2026-10-29 oled_ui_init 이전(lsfloor 부팅 훅)에 패널 명령을 보낸다 — 비트뱅 보드만. 반환: ACK. oled_ui.c 주석 참조 */
+bool oled_ui_early_cmds(const uint8_t *cmds, size_t len);
 /* ★2026-10-18 화면 켜기/끄기 **요청**(감사 F13) — I2C 를 안 건드리고 즉시 돌아온다. UI 태스크가 그 회전에
  *  화면을 그린 뒤 0xAF/0xAE 를 보낸다(켤 때 잔상 없음). 입력·Matter 콜백과 메인 루프의 평소 켜기/끄기용.
  *  결과가 필요한 측정 경로는 oled_ui_set_display_on() 을 쓴다. UI 태스크 시작 전이면 그쪽으로 넘긴다. */
